@@ -11,6 +11,9 @@ const menus = [
   { title: '行为埋点', path: '/behavior' },
   { title: '会话回放', path: '/replays' },
   { title: '事件流', path: '/events' },
+  { title: '日志平台', path: '/logs' },
+  { title: '链路追踪', path: '/traces' },
+  { title: '产品分析', path: '/analytics' },
   { title: 'SourceMap', path: '/sourcemaps' },
   { title: '采集治理', path: '/governance' }
 ]
