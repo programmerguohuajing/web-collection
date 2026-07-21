@@ -5,6 +5,7 @@
  */
 
 import { setupBehaviorMonitor } from './behavior/index.js'
+import { setupConsoleMonitor } from './behavior/console.js'
 import { setupRouteMonitor } from './behavior/route.js'
 import { setupErrorMonitor } from './error/index.js'
 import { setupExposureMonitor } from './exposure/index.js'
@@ -32,6 +33,10 @@ const STORE_KEY = '__web_collection_queue__'
  * @param {number} [options.maxRetries=3] - 单次上报失败后的最大重试次数
  * @param {number} [options.sampleRate=1] - 采样率（0~1），未命中则返回空实现
  * @param {boolean} [options.behavior=true] - 是否开启行为采集
+ * @param {boolean} [options.console=false] - 是否将 console.warn/error 记录为错误面包屑
+ * @param {string} [options.collectKey=''] - 应用采集密钥
+ * @param {boolean} [options.tracing=true] - 是否采集前端请求链路
+ * @param {string[]} [options.traceOrigins=[]] - 允许透传 traceparent 的跨域 Origin；同源始终允许
  * @param {boolean} [options.requests=true] - 是否开启请求性能采集
  * @param {boolean} [options.exposure=true] - 是否开启曝光采集
  * @param {boolean} [options.replay=true] - 是否开启会话回放采集
@@ -66,6 +71,11 @@ export function createEys(options = {}) {
     sampleRate: 1,
     // behavior 控制是否开启行为采集。
     behavior: true,
+    console: false,
+    consoleLevels: ['log', 'info', 'warn', 'error'],
+    collectKey: '',
+    tracing: true,
+    traceOrigins: [],
     // requests 控制是否开启请求性能采集。
     requests: true,
     // exposure 控制是否开启曝光采集。
@@ -92,6 +102,7 @@ export function createEys(options = {}) {
   const breadcrumbs = []
   const originalFetch = window.fetch?.bind(window)
   const replayEvents = []
+  const pageTraceId = randomHex(16)
   /** 回放分段：基础会话 ID 不变，发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
    *  每种 sessionId 对应一条独立的回放记录，不再互相叠加。 */
   const replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -104,6 +115,7 @@ export function createEys(options = {}) {
   let stopReplay = null
   let replayStopTimer = 0
   let replayStartTimer = 0
+  const stopConsole = cfg.console ? setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels }) : () => {}
 
   const timer = setInterval(flushAll, cfg.flushInterval)
   addEventListener('pagehide', () => {
@@ -114,13 +126,13 @@ export function createEys(options = {}) {
   document.addEventListener('visibilitychange', () => document.hidden && flushAll(true))
 
   setupErrorMonitor({ error, clipSize: 500 })
-  setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests })
+  setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId })
   if (cfg.behavior) setupBehaviorMonitor({ push, onRoute: cfg.replaySegmentByRoute ? () => endReplaySegment('route') : null })
   else if (cfg.replay && cfg.replaySegmentByRoute) setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') })
   if (cfg.exposure) setupExposureMonitor({ push })
   if (cfg.replay) startReplay()
 
-  return { track, error, metric, setUser, flush, destroy, startReplay, stopReplay: stopReplayRecording, flushReplay, addReplayEvent, takeReplaySnapshot, endReplaySegment }
+  return { track, error, metric, log, setUser, flush, destroy, startReplay, stopReplay: stopReplayRecording, flushReplay, addReplayEvent, takeReplaySnapshot, endReplaySegment }
 
   /** 自定义事件追踪 */
   function track(name, props = {}) {
@@ -135,13 +147,20 @@ export function createEys(options = {}) {
       name: err?.name || extra.name || 'Error',
       message: err?.message || String(err),
       stack: err?.stack || '',
-      props: extra
+      props: { ...extra, traceId: pageTraceId },
+      traceId: pageTraceId
     }, true)
   }
 
   /** 性能指标上报 */
   function metric(name, value, props = {}) {
-    push({ type: 'perf', metric: name, value: Number(value), props })
+    const { __traceId: traceId, __spanId: spanId, ...details } = props
+    push({ type: 'perf', metric: name, value: Number(value), props: details, traceId, spanId })
+  }
+
+  /** 结构化日志；服务端会再次执行脱敏。 */
+  function log(level, message, props = {}) {
+    push({ type: 'log', name: String(level || 'info'), message: redact(message), props: redactObject(props), traceId: pageTraceId })
   }
 
   function setUser(user = {}) {
@@ -225,7 +244,7 @@ export function createEys(options = {}) {
       } else if (originalFetch) {
         const res = await originalFetch(cfg.endpoint, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', ...(cfg.collectKey ? { 'x-app-key': cfg.collectKey } : {}) },
           body,
           keepalive: force
         })
@@ -245,8 +264,8 @@ export function createEys(options = {}) {
 
   /** 记录用户行为面包屑（最近 20 条），用于错误事件的上下文还原 */
   function remember(event) {
-    if (!['behavior', 'track', 'perf'].includes(event.type)) return
-    breadcrumbs.push({ type: event.type, name: event.name || event.metric, ts: event.ts, url: event.url })
+    if (!['behavior', 'track', 'perf', 'console'].includes(event.type)) return
+    breadcrumbs.push({ type: event.type, name: event.name || event.metric, message: event.message, ts: event.ts, url: event.url })
     if (breadcrumbs.length > 20) breadcrumbs.shift()
   }
 
@@ -325,6 +344,7 @@ export function createEys(options = {}) {
   function destroy() {
     clearInterval(timer)
     clearTimeout(replayStartTimer)
+    stopConsole()
     stopReplayRecording()
     flushAll(true)
   }
@@ -360,7 +380,26 @@ function loadQueue(maxQueue) {
 
 /** 采样未命中时返回的空实现客户端，所有方法均为 no-op */
 function noopClient() {
-  return { track() {}, error() {}, metric() {}, setUser() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
+  return { track() {}, error() {}, metric() {}, log() {}, setUser() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
+}
+
+function randomHex(bytes) {
+  const data = new Uint8Array(bytes)
+  crypto.getRandomValues(data)
+  return [...data].map(value => value.toString(16).padStart(2, '0')).join('')
+}
+
+function redact(value) {
+  return String(value).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi, '$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g, '***$1').slice(0, 500)
+}
+
+function redactObject(value = {}) {
+  return Object.fromEntries(Object.entries(value).slice(0, 50).map(([key, item]) => [key, redact(serialize(item))]))
+}
+
+function serialize(value) {
+  if (typeof value !== 'object' || value === null) return value
+  try { return JSON.stringify(value) } catch { return '[Unserializable]' }
 }
 
 export default { createEys, install }

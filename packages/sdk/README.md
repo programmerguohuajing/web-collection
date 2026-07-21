@@ -30,6 +30,23 @@ createEys({
 })
 ```
 
+开启 `console: true` 后，会采集 `console.log/info/warn/error`，并保留最近 20 条控制台面包屑（单条最多 500 字符），用于检索及还原报错上下文。该能力默认关闭，避免意外采集业务日志中的敏感数据；可用 `consoleLevels` 限定级别。
+
+同时可主动记录结构化日志：
+
+```js
+eys.log('info', '订单提交', { orderId: 'SO10001' })
+```
+
+请求链路默认开启，同源 Fetch/XHR 会携带标准 `traceparent`。跨域服务必须显式加入可信列表：
+
+```js
+createEys({
+  collectKey: 'eys_xxx',
+  traceOrigins: ['https://api.example.com']
+})
+```
+
 TypeScript 项目可直接导入类型：
 ```ts
 import { createEys, type EysClient, type EysOptions } from '@web-collection/sdk'

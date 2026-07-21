@@ -56,6 +56,9 @@ function sourceLabel(original) {
           <span class="table-ellipsis" :title="sourceLabel(row.original)">{{ sourceLabel(row.original) }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="Trace" min-width="180">
+        <template #default="{ row }"><router-link v-if="row.props?.traceId" :to="`/traces?keyword=${row.props.traceId}`">{{ row.props.traceId }}</router-link><span v-else>-</span></template>
+      </el-table-column>
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.status !== 'resolved'" link type="primary" @click="$emit('resolve', row.fingerprint)">

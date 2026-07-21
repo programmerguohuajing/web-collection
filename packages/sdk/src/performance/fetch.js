@@ -9,16 +9,20 @@
  * @param {Function} opts.metric - 性能指标上报方法
  * @param {Function} opts.error - 错误上报方法
  */
-export function setupFetchMonitor({ originalFetch, endpoint, metric, error }) {
+export function setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId }) {
   if (!originalFetch) return
 
   window.fetch = async (input, init = {}) => {
     const url = String(input?.url || input)
     const start = performance.now()
+    const spanId = randomHex(8)
+    const traced = tracing && canTrace(url, traceOrigins)
+    const requestInit = traced ? { ...init, headers: withTraceHeader(input, init, pageTraceId, spanId) } : init
     try {
-      const res = await originalFetch(input, init)
+      const res = await originalFetch(input, requestInit)
       if (!url.includes(endpoint)) {
-        metric('fetch', performance.now() - start, { url, method: init.method || 'GET', status: res.status, ok: res.ok })
+        const timing = performance.getEntriesByName(new URL(url, location.href).href).at(-1)
+        metric('fetch', performance.now() - start, { url, method: init.method || input?.method || 'GET', status: res.status, ok: res.ok, dns: timing ? timing.domainLookupEnd - timing.domainLookupStart : undefined, tcp: timing ? timing.connectEnd - timing.connectStart : undefined, ttfb: timing?.responseStart, __traceId: traced ? pageTraceId : undefined, __spanId: traced ? spanId : undefined })
       }
       return res
     } catch (err) {
@@ -26,4 +30,20 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error }) {
       throw err
     }
   }
+}
+
+function withTraceHeader(input, init, traceId, spanId) {
+  const headers = new Headers(init.headers || input?.headers)
+  headers.set('traceparent', `00-${traceId}-${spanId}-01`)
+  return headers
+}
+
+function canTrace(value, origins = []) {
+  try { const url = new URL(value, location.href); return url.origin === location.origin || origins.includes(url.origin) } catch { return false }
+}
+
+function randomHex(bytes) {
+  const data = new Uint8Array(bytes)
+  crypto.getRandomValues(data)
+  return [...data].map(value => value.toString(16).padStart(2, '0')).join('')
 }

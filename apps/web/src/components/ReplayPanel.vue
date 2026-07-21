@@ -134,6 +134,7 @@ function formatTime(ms) {
   const second = String(seconds % 60).padStart(2, '0')
   return `${minute}:${second}`
 }
+defineExpose({ play })
 </script>
 
 <template>

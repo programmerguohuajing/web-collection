@@ -1,4 +1,4 @@
-export type EventType = 'track' | 'perf' | 'performance' | 'behavior' | 'error' | 'replay'
+export type EventType = 'track' | 'perf' | 'performance' | 'behavior' | 'error' | 'replay' | 'log' | 'trace'
 
 export interface EysUser {
   id?: string
@@ -22,6 +22,11 @@ export interface EysOptions {
   maxRetries?: number
   sampleRate?: number
   behavior?: boolean
+  console?: boolean
+  consoleLevels?: Array<'log' | 'info' | 'warn' | 'error'>
+  collectKey?: string
+  tracing?: boolean
+  traceOrigins?: string[]
   requests?: boolean
   exposure?: boolean
   replay?: boolean
@@ -35,6 +40,7 @@ export interface EysClient {
   track(name: string, props?: Record<string, unknown>): void
   error(error: unknown, extra?: Record<string, unknown>): void
   metric(name: string, value: number, props?: Record<string, unknown>): void
+  log(level: 'log' | 'info' | 'warn' | 'error' | string, message: unknown, props?: Record<string, unknown>): void
   setUser(user: EysUser): void
   flush(force?: boolean): Promise<void> | void
   destroy(): void

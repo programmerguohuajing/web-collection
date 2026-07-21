@@ -25,11 +25,12 @@ import { observe, onReady } from '../utils/performance.js'
  * @param {Function} opts.originalFetch - 原始 fetch 引用，用于请求监控
  * @param {boolean} opts.requests - 是否开启请求（Fetch + XHR）性能监控
  */
-export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch, requests }) {
+export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch, requests, tracing, traceOrigins, pageTraceId }) {
   // 页面加载完成后采集 Navigation Timing 指标
   onReady(() => {
     const nav = performance.getEntriesByType('navigation')[0]
     if (nav) {
+      metric('navigation', nav.duration, { dns: nav.domainLookupEnd - nav.domainLookupStart, tcp: nav.connectEnd - nav.connectStart, ttfb: nav.responseStart, load: nav.loadEventEnd, dcl: nav.domContentLoadedEventEnd, __traceId: pageTraceId, __spanId: pageTraceId.slice(0, 16) })
       metric('ttfb', nav.responseStart, { dns: nav.domainLookupEnd - nav.domainLookupStart, tcp: nav.connectEnd - nav.connectStart, load: nav.loadEventEnd, dcl: nav.domContentLoadedEventEnd })
     }
   })
@@ -48,8 +49,8 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
   })
 
   if (requests) {
-    setupFetchMonitor({ originalFetch, endpoint, metric, error })
-    setupXhrMonitor({ endpoint, metric })
+    setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId })
+    setupXhrMonitor({ endpoint, metric, tracing, traceOrigins, pageTraceId })
     setupWebSocketMonitor({ metric, error })
     setupSseMonitor({ metric, error })
   }

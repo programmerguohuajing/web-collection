@@ -1,12 +1,14 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { all, run } from './db.js'
 
 export const defaultSettings = {
-  retention: { eventsDays: 30, replaysDays: 7, resolvedIssuesDays: 90, sourcemapsDays: 180, alertsDays: 90 },
-  alerts: { enabled: true, cooldownMinutes: 10, error: true, regression: true, lcp: 4000, inp: 500, cls: 0.25, longtask: 200 }
+  retention: { eventsDays: 30, logsDays: 14, replaysDays: 7, resolvedIssuesDays: 90, sourcemapsDays: 180, alertsDays: 90 },
+  alerts: { enabled: true, cooldownMinutes: 10, errorCount: 1, error: true, logError: true, regression: true, lcp: 4000, inp: 500, cls: 0.25, longtask: 200 }
 }
 
 const knownVersions = new Set()
 const applicationCache = new Map()
+const rulesCache = new Map()
 
 export async function ensureApplication(appId, release = 'unknown') {
   const key = `${appId}\n${release}`
@@ -40,7 +42,8 @@ export async function shouldCollect(appId, type) {
 }
 
 export async function listApplications() {
-  return all(`select a.*, count(distinct r.release_name)::integer as release_count
+  return all(`select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.created_at, a.updated_at,
+    (a.collect_key_hash is not null) as collect_key_enabled, count(distinct r.release_name)::integer as release_count
     from applications a left join releases r on r.app_id = a.app_id
     group by a.app_id order by a.updated_at desc`)
 }
@@ -52,14 +55,43 @@ export async function saveApplication(input) {
   const sampleRate = clampRate(input.sampleRate)
   const replaySampleRate = clampRate(input.replaySampleRate)
   await run(
-    `insert into applications (app_id, name, platform, owner, enabled, sample_rate, replay_sample_rate, created_at, updated_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `insert into applications (app_id, name, platform, owner, enabled, sample_rate, replay_sample_rate, rules_json, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
      on conflict(app_id) do update set name=excluded.name, platform=excluded.platform, owner=excluded.owner,
-       enabled=excluded.enabled, sample_rate=excluded.sample_rate, replay_sample_rate=excluded.replay_sample_rate, updated_at=excluded.updated_at`,
-    [appId, String(input.name || appId).slice(0, 128), String(input.platform || 'web').slice(0, 32), String(input.owner || '').slice(0, 128), input.enabled !== false, sampleRate, replaySampleRate, now, now]
+       enabled=excluded.enabled, sample_rate=excluded.sample_rate, replay_sample_rate=excluded.replay_sample_rate, rules_json=excluded.rules_json, updated_at=excluded.updated_at`,
+    [appId, String(input.name || appId).slice(0, 128), String(input.platform || 'web').slice(0, 32), String(input.owner || '').slice(0, 128), input.enabled !== false, sampleRate, replaySampleRate, JSON.stringify(normalizeRules(input.rules)), now, now]
   )
   applicationCache.delete(appId)
+  rulesCache.delete(appId)
   return { appId }
+}
+
+export async function rotateCollectKey(appId) {
+  await ensureApplication(appId)
+  const key = `eys_${randomBytes(24).toString('base64url')}`
+  await run('update applications set collect_key_hash=?, updated_at=? where app_id=?', [hashKey(key), Date.now(), appId])
+  return { appId, collectKey: key }
+}
+
+export async function authorizeCollect(appId, key) {
+  const rows = await all('select collect_key_hash from applications where app_id=?', [appId])
+  const expected = rows[0]?.collect_key_hash
+  if (!expected) return true
+  const actual = hashKey(String(key || ''))
+  return actual.length === expected.length && timingSafeEqual(Buffer.from(actual), Buffer.from(expected))
+}
+
+export async function passesRules(event) {
+  let cached = rulesCache.get(event.appId)
+  if (!cached || cached.expiresAt < Date.now()) {
+    const rows = await all('select rules_json from applications where app_id=?', [event.appId])
+    cached = { rules: normalizeRules(rows[0]?.rules_json), expiresAt: Date.now() + 30000 }
+    rulesCache.set(event.appId, cached)
+  }
+  const rules = cached.rules
+  if (rules.blockedTypes.includes(event.type) || rules.blockedNames.includes(event.name)) return false
+  if (rules.allowedOrigins.length && !rules.allowedOrigins.includes(originOf(event.url))) return false
+  return true
 }
 
 export async function listReleases(appId) {
@@ -114,7 +146,8 @@ export async function cleanupExpiredData() {
   const { retention } = await getSettings()
   const now = Date.now()
   const deleted = {}
-  deleted.events = (await run('delete from events where ts < ?', [cutoff(now, retention.eventsDays)])).rowCount
+  deleted.logs = (await run(`delete from events where type='log' and ts < ?`, [cutoff(now, retention.logsDays)])).rowCount
+  deleted.events = (await run(`delete from events where type<>'log' and ts < ?`, [cutoff(now, retention.eventsDays)])).rowCount
   deleted.replays = (await run('delete from replay_events where created_at < ?', [cutoff(now, retention.replaysDays)])).rowCount
   deleted.issues = (await run(`delete from issues where status = 'resolved' and last_seen < ?`, [cutoff(now, retention.resolvedIssuesDays)])).rowCount
   deleted.sourcemaps = (await run('delete from sourcemaps where created_at < ?', [cutoff(now, retention.sourcemapsDays)])).rowCount
@@ -123,8 +156,9 @@ export async function cleanupExpiredData() {
 }
 
 function alertTrigger(event, issue, config) {
+  if (event.type === 'log' && event.name === 'error' && config.logError) return makeTrigger('log_error', 1, 'error', event)
   if (event.type === 'error' && issue?.status === 'regression' && config.regression) return makeTrigger('regression', 1, 'critical', event)
-  if (event.type === 'error' && config.error) return makeTrigger('error', 1, 'error', event)
+  if (event.type === 'error' && config.error && Number(issue?.count || 1) >= config.errorCount) return makeTrigger('error', Number(issue?.count || 1), 'error', event)
   if (event.type !== 'perf' || !Number.isFinite(Number(event.value))) return null
   const metric = String(event.metric || event.name || '').toLowerCase()
   const threshold = Number(config[metric])
@@ -154,6 +188,7 @@ function normalizeSettings(input = {}) {
   const merged = mergeSettings(input)
   for (const key of Object.keys(defaultSettings.retention)) merged.retention[key] = clampInt(merged.retention[key], 1, 3650)
   merged.alerts.cooldownMinutes = clampInt(merged.alerts.cooldownMinutes, 1, 1440)
+  merged.alerts.errorCount = clampInt(merged.alerts.errorCount, 1, 100000)
   for (const key of ['lcp', 'inp', 'cls', 'longtask']) merged.alerts[key] = Math.max(0, Number(merged.alerts[key]) || defaultSettings.alerts[key])
   return merged
 }
@@ -165,3 +200,7 @@ function mergeSettings(input = {}) {
 function clampRate(value) { return Math.max(0, Math.min(1, Number(value ?? 1))) }
 function clampInt(value, min, max) { return Math.max(min, Math.min(max, Math.round(Number(value) || min))) }
 function cutoff(now, days) { return now - Number(days) * 86400000 }
+function hashKey(value) { return createHash('sha256').update(value).digest('hex') }
+function normalizeRules(input = {}) { return { allowedOrigins: strings(input?.allowedOrigins), blockedTypes: strings(input?.blockedTypes), blockedNames: strings(input?.blockedNames) } }
+function strings(value) { return Array.isArray(value) ? value.map(String).map(item => item.trim()).filter(Boolean).slice(0, 100) : [] }
+function originOf(value) { try { return new URL(value).origin } catch { return '' } }
