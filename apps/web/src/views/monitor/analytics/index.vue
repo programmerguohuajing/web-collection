@@ -45,7 +45,7 @@ async function openSession(row) { activeSession.value = row; sessionEvents.value
 
 onMounted(() => { load(); timer = window.setInterval(async () => { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) }, 30000) })
 onBeforeUnmount(() => clearInterval(timer))
-watch(() => route.query, load)
+watch(() => route.query, query => { if (query.tab) tab.value = query.tab; load() }, { immediate: true })
 </script>
 
 <template>

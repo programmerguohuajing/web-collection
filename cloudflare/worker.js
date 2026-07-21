@@ -68,7 +68,6 @@ async function upsertIssue(env, event) {
 }
 
 async function adminApi(request, env, url) {
-  if (request.headers.get('x-api-key') !== env.ADMIN_API_KEY) return new Response('unauthorized', { status: 401 })
   const path = url.pathname
   if (path === '/api/events') return pagedEvents(env, url)
   if (path === '/api/logs') return pagedEvents(env, url, 'log')
@@ -153,7 +152,7 @@ function group(items,key){return items.reduce((out,item)=>((out[key(item)]||=[])
 function cleanObject(value){if(!value||typeof value!=='object')return null;return Object.fromEntries(Object.entries(value).slice(0,50).map(([k,v])=>[clip(k,80),redact(clip(typeof v==='object'?JSON.stringify(v):v,1000))]))}
 function cleanUrl(value){try{const u=new URL(String(value));for(const key of ['token','password','key','secret','authorization'])u.searchParams.delete(key);return clip(u.toString(),2048)}catch{return clip(value||'',2048)}}
 function redact(v){return String(v).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi,'$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g,'***$1')}
-function cors(response){const r=new Response(response.body,response);r.headers.set('access-control-allow-origin','*');r.headers.set('access-control-allow-methods','GET,POST,PUT,OPTIONS');r.headers.set('access-control-allow-headers','content-type,x-api-key,x-app-key,traceparent');return r}
+function cors(response){const r=new Response(response.body,response);r.headers.set('access-control-allow-origin','*');r.headers.set('access-control-allow-methods','GET,POST,PUT,OPTIONS');r.headers.set('access-control-allow-headers','content-type,x-app-key,traceparent');return r}
 function parse(value,fallback){try{return typeof value==='string'?JSON.parse(value):value??fallback}catch{return fallback}}
 function strings(v){return Array.isArray(v)?v.map(String).map(s=>s.trim()).filter(Boolean):[]}
 function clip(v,n){return String(v??'').slice(0,n)} function rate(v){return Math.max(0,Math.min(1,Number(v??1)))} function origin(v){try{return new URL(v).origin}catch{return''}} function maskPhone(v=''){return String(v).replace(/^(\d{3})\d{4}(\d{4})$/,'$1****$2')} function random(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/[+/=]/g,'').slice(0,n*2)} async function sha256(v){return[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))].map(x=>x.toString(16).padStart(2,'0')).join('')}

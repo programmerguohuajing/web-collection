@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { error, key, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
+import { error, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
 
 const route = useRoute()
 const nav = [
@@ -51,10 +51,7 @@ watch(() => route.path, async () => {
           <small>Web Collection</small>
           <h1>{{ title }}</h1>
         </div>
-        <el-form class="admin-key" @submit.prevent="refresh">
-          <el-input v-model="key" placeholder="Admin API Key" type="password" show-password />
-          <el-button type="primary" native-type="submit" :loading="loading">刷新</el-button>
-        </el-form>
+        <el-button type="primary" :loading="loading" @click="refresh">刷新</el-button>
       </header>
 
       <el-alert v-if="error" class="section" type="error" :title="error" show-icon />

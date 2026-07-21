@@ -6,10 +6,9 @@ const directory = options.dir || 'dist'
 const endpoint = String(options.endpoint || process.env.WEB_COLLECTION_ENDPOINT || 'http://127.0.0.1:8787').replace(/\/$/, '')
 const appId = options.appId || process.env.WEB_COLLECTION_APP_ID
 const release = options.release || process.env.WEB_COLLECTION_RELEASE
-const apiKey = options.key || process.env.WEB_COLLECTION_ADMIN_KEY
 
-if (!appId || !release || !apiKey) {
-  console.error('缺少参数：--app-id、--release、--key（也可使用 WEB_COLLECTION_APP_ID / RELEASE / ADMIN_KEY 环境变量）')
+if (!appId || !release) {
+  console.error('缺少参数：--app-id、--release（也可使用 WEB_COLLECTION_APP_ID / WEB_COLLECTION_RELEASE 环境变量）')
   process.exit(1)
 }
 
@@ -24,7 +23,7 @@ for (const path of files) {
   const file = map.file || basename(path, '.map')
   const response = await fetch(`${endpoint}/api/sourcemaps`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': apiKey },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ appId, release, file, map })
   })
   if (!response.ok) throw new Error(`${path} 上传失败：${response.status} ${await response.text()}`)
