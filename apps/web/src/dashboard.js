@@ -2,7 +2,6 @@ import { computed, ref } from 'vue'
 
 const apiBase = import.meta.env.VITE_API_BASE || ''
 
-export const key = ref(localStorage.getItem('eys_admin_key') || '')
 export const loading = ref(false)
 export const tableLoading = ref({ events: false, perf: false, behavior: false, issues: false, replays: false })
 export const error = ref('')
@@ -71,7 +70,6 @@ export async function refresh() {
   loading.value = true
   error.value = ''
   try {
-    localStorage.setItem('eys_admin_key', key.value)
     const [summaryData, eventData, issueData, replayData, perfData, behaviorData] = await Promise.all([
       api(`/api/summary?${queryFromFilters()}`),
       loadPaged('events'),
@@ -192,8 +190,7 @@ export async function runCleanup() {
 }
 
 export async function downloadReport(kind) {
-  const headers = key.value ? { 'x-api-key': key.value } : {}
-  const res = await fetch(`${apiBase}/api/export/${kind}.csv?${queryFromFilters()}`, { headers })
+  const res = await fetch(`${apiBase}/api/export/${kind}.csv?${queryFromFilters()}`)
   if (!res.ok) throw new Error(await res.text())
   const link = document.createElement('a')
   link.href = URL.createObjectURL(await res.blob())
@@ -203,8 +200,7 @@ export async function downloadReport(kind) {
 }
 
 export async function api(path, options = {}) {
-  const headers = key.value ? { 'x-api-key': key.value } : {}
-  const res = await fetch(`${apiBase}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } })
+  const res = await fetch(`${apiBase}${path}`, options)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
