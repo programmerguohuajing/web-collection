@@ -3,5 +3,5 @@ packages:
   - packages/*
 allowBuilds:
   esbuild: true
-  sharp: set this to true or false
-  workerd: set this to true or false
+  sharp: true
+  workerd: true
