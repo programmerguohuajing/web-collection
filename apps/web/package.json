@@ -8,6 +8,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@rrweb/replay": "2.1.0",
     "@vitejs/plugin-vue": "^5.2.4",
     "element-plus": "^2.11.8",
     "rrweb-player": "2.1.0",
