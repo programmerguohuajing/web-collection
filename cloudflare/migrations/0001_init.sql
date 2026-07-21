@@ -1,0 +1,14 @@
+create table if not exists events (id text primary key,ts integer not null,type text not null,app_id text not null,release_name text,user_id text,user_name text,user_phone text,session_id text,device_id text,trace_id text,span_id text,url text,path text,title text,referrer text,user_agent text,name text,metric text,value real,message text,stack text,props_json text,breadcrumbs_json text);
+create index if not exists idx_events_ts on events(ts);
+create index if not exists idx_events_session on events(session_id,ts);
+create index if not exists idx_events_trace on events(trace_id,ts);
+create table if not exists issues (fingerprint text primary key,status text not null,app_id text,release_name text,name text,message text,stack text,url text,props_json text,breadcrumbs_json text,original_json text,count integer default 0,first_seen integer,last_seen integer,resolved_at integer);
+create table if not exists replays (id integer primary key autoincrement,session_id text not null,app_id text,user_id text,user_name text,user_phone text,created_at integer,url text,release_name text,end_reason text,events_json text not null);
+create index if not exists idx_replays_session on replays(session_id,created_at);
+create table if not exists sourcemaps (app_id text not null,release_name text not null,file_name text not null,map_json text not null,created_at integer,primary key(app_id,release_name,file_name));
+create table if not exists applications (app_id text primary key,name text not null,platform text default 'web',owner text,enabled integer default 1,sample_rate real default 1,replay_sample_rate real default 1,collect_key_hash text,rules_json text,created_at integer,updated_at integer);
+create table if not exists releases (app_id text not null,release_name text not null,status text default 'active',created_at integer,primary key(app_id,release_name));
+create table if not exists settings (id integer primary key,config_json text not null,updated_at integer);
+create table if not exists alerts (id integer primary key autoincrement,app_id text,metric text,level text,value real,message text,notified integer default 0,created_at integer);
+create table if not exists funnels (id integer primary key autoincrement,name text not null,app_id text,steps_json text not null,created_at integer,updated_at integer);
+create table if not exists dashboards (id integer primary key autoincrement,name text not null,widgets_json text not null,created_at integer,updated_at integer);

@@ -58,6 +58,8 @@ export async function ensureSchema() {
 
   await run(`alter table events add column if not exists user_name varchar(128)`)
   await run(`alter table events add column if not exists user_phone varchar(32)`)
+  await run(`alter table events add column if not exists trace_id varchar(64)`)
+  await run(`alter table events add column if not exists span_id varchar(32)`)
 
   // events 表注释
   await run(`comment on table events is '原始事件存储表，记录 SDK 上报的所有事件（页面访问、点击、错误、性能指标等）'`)
@@ -202,6 +204,8 @@ export async function ensureSchema() {
     created_at bigint not null,
     updated_at bigint not null
   )`)
+  await run(`alter table applications add column if not exists collect_key_hash varchar(64)`)
+  await run(`alter table applications add column if not exists rules_json jsonb`)
   await run(`create table if not exists releases (
     app_id varchar(64) not null references applications(app_id) on delete cascade,
     release_name varchar(64) not null,
@@ -226,7 +230,24 @@ export async function ensureSchema() {
     notify_error text,
     created_at bigint not null
   )`)
+  await run(`create table if not exists funnel_definitions (
+    id bigserial primary key,
+    name varchar(128) not null,
+    app_id varchar(64),
+    steps_json jsonb not null,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists dashboard_definitions (
+    id bigserial primary key,
+    name varchar(128) not null,
+    widgets_json jsonb not null,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
   await run(`create index if not exists idx_events_ts on events(ts)`)
+  await run(`create index if not exists idx_events_trace on events(trace_id, ts)`)
+  await run(`create index if not exists idx_events_session on events(session_id, ts)`)
   await run(`create index if not exists idx_replay_events_created_at on replay_events(created_at)`)
   await run(`create index if not exists idx_alert_history_created_at on alert_history(created_at)`)
 }

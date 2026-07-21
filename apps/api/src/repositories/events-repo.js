@@ -12,8 +12,8 @@ import { all, run, scalar } from '../db.js'
 export async function insertEventRow(event) {
   await run(
     `insert into events (
-      id, ts, type, app_id, release_name, user_id, user_name, user_phone, session_id, device_id, url, path, title, referrer, user_agent, browser, os, device, name, metric, value, message, stack, props_json, breadcrumbs_json
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, ts, type, app_id, release_name, user_id, user_name, user_phone, session_id, device_id, trace_id, span_id, url, path, title, referrer, user_agent, browser, os, device, name, metric, value, message, stack, props_json, breadcrumbs_json
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       event.id,
       event.ts,
@@ -25,6 +25,8 @@ export async function insertEventRow(event) {
       event.userPhone || null,
       event.sessionId || null,
       event.deviceId || null,
+      event.traceId || null,
+      event.spanId || null,
       event.url || null,
       event.path || null,
       event.title || null,

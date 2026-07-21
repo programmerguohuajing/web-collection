@@ -19,6 +19,8 @@ export function mapEvent(row) {
     userPhone: maskPhone(row.user_phone),
     sessionId: row.session_id,
     deviceId: row.device_id,
+    traceId: row.trace_id,
+    spanId: row.span_id,
     url: row.url,
     path: row.path,
     title: row.title,

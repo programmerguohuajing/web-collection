@@ -169,6 +169,7 @@ export async function saveApplication(app) {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(app)
   })
 }
+export async function rotateCollectKey(appId) { return api(`/api/applications/${encodeURIComponent(appId)}/collect-key`, { method: 'POST' }) }
 
 export async function loadReleases(appId) {
   return api(`/api/applications/${encodeURIComponent(appId)}/releases`)
@@ -201,7 +202,7 @@ export async function downloadReport(kind) {
   URL.revokeObjectURL(link.href)
 }
 
-async function api(path, options = {}) {
+export async function api(path, options = {}) {
   const headers = key.value ? { 'x-api-key': key.value } : {}
   const res = await fetch(`${apiBase}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } })
   if (!res.ok) throw new Error(await res.text())

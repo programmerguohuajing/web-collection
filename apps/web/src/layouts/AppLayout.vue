@@ -11,6 +11,9 @@ const nav = [
   ['行', '行为埋点', '/behavior'],
   ['回', '会话回放', '/replays'],
   ['事', '事件流', '/events'],
+  ['志', '日志平台', '/logs'],
+  ['链', '链路追踪', '/traces'],
+  ['析', '产品分析', '/analytics'],
   ['源', 'SourceMap', '/sourcemaps']
 ]
 const title = computed(() => route.meta.title || '总览')

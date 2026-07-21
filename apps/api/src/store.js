@@ -18,7 +18,7 @@ import { mapReplay } from './mappers/replay-mapper.js'
 import { buildSummary } from './services/summary-service.js'
 import { fingerprint, percentile, scorePerf } from './utils/domain.js'
 import { parseJson } from './utils/json.js'
-import { ensureApplication, processAlert, shouldCollect } from './governance.js'
+import { ensureApplication, passesRules, processAlert, shouldCollect } from './governance.js'
 
 /** 事件表最大保留行数，超过后自动裁剪旧数据 */
 const maxEvents = Number(process.env.MAX_EVENTS || 50000)
@@ -61,14 +61,14 @@ export async function recordEvent(input) {
   await initPromise
   const event = { id: randomUUID(), ts: Date.now(), appId: 'default', release: 'unknown', ...input }
   await ensureApplication(event.appId, event.release)
-  if (!await shouldCollect(event.appId, event.type)) return null
+  if (!await shouldCollect(event.appId, event.type) || !await passesRules(event)) return null
   if (event.type === 'replay') {
     await recordReplay(event)
     return event
   }
   await insertEventRow(event)
   const issue = event.type === 'error' ? await upsertIssue(event) : null
-  if (event.type === 'error' || event.type === 'perf') {
+  if (event.type === 'error' || event.type === 'perf' || event.type === 'log') {
     void processAlert(event, issue).catch(error => console.error('alert processing failed', error))
   }
   return event
