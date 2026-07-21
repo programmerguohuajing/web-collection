@@ -1,0 +1,175 @@
+import { computed, ref } from 'vue'
+
+const apiBase = import.meta.env.VITE_API_BASE || ''
+
+export const key = ref(localStorage.getItem('eys_admin_key') || '')
+export const loading = ref(false)
+export const tableLoading = ref({ events: false, perf: false, behavior: false, issues: false, replays: false })
+export const error = ref('')
+export const summary = ref(null)
+export const events = ref([])
+export const perfEvents = ref([])
+export const behaviorEvents = ref([])
+export const issues = ref([])
+export const replays = ref([])
+export const eventPager = ref({ page: 1, pageSize: 10, total: 0 })
+export const perfPager = ref({ page: 1, pageSize: 10, total: 0 })
+export const behaviorPager = ref({ page: 1, pageSize: 10, total: 0 })
+export const issuePager = ref({ page: 1, pageSize: 10, total: 0 })
+export const replayPager = ref({ page: 1, pageSize: 10, total: 0 })
+
+export const filterDefaults = {
+  range: [],
+  appId: '',
+  release: '',
+  path: '',
+  userId: '',
+  userName: '',
+  userPhone: '',
+  keyword: '',
+  type: '',
+  status: ''
+}
+
+export const filters = ref({ ...filterDefaults })
+
+export const latestErrors = computed(() => issues.value.slice(0, 8))
+export const byType = computed(() => Object.entries(summary.value?.byType || {}).map(([name, count]) => [typeLabel(name), count]))
+export const behavior = computed(() => Object.entries(summary.value?.behavior || {}).slice(0, 12).map(([name, count]) => [behaviorLabel(name), count]))
+
+export function queryFromFilters(extra = {}, names = null) {
+  const f = filters.value
+  const params = new URLSearchParams()
+  const [startTime, endTime] = f.range || []
+  const values = { ...f, startTime, endTime, ...extra }
+  delete values.range
+  const allowed = names ? new Set([...names.filter(name => name !== 'range'), 'startTime', 'endTime']) : null
+  Object.entries(values).forEach(([name, value]) => {
+    if (allowed && !allowed.has(name)) return
+    if (value !== '' && value != null) params.set(name, value)
+  })
+  return params.toString()
+}
+
+export function setFiltersFromRoute(query = {}) {
+  filters.value = {
+    ...filterDefaults,
+    range: query.startTime && query.endTime ? [query.startTime, query.endTime] : [],
+    appId: query.appId || '',
+    release: query.release || '',
+    path: query.path || '',
+    userId: query.userId || '',
+    userName: query.userName || '',
+    userPhone: query.userPhone || '',
+    keyword: query.keyword || '',
+    type: query.type || '',
+    status: query.status || ''
+  }
+}
+
+export async function refresh() {
+  loading.value = true
+  error.value = ''
+  try {
+    localStorage.setItem('eys_admin_key', key.value)
+    const [summaryData, eventData, issueData, replayData, perfData, behaviorData] = await Promise.all([
+      api(`/api/summary?${queryFromFilters()}`),
+      loadPaged('events'),
+      loadPaged('issues'),
+      loadPaged('replays'),
+      loadPaged('perf'),
+      loadPaged('behavior')
+    ])
+    summary.value = summaryData
+    setPaged(events, eventPager, eventData)
+    setPaged(issues, issuePager, issueData)
+    setPaged(replays, replayPager, replayData)
+    setPaged(perfEvents, perfPager, perfData)
+    setPaged(behaviorEvents, behaviorPager, behaviorData)
+  } catch (e) {
+    error.value = e.message || '加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+export async function setPage(kind, page) {
+  const pager = pagerMap()[kind]
+  if (!pager) return
+  pager.value.page = page
+  await refreshPaged(kind)
+}
+
+export async function setPageSize(kind, pageSize) {
+  const pager = pagerMap()[kind]
+  if (!pager) return
+  pager.value.page = 1
+  pager.value.pageSize = pageSize
+  await refreshPaged(kind)
+}
+
+async function refreshPaged(kind) {
+  const pager = pagerMap()[kind]
+  tableLoading.value[kind] = true
+  error.value = ''
+  try {
+    setPaged(targetMap()[kind], pager, await loadPaged(kind))
+  } catch (e) {
+    error.value = e.message || '加载失败'
+  } finally {
+    tableLoading.value[kind] = false
+  }
+}
+
+async function loadPaged(kind) {
+  const pager = pagerMap()[kind]
+  const endpoint = { events: '/api/events', perf: '/api/events', behavior: '/api/events', issues: '/api/issues', replays: '/api/replays' }[kind]
+  const type = { perf: 'perf', behavior: 'behavior' }[kind]
+  const query = queryFromFilters(type ? { type } : {})
+  return api(`${endpoint}?${query}&page=${pager.value.page}&pageSize=${pager.value.pageSize}`)
+}
+
+function setPaged(target, pager, data) {
+  target.value = data.items || data
+  pager.value = { page: data.page || 1, pageSize: data.pageSize || 10, total: data.total || target.value.length }
+}
+
+function pagerMap() {
+  return { events: eventPager, perf: perfPager, behavior: behaviorPager, issues: issuePager, replays: replayPager }
+}
+
+function targetMap() {
+  return { events, perf: perfEvents, behavior: behaviorEvents, issues, replays }
+}
+
+export async function resolveIssue(fingerprint) {
+  await api(`/api/issues/${encodeURIComponent(fingerprint)}/resolve`, { method: 'POST' })
+  await refresh()
+}
+
+export async function uploadSourceMap(payload) {
+  await api('/api/sourcemaps', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+}
+
+export async function getReplay(replayKey) {
+  return api(`/api/replays/${encodeURIComponent(replayKey)}`)
+}
+
+async function api(path, options = {}) {
+  const headers = key.value ? { 'x-api-key': key.value } : {}
+  const res = await fetch(`${apiBase}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+function typeLabel(name) {
+  return ({ track: '埋点', perf: '性能', performance: '性能', behavior: '行为', error: '错误', replay: '回放' })[name] || '其他'
+}
+
+function behaviorLabel(name) {
+  return ({ click: '点击', track: '埋点', pv: '页面访问', page_leave: '页面离开', scroll: '滚动', exposure: '曝光', route: '路由切换', replaceState: '路由切换', pushState: '路由切换', popstate: '路由切换' })[name] || name
+}

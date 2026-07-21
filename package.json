@@ -1,0 +1,14 @@
+{
+  "name": "web-collection",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "pnpm --filter @web-collection/api dev",
+    "dev:web": "pnpm --filter @web-collection/web dev",
+    "build": "pnpm --filter @web-collection/web build && pnpm --filter @web-collection/sdk build && node scripts/pack-dist.js",
+    "start": "pnpm --filter @web-collection/api start",
+    "test": "pnpm --filter @web-collection/api test"
+  }
+}

@@ -1,0 +1,77 @@
+name: Deploy Web Collection
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: web-collection-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, web-collection]
+    environment: production
+    timeout-minutes: 20
+    env:
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/web-collection' }}
+      HEALTH_URL: ${{ vars.HEALTH_URL || 'http://127.0.0.1:8787/health' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install and build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Deploy release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          command -v pm2 >/dev/null || { echo 'pm2 is required on the runner'; exit 1; }
+          test -f "$DEPLOY_ROOT/shared/.env" || { echo "$DEPLOY_ROOT/shared/.env is missing"; exit 1; }
+
+          release="$DEPLOY_ROOT/releases/$GITHUB_SHA"
+          previous="$(readlink -f "$DEPLOY_ROOT/current" 2>/dev/null || true)"
+          mkdir -p "$release"
+          cp -a dist/. "$release/"
+          ln -sfn "$DEPLOY_ROOT/shared/.env" "$release/.env"
+
+          cd "$release"
+          pnpm install --prod --frozen-lockfile
+          ln -sfn "$release" "$DEPLOY_ROOT/current"
+
+          rollback() {
+            if [[ -n "$previous" && -d "$previous" ]]; then
+              ln -sfn "$previous" "$DEPLOY_ROOT/current"
+              cd "$previous"
+              pm2 startOrReload ecosystem.config.cjs --env production
+            fi
+          }
+          trap rollback ERR
+
+          cd "$DEPLOY_ROOT/current"
+          pm2 startOrReload ecosystem.config.cjs --env production
+          for attempt in {1..15}; do
+            curl --fail --silent --show-error "$HEALTH_URL" && break
+            [[ "$attempt" -eq 15 ]] && exit 1
+            sleep 2
+          done
+          pm2 save
+          trap - ERR
+
+          ls -1dt "$DEPLOY_ROOT"/releases/* 2>/dev/null | tail -n +6 | xargs -r rm -rf
