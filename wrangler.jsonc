@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-21",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "routes": [
+    { "pattern": "web-collection.jingguohua.cc.cd", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./apps/web/dist",
     "binding": "ASSETS",
