@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Replay Test</title>
+  <style>
+    .player-container {
+      width: 900px;
+      height: 520px;
+      margin: 50px auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="player-container" id="player"></div>
+  <script type="module">
+    import rrwebPlayer from '/node_modules/rrweb-player/dist/rrweb-player.js';
+    
+    const events = [
+      {"type":4,"data":{"href":"http://localhost:5173/","width":1920,"height":1080},"timestamp":1},
+      {"type":2,"data":{"node":{"id":1,"type":0,"childNodes":[{"id":2,"type":1,"tagName":"html","childNodes":[{"id":3,"type":2,"tagName":"head","childNodes":[],"attributes":{}},{"id":4,"type":2,"tagName":"body","childNodes":[{"id":5,"type":2,"tagName":"h1","childNodes":[{"id":6,"type":3,"textContent":"Hello","isStyle":false}],"attributes":{}}],"attributes":{}}],"attributes":{}}]}},"timestamp":2},
+      {"type":3,"data":{"source":0,"positions":[{"x":100,"y":200,"id":1,"timeOffset":0}]},"timestamp":100}
+    ];
+
+    console.log('Creating player with', events.length, 'events');
+    const el = document.getElementById('player');
+    console.log('Container:', el.clientWidth, 'x', el.clientHeight);
+
+    try {
+      new rrwebPlayer({
+        target: el,
+        props: {
+          events,
+          autoPlay: true,
+          width: el.clientWidth,
+          height: el.clientHeight
+        }
+      });
+      console.log('Player created successfully');
+      setTimeout(() => {
+        console.log('Player children:', el.children.length);
+        console.log('Player innerHTML length:', el.innerHTML.length);
+      }, 500);
+    } catch (e) {
+      console.error('Failed to create player:', e);
+    }
+  </script>
+</body>
+</html>

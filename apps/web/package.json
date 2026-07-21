@@ -1,0 +1,18 @@
+{
+  "name": "@web-collection/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "element-plus": "^2.11.8",
+    "rrweb-player": "2.1.0",
+    "vite": "^6.3.5",
+    "vue": "^3.5.17",
+    "vue-router": "^4.6.4"
+  }
+}

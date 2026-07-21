@@ -1,0 +1,53 @@
+{
+  "name": "@web-collection/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/web-collection-sdk.iife.js",
+  "module": "dist/web-collection-sdk.es.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./dist/web-collection-sdk.es.js",
+      "default": "./dist/web-collection-sdk.iife.js"
+    },
+    "./platform": {
+      "types": "./platform.d.ts",
+      "import": "./dist/web-collection-sdk.platform.js",
+      "require": "./dist/web-collection-sdk.platform.cjs",
+      "default": "./dist/web-collection-sdk.platform.js"
+    },
+    "./miniapp": {
+      "types": "./platform.d.ts",
+      "import": "./dist/web-collection-sdk.platform.js",
+      "require": "./dist/web-collection-sdk.platform.cjs"
+    },
+    "./uni-app": {
+      "types": "./platform.d.ts",
+      "import": "./dist/web-collection-sdk.platform.js",
+      "require": "./dist/web-collection-sdk.platform.cjs"
+    },
+    "./taro": {
+      "types": "./platform.d.ts",
+      "import": "./dist/web-collection-sdk.platform.js",
+      "require": "./dist/web-collection-sdk.platform.cjs"
+    },
+    "./react-native": {
+      "types": "./platform.d.ts",
+      "import": "./dist/web-collection-sdk.platform.js",
+      "require": "./dist/web-collection-sdk.platform.cjs"
+    }
+  },
+  "scripts": {
+    "build": "vite build && vite build --config vite.platform.config.js",
+    "test": "node test/platform.test.js"
+  },
+  "dependencies": {
+    "rrweb": "2.1.0",
+    "vite": "^6.3.5"
+  },
+  "devDependencies": {
+    "terser": "^5.49.0",
+    "typescript": "^7.0.2"
+  }
+}
