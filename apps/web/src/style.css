@@ -450,6 +450,8 @@ h2 { font-size: 17px; }
   grid-template-columns: repeat(3, minmax(260px, 1fr));
   gap: 0 16px;
 }
+.analytics-tabs { padding: 12px 16px 18px; }
+.analysis-title { margin: 22px 0 10px; }
 
 @media (max-width: 1180px) {
   .governance-form { grid-template-columns: repeat(2, minmax(260px, 1fr)); }

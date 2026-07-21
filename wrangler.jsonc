@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "web-collection",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-07-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./apps/web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health", "/sdk/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "web-collection",
+      "database_id": "eddcfc58-339c-480b-98c1-2d0d264450ec",
+      "migrations_dir": "cloudflare/migrations"
+    }
+  ],
+  "triggers": { "crons": ["17 3 * * *"] },
+  "observability": { "enabled": true }
+}

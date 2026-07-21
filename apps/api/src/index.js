@@ -11,7 +11,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
-import { cleanupExpiredData, getSettings, listAlerts, listApplications, listReleases, saveApplication, saveRelease, saveSettings } from './governance.js'
+import { authorizeCollect, cleanupExpiredData, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
+import { getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions, getTrace, listDashboards, listFunnels, listLogs, listTraces, runFunnel, saveDashboard, saveFunnel } from './services/analytics-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -58,6 +59,8 @@ app.post('/api/collect', async (req, res, next) => {
     const inputs = isReplay
       ? [payload]
       : Array.isArray(payload.events) ? payload.events : Array.isArray(payload) ? payload : [payload]
+    const appIds = [...new Set(inputs.map(item => clip(item?.appId || 'default', 64)))]
+    if (appIds.length !== 1 || !await authorizeCollect(appIds[0], req.get('x-app-key'))) return res.status(401).send('bad app key')
     const recorded = await recordEvents(inputs.slice(0, 100).map(sanitize))
     res.json({ ok: true, count: recorded.length, received: inputs.length })
   } catch (err) {
@@ -151,6 +154,22 @@ app.put('/api/settings', async (req, res, next) => {
 app.get('/api/alerts', async (req, res, next) => {
   try { res.json(await listAlerts(req.query.limit)) } catch (err) { next(err) }
 })
+app.post('/api/applications/:appId/collect-key', async (req, res, next) => {
+  try { res.json(await rotateCollectKey(req.params.appId)) } catch (err) { next(err) }
+})
+app.get('/api/logs', async (req, res, next) => { try { res.json(await listLogs(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/traces', async (req, res, next) => { try { res.json(await listTraces(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await getTrace(req.params.traceId)) } catch (err) { next(err) } })
+app.get('/api/analytics/sessions', async (req, res, next) => { try { res.json(await getSessions(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId)) } catch (err) { next(err) } })
+app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels()) } catch (err) { next(err) } })
+app.post('/api/funnels', async (req, res, next) => { try { res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
+app.get('/api/funnels/:id/run', async (req, res, next) => { try { res.json(await runFunnel(req.params.id, filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/dashboards', async (req, res, next) => { try { res.json(await listDashboards()) } catch (err) { next(err) } })
+app.post('/api/dashboards', async (req, res, next) => { try { res.json(await saveDashboard(req.body || {})) } catch (err) { next(err) } })
 app.post('/api/maintenance/cleanup', async (req, res, next) => {
   try { res.json(await cleanupExpiredData()) } catch (err) { next(err) }
 })
@@ -211,7 +230,7 @@ function corsMiddleware(req, res, next) {
   res.set({
     'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
     'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-api-key'
+    'access-control-allow-headers': 'content-type,x-api-key,x-app-key,traceparent'
   })
   if (req.method === 'OPTIONS') return res.status(204).end()
   next()
@@ -236,7 +255,7 @@ function serveFile(root, pathname, res, fallbackToIndex) {
 // 对客户端事件做白名单校验、字段裁剪和敏感信息清洗。
 function sanitize(event) {
   const rawType = String(event.type || '')
-  if (!['track', 'perf', 'performance', 'behavior', 'error', 'replay'].includes(rawType)) throw new Error('bad event type')
+  if (!['track', 'perf', 'performance', 'behavior', 'error', 'replay', 'log', 'trace'].includes(rawType)) throw new Error('bad event type')
   const type = rawType === 'performance' ? 'perf' : rawType
   if (type === 'replay') {
     return {
@@ -262,6 +281,8 @@ function sanitize(event) {
     userPhone: clip(event.userPhone || '', 32),
     sessionId: clip(event.sessionId || '', 128),
     deviceId: clip(event.deviceId || '', 128),
+    traceId: clip(event.traceId || '', 64),
+    spanId: clip(event.spanId || '', 32),
     url: cleanUrl(event.url || ''),
     path: clip(event.path || '', 512),
     title: clip(event.title || '', 256),
@@ -274,7 +295,7 @@ function sanitize(event) {
     name: clip(event.name || '', 160),
     metric: clip(event.metric || '', 32),
     value: Number.isFinite(Number(event.value)) ? Number(event.value) : undefined,
-    message: clip(event.message || '', 500),
+    message: redact(clip(event.message || '', 500)),
     stack: clip(event.stack || '', 4000),
     // props/breadcrumbs 这两项可能包含嵌套对象或较长内容，先统一裁剪和压平后再入库。
     // 这样可以避免日志体积失控，也能减少把原始敏感对象直接写进存储的风险。
@@ -291,6 +312,7 @@ function filters(query) {
     appId: clip(query.appId || '', 64),
     release: clip(query.release || '', 64),
     type: clip(query.type || '', 32),
+    name: clip(query.name || '', 160),
     status: clip(query.status || '', 32),
     path: clip(query.path || '', 512),
     url: clip(query.url || '', 2048),
@@ -312,8 +334,14 @@ function clip(value, size) {
 function cleanObject(value, size) {
   if (!value || typeof value !== 'object') return undefined
   const out = {}
-  for (const [key, item] of Object.entries(value)) out[clip(key, 80)] = typeof item === 'object' ? clip(JSON.stringify(item), 1000) : clip(item, 1000)
+  for (const [key, item] of Object.entries(value)) out[clip(key, 80)] = redact(typeof item === 'object' ? clip(JSON.stringify(item), 1000) : clip(item, 1000))
   return JSON.stringify(out).length > size ? { truncated: true } : out
+}
+
+function redact(value) {
+  return String(value)
+    .replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi, '$1$2[REDACTED]')
+    .replace(/\b1\d{2}\d{4}(\d{4})\b/g, '***$1')
 }
 
 // 删除 URL 中的敏感查询参数，再把结果裁剪到可控长度。
