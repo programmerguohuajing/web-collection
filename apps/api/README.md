@@ -33,6 +33,8 @@ pnpm --filter @web-collection/api start
 | `PGDATABASE` / `DB_NAME` | `web_collection` | 数据库名 |
 | `PG_POOL_SIZE` | `10` | 连接池大小 |
 | `MAX_EVENTS` | `50000` | events 表最大保留行数 |
+| `FEISHU_WEBHOOK_URL` | 空 | 飞书自定义机器人 Webhook，用于错误与性能告警 |
+| `CLEANUP_INTERVAL_MS` | `3600000` | 数据保留策略自动清理周期 |
 | `WEB_DIST` | `apps/web/dist` | Web 控制台静态目录 |
 | `SDK_DIST` | `packages/sdk/dist` | SDK 静态目录 |
 
@@ -44,6 +46,10 @@ pnpm --filter @web-collection/api start
 | `issues` | 错误聚合表，按 fingerprint 合并错误，支持 resolved / regression |
 | `replay_events` | rrweb 会话回放分片表 |
 | `sourcemaps` | SourceMap 存储表，用于错误堆栈反解 |
+| `applications` | 应用、平台、负责人和采样率配置 |
+| `releases` | 应用版本及状态 |
+| `platform_settings` | 数据保留与告警阈值配置 |
+| `alert_history` | 告警通知审计记录 |
 
 ## 采集接口
 
@@ -156,8 +162,32 @@ curl "http://127.0.0.1:8787/api/replays/1" \
 curl -X POST "http://127.0.0.1:8787/api/sourcemaps" \
   -H "x-api-key: dev-admin-key" \
   -H "content-type: application/json" \
-  -d '{"release":"1.0.0","file":"app.js","map":{"version":3,"sources":[],"mappings":""}}'
+  -d '{"appId":"web","release":"1.0.0","file":"app.js","map":{"version":3,"sources":[],"mappings":""}}'
 ```
+
+构建完成后可在 CI/CD 中自动上传：
+
+```bash
+pnpm sourcemaps:upload -- --dir apps/web/dist --app-id web --release 1.0.0 \
+  --endpoint https://monitor.example.com --key "$WEB_COLLECTION_ADMIN_KEY"
+```
+
+### 采集治理接口
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/applications` | 应用和采样策略列表 |
+| `PUT /api/applications/:appId` | 新增或更新应用、事件采样率、回放采样率 |
+| `GET /api/applications/:appId/releases` | 应用版本列表 |
+| `PUT /api/applications/:appId/releases/:release` | 新增版本或更新版本状态 |
+| `GET/PUT /api/settings` | 数据保留周期和告警阈值 |
+| `GET /api/alerts` | 告警通知记录 |
+| `POST /api/maintenance/cleanup` | 立即执行过期数据清理 |
+| `GET /api/export/events.csv` | 导出事件报表 |
+| `GET /api/export/issues.csv` | 导出错误报表 |
+| `GET /api/export/replays.csv` | 导出回放报表 |
+
+应用首次上报时会自动注册应用和版本。采样策略在服务端入库前执行，`0` 表示停止采集，`1` 表示全量采集。自动清理仅删除过期原始事件、回放、SourceMap、告警记录和已解决错误，不删除仍处于 open/regression 状态的问题。
 
 ## 静态托管
 

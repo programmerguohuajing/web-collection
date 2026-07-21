@@ -159,6 +159,48 @@ export async function getReplay(replayKey) {
   return api(`/api/replays/${encodeURIComponent(replayKey)}`)
 }
 
+export async function loadGovernance() {
+  const [applications, settings, alerts] = await Promise.all([api('/api/applications'), api('/api/settings'), api('/api/alerts?limit=50')])
+  return { applications, settings, alerts }
+}
+
+export async function saveApplication(app) {
+  return api(`/api/applications/${encodeURIComponent(app.appId)}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(app)
+  })
+}
+
+export async function loadReleases(appId) {
+  return api(`/api/applications/${encodeURIComponent(appId)}/releases`)
+}
+
+export async function saveRelease(appId, release, status) {
+  return api(`/api/applications/${encodeURIComponent(appId)}/releases/${encodeURIComponent(release)}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status })
+  })
+}
+
+export async function saveGovernanceSettings(settings) {
+  return api('/api/settings', {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings)
+  })
+}
+
+export async function runCleanup() {
+  return api('/api/maintenance/cleanup', { method: 'POST' })
+}
+
+export async function downloadReport(kind) {
+  const headers = key.value ? { 'x-api-key': key.value } : {}
+  const res = await fetch(`${apiBase}/api/export/${kind}.csv?${queryFromFilters()}`, { headers })
+  if (!res.ok) throw new Error(await res.text())
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(await res.blob())
+  link.download = `web-collection-${kind}.csv`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 async function api(path, options = {}) {
   const headers = key.value ? { 'x-api-key': key.value } : {}
   const res = await fetch(`${apiBase}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } })

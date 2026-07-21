@@ -445,6 +445,16 @@ h2 { font-size: 17px; }
   white-space: nowrap;
 }
 
+.governance-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  gap: 0 16px;
+}
+
+@media (max-width: 1180px) {
+  .governance-form { grid-template-columns: repeat(2, minmax(260px, 1fr)); }
+}
+
 @media (max-width: 1180px) {
   .sidebar-container {
     position: static;
@@ -472,4 +482,5 @@ h2 { font-size: 17px; }
   .ops-top, .issue { display: block; }
   .admin-key, .ruoyi-query, .metrics, .grid, .sourcemap-form, .replay-grid { grid-template-columns: 1fr; }
   .ops-side nav { grid-template-columns: 1fr 1fr; }
+  .governance-form { grid-template-columns: 1fr; }
 }

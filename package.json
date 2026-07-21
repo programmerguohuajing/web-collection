@@ -8,6 +8,7 @@
     "dev": "pnpm --filter @web-collection/api dev",
     "dev:web": "pnpm --filter @web-collection/web dev",
     "build": "pnpm --filter @web-collection/web build && pnpm --filter @web-collection/sdk build && node scripts/pack-dist.js",
+    "sourcemaps:upload": "node scripts/upload-sourcemaps.js",
     "start": "pnpm --filter @web-collection/api start",
     "test": "pnpm --filter @web-collection/api test"
   }
