@@ -10,7 +10,8 @@ import express from 'express'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { getReplay, getSummary, listEventsPage, listIssuesPage, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
+import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
+import { cleanupExpiredData, getSettings, listAlerts, listApplications, listReleases, saveApplication, saveRelease, saveSettings } from './governance.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -57,8 +58,8 @@ app.post('/api/collect', async (req, res, next) => {
     const inputs = isReplay
       ? [payload]
       : Array.isArray(payload.events) ? payload.events : Array.isArray(payload) ? payload : [payload]
-    await recordEvents(inputs.slice(0, 100).map(sanitize))
-    res.json({ ok: true, count: inputs.length })
+    const recorded = await recordEvents(inputs.slice(0, 100).map(sanitize))
+    res.json({ ok: true, count: recorded.length, received: inputs.length })
   } catch (err) {
     next(err)
   }
@@ -129,6 +130,37 @@ app.post('/api/issues/:id/resolve', async (req, res, next) => {
     next(err)
   }
 })
+app.get('/api/applications', async (req, res, next) => {
+  try { res.json(await listApplications()) } catch (err) { next(err) }
+})
+app.put('/api/applications/:appId', async (req, res, next) => {
+  try { res.json(await saveApplication({ ...req.body, appId: req.params.appId })) } catch (err) { next(err) }
+})
+app.get('/api/applications/:appId/releases', async (req, res, next) => {
+  try { res.json(await listReleases(req.params.appId)) } catch (err) { next(err) }
+})
+app.put('/api/applications/:appId/releases/:release', async (req, res, next) => {
+  try { res.json(await saveRelease(req.params.appId, { ...req.body, release: req.params.release })) } catch (err) { next(err) }
+})
+app.get('/api/settings', async (req, res, next) => {
+  try { res.json(await getSettings()) } catch (err) { next(err) }
+})
+app.put('/api/settings', async (req, res, next) => {
+  try { res.json(await saveSettings(req.body || {})) } catch (err) { next(err) }
+})
+app.get('/api/alerts', async (req, res, next) => {
+  try { res.json(await listAlerts(req.query.limit)) } catch (err) { next(err) }
+})
+app.post('/api/maintenance/cleanup', async (req, res, next) => {
+  try { res.json(await cleanupExpiredData()) } catch (err) { next(err) }
+})
+app.get('/api/export/:kind.csv', async (req, res, next) => {
+  try {
+    const query = filters(req.query)
+    const rows = await exportRows(req.params.kind, query)
+    res.type('text/csv; charset=utf-8').set('content-disposition', `attachment; filename="web-collection-${req.params.kind}.csv"`).send('\ufeff' + toCsv(rows))
+  } catch (err) { next(err) }
+})
 
 app.get('/sdk/:file', (req, res) => {
   serveFile(sdkDir, req.params.file, res, false)
@@ -151,9 +183,12 @@ app.use((err, req, res, next) => {
   res.status(500).type('text/plain; charset=utf-8').send(err?.message || 'server error')
 })
 
+await initDatabase()
 app.listen(port, () => {
   console.log(`Web Collection listening on http://127.0.0.1:${port}`)
 })
+const cleanupTimer = setInterval(() => cleanupExpiredData().catch(error => console.error('data cleanup failed', error)), Number(process.env.CLEANUP_INTERVAL_MS || 3600000))
+cleanupTimer.unref()
 
 // 管理接口鉴权：只有携带正确 x-api-key 的请求才会放行。
 function adminAuth(req, res, next) {
@@ -175,7 +210,7 @@ function checkPublicToken(req, res) {
 function corsMiddleware(req, res, next) {
   res.set({
     'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
     'access-control-allow-headers': 'content-type,x-api-key'
   })
   if (req.method === 'OPTIONS') return res.status(204).end()
@@ -309,4 +344,18 @@ function os(ua) {
   if (/iPhone|iPad/i.test(ua)) return 'iOS'
   if (/Linux/i.test(ua)) return 'Linux'
   return 'Unknown'
+}
+
+async function exportRows(kind, query) {
+  if (kind === 'events') return listEvents(10000, query)
+  if (kind === 'issues') return listIssues({ ...query, limit: 10000 })
+  if (kind === 'replays') return listReplays({ ...query, limit: 10000 })
+  throw new Error('unsupported export kind')
+}
+
+export function toCsv(rows) {
+  if (!rows.length) return ''
+  const columns = [...new Set(rows.flatMap(row => Object.keys(row)))]
+  const cell = value => `"${String(value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : value).replaceAll('"', '""')}"`
+  return [columns.map(cell).join(','), ...rows.map(row => columns.map(column => cell(row[column])).join(','))].join('\r\n')
 }
