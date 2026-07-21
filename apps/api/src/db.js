@@ -165,12 +165,23 @@ export async function ensureSchema() {
 
   // ==================== sourcemaps 表 ====================
   await run(`create table if not exists sourcemaps (
+    app_id varchar(64) not null default 'default',
     release_name varchar(64) not null,
     file_name varchar(255) not null,
     map_json jsonb not null,
     created_at bigint not null,
-    primary key (release_name, file_name)
+    primary key (app_id, release_name, file_name)
   )`)
+  await run(`alter table sourcemaps add column if not exists app_id varchar(64) not null default 'default'`)
+  await run(`do $$ begin
+    if not exists (
+      select 1 from pg_constraint where conrelid = 'sourcemaps'::regclass
+      and contype = 'p' and pg_get_constraintdef(oid) like '%app_id%'
+    ) then
+      alter table sourcemaps drop constraint if exists sourcemaps_pkey;
+      alter table sourcemaps add primary key (app_id, release_name, file_name);
+    end if;
+  end $$`)
 
   // sourcemaps 表注释
   await run(`comment on table sourcemaps is 'SourceMap 文件存储表，保存各版本的 SourceMap 用于错误堆栈还原'`)
@@ -178,6 +189,46 @@ export async function ensureSchema() {
   await run(`comment on column sourcemaps.file_name is 'SourceMap 对应的源文件名'`)
   await run(`comment on column sourcemaps.map_json is 'SourceMap 完整内容（JSONB 格式）'`)
   await run(`comment on column sourcemaps.created_at is 'SourceMap 上传时间戳（毫秒级 Unix 时间）'`)
+
+  // ==================== 采集治理 ====================
+  await run(`create table if not exists applications (
+    app_id varchar(64) primary key,
+    name varchar(128) not null,
+    platform varchar(32) not null default 'web',
+    owner varchar(128),
+    enabled boolean not null default true,
+    sample_rate double precision not null default 1,
+    replay_sample_rate double precision not null default 1,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists releases (
+    app_id varchar(64) not null references applications(app_id) on delete cascade,
+    release_name varchar(64) not null,
+    status varchar(32) not null default 'active',
+    created_at bigint not null,
+    primary key (app_id, release_name)
+  )`)
+  await run(`create table if not exists platform_settings (
+    id integer primary key,
+    config_json jsonb not null,
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists alert_history (
+    id bigserial primary key,
+    app_id varchar(64) not null,
+    metric varchar(32) not null,
+    fingerprint varchar(128),
+    level varchar(16) not null,
+    value double precision,
+    message text not null,
+    notified boolean not null default false,
+    notify_error text,
+    created_at bigint not null
+  )`)
+  await run(`create index if not exists idx_events_ts on events(ts)`)
+  await run(`create index if not exists idx_replay_events_created_at on replay_events(created_at)`)
+  await run(`create index if not exists idx_alert_history_created_at on alert_history(created_at)`)
 }
 
 /**

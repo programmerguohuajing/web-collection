@@ -18,6 +18,7 @@ import { mapReplay } from './mappers/replay-mapper.js'
 import { buildSummary } from './services/summary-service.js'
 import { fingerprint, percentile, scorePerf } from './utils/domain.js'
 import { parseJson } from './utils/json.js'
+import { ensureApplication, processAlert, shouldCollect } from './governance.js'
 
 /** 事件表最大保留行数，超过后自动裁剪旧数据 */
 const maxEvents = Number(process.env.MAX_EVENTS || 50000)
@@ -41,7 +42,10 @@ export function classifyIssue(previous, event) {
 export async function recordEvents(inputs) {
   await initPromise
   const events = []
-  for (const input of inputs) events.push(await recordEvent(input))
+  for (const input of inputs) {
+    const event = await recordEvent(input)
+    if (event) events.push(event)
+  }
   await trimEventsIfNeeded()
   return events
 }
@@ -56,12 +60,17 @@ export async function recordEvents(inputs) {
 export async function recordEvent(input) {
   await initPromise
   const event = { id: randomUUID(), ts: Date.now(), appId: 'default', release: 'unknown', ...input }
+  await ensureApplication(event.appId, event.release)
+  if (!await shouldCollect(event.appId, event.type)) return null
   if (event.type === 'replay') {
     await recordReplay(event)
     return event
   }
   await insertEventRow(event)
-  if (event.type === 'error') await upsertIssue(event)
+  const issue = event.type === 'error' ? await upsertIssue(event) : null
+  if (event.type === 'error' || event.type === 'perf') {
+    void processAlert(event, issue).catch(error => console.error('alert processing failed', error))
+  }
   return event
 }
 
@@ -116,13 +125,15 @@ export async function resolveIssue(id) {
  * @param {object} param0 - { release: 版本号, file: 文件名, map: SourceMap 对象 }
  * @returns {Promise<object>} 保存结果 { release, file }
  */
-export async function saveSourceMap({ release = 'unknown', file = '', map }) {
+export async function saveSourceMap({ appId = 'default', release = 'unknown', file = '', map }) {
   await initPromise
   if (!map || typeof map !== 'object') throw new Error('bad sourcemap')
   const releaseName = safeName(release)
   const fileName = safeName(file || map.file || 'app.js')
-  await upsertSourceMapRow({ releaseName, fileName, mapJson: JSON.stringify(map), createdAt: Date.now() })
-  return { release, file: fileName }
+  const safeAppId = safeName(appId)
+  await ensureApplication(safeAppId, releaseName)
+  await upsertSourceMapRow({ appId: safeAppId, releaseName, fileName, mapJson: JSON.stringify(map), createdAt: Date.now() })
+  return { appId: safeAppId, release, file: fileName }
 }
 
 /**
@@ -213,6 +224,7 @@ async function upsertIssue(event) {
     resolvedAt: previous?.resolvedAt || null
   }
   await upsertIssueRow(issue)
+  return issue
 }
 
 /**
@@ -273,7 +285,7 @@ function trimStack(stack = '') {
 async function resolveSourceMap(event) {
   const frame = firstFrame(event.stack || '', event.props)
   if (!frame) return null
-  const row = await getSourceMapRow(safeName(event.release || 'unknown'), basename(frame.file))
+  const row = await getSourceMapRow(safeName(event.appId || 'default'), safeName(event.release || 'unknown'), basename(frame.file))
   if (!row) return null
   const consumer = new SourceMapConsumer(parseJson(row.map_json))
   const pos = consumer.originalPositionFor({ line: frame.line, column: frame.column })

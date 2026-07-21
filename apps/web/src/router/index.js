@@ -7,6 +7,7 @@ import Behavior from '../views/monitor/behavior/index.vue'
 import Replays from '../views/monitor/replays/index.vue'
 import Events from '../views/monitor/events/index.vue'
 import SourceMaps from '../views/monitor/sourcemaps/index.vue'
+import Governance from '../views/monitor/governance/index.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -22,7 +23,8 @@ export const router = createRouter({
         { path: 'behavior', component: Behavior, meta: { title: '行为埋点' } },
         { path: 'replays', component: Replays, meta: { title: '会话回放' } },
         { path: 'events', component: Events, meta: { title: '事件流' } },
-        { path: 'sourcemaps', component: SourceMaps, meta: { title: 'SourceMap' } }
+        { path: 'sourcemaps', component: SourceMaps, meta: { title: 'SourceMap' } },
+        { path: 'governance', component: Governance, meta: { title: '采集治理' } }
       ]
     }
   ]

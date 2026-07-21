@@ -37,6 +37,7 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/web_collection
 ADMIN_API_KEY=your-secret-key
 COLLECT_TOKEN=
 CORS_ORIGIN=http://127.0.0.1:5173
+FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/your-token
 ```
 
 也可以拆分 PostgreSQL 配置：
@@ -62,7 +63,7 @@ $env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/web_collection"
 pnpm --filter @web-collection/api db:init
 ```
 
-会创建 `events`、`issues`、`replays`、`replay_events`、`sourcemaps` 表。
+会创建事件、错误、回放、SourceMap、应用版本、采集策略和告警审计所需的数据表。
 
 ### 4. 开发模式
 
@@ -146,6 +147,17 @@ npm install -g pm2
 | `HEALTH_URL` | `http://127.0.0.1:8787/health` | 发布后的健康检查地址 |
 
 工作流保留最近 5 个版本；新版本启动或健康检查失败时自动切回上一个版本。
+
+### SourceMap 自动上传
+
+在业务构建完成后执行：
+
+```bash
+pnpm sourcemaps:upload -- --dir apps/web/dist --app-id web --release 1.0.0 \
+  --endpoint https://monitor.example.com --key "$WEB_COLLECTION_ADMIN_KEY"
+```
+
+控制台的“采集治理”页面可以管理应用、版本、事件/回放采样率、数据保留周期、告警阈值、飞书通知记录和 CSV 报表导出。生产试点步骤见 [docs/production-pilot.md](docs/production-pilot.md)。
 
 ## SDK 接入
 

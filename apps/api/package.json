@@ -10,7 +10,7 @@
     "restart:pm2": "pm2 restart web-collection-api --update-env",
     "stop:pm2": "pm2 stop web-collection-api",
     "db:init": "node src/scripts/init-db.js",
-    "test": "node --test ../../test/*.test.js"
+    "test": "node --test --test-concurrency=1 ../../test/*.test.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

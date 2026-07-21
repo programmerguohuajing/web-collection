@@ -11,7 +11,8 @@ const menus = [
   { title: '行为埋点', path: '/behavior' },
   { title: '会话回放', path: '/replays' },
   { title: '事件流', path: '/events' },
-  { title: 'SourceMap', path: '/sourcemaps' }
+  { title: 'SourceMap', path: '/sourcemaps' },
+  { title: '采集治理', path: '/governance' }
 ]
 const title = computed(() => route.meta.title || '总览')
 
