@@ -13,5 +13,8 @@
     "start": "pnpm --filter @web-collection/api start",
     "test": "pnpm --filter @web-collection/api test",
     "deploy:cloudflare": "pnpm build:cloudflare && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.106.0"
   }
 }
