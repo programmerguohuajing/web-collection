@@ -16,8 +16,6 @@ import { getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions,
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
-/** 管理接口 API Key */
-const adminKey = process.env.ADMIN_API_KEY || 'dev-admin-key'
 /** 公开采集接口的 token（未配置时默认放行） */
 const publicToken = process.env.COLLECT_TOKEN || ''
 /** 前端静态资源目录 */
@@ -81,8 +79,6 @@ app.get('/api/collect.gif', async (req, res, next) => {
   }
 })
 
-// 管理接口统一走 API Key 鉴权。
-app.use('/api', adminAuth)
 // 事件与报表查询接口。
 app.get('/api/events', async (req, res, next) => {
   try {
@@ -209,13 +205,6 @@ app.listen(port, () => {
 const cleanupTimer = setInterval(() => cleanupExpiredData().catch(error => console.error('data cleanup failed', error)), Number(process.env.CLEANUP_INTERVAL_MS || 3600000))
 cleanupTimer.unref()
 
-// 管理接口鉴权：只有携带正确 x-api-key 的请求才会放行。
-function adminAuth(req, res, next) {
-  if (req.method === 'OPTIONS') return next()
-  if (req.get('x-api-key') !== adminKey) return res.status(401).type('text/plain; charset=utf-8').send('unauthorized')
-  next()
-}
-
 // 公开采集接口的 token 校验；未配置 publicToken 时默认放行。
 function checkPublicToken(req, res) {
   if (publicToken && req.query.token !== publicToken) {
@@ -230,7 +219,7 @@ function corsMiddleware(req, res, next) {
   res.set({
     'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
     'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-api-key,x-app-key,traceparent'
+    'access-control-allow-headers': 'content-type,x-app-key,traceparent'
   })
   if (req.method === 'OPTIONS') return res.status(204).end()
   next()

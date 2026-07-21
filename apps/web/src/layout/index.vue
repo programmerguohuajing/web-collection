@@ -1,31 +1,55 @@
 <script setup>
 import { computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { error, key, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  Aim, ArrowDown, Bell, Connection, DataAnalysis, Files, Film, Grid,
+  Histogram, House, List, Monitor, Operation, Search, Setting, Stopwatch, Warning
+} from '@element-plus/icons-vue'
+import { error, filters, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
 
 const route = useRoute()
-const menus = [
-  { title: '总览', path: '/overview' },
-  { title: '错误监控', path: '/errors' },
-  { title: '性能监控', path: '/performance' },
-  { title: '行为埋点', path: '/behavior' },
-  { title: '会话回放', path: '/replays' },
-  { title: '事件流', path: '/events' },
-  { title: '日志平台', path: '/logs' },
-  { title: '链路追踪', path: '/traces' },
-  { title: '产品分析', path: '/analytics' },
-  { title: 'SourceMap', path: '/sourcemaps' },
-  { title: '采集治理', path: '/governance' }
+const router = useRouter()
+const groups = [
+  { label: '', items: [{ title: '总览', path: '/overview', icon: House }] },
+  { label: '监控', items: [
+    { title: '错误监控', path: '/errors', icon: Warning },
+    { title: '性能监控', path: '/performance', icon: Stopwatch },
+    { title: '会话回放', path: '/replays', icon: Film }
+  ] },
+  { label: '可观测', items: [
+    { title: '日志平台', path: '/logs', icon: Files },
+    { title: '链路追踪', path: '/traces', icon: Connection },
+    { title: '事件流', path: '/events', icon: List }
+  ] },
+  { label: '产品分析', items: [
+    { title: '漏斗分析', path: '/analytics?tab=funnels', match: 'funnels', icon: Histogram },
+    { title: '用户路径', path: '/analytics?tab=paths', match: 'paths', icon: Aim },
+    { title: '行为分析', path: '/behavior', icon: DataAnalysis }
+  ] },
+  { label: '配置', items: [
+    { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
+    { title: '采集治理', path: '/governance', icon: Operation }
+  ] }
 ]
-const title = computed(() => route.meta.title || '总览')
+
+const activeMenu = computed(() => route.path === '/analytics' ? `/analytics?tab=${route.query.tab || 'funnels'}` : route.path)
+
+function applyQuickRange(value) {
+  if (!value) filters.value.range = []
+  else filters.value.range = [Date.now() - Number(value) * 3600000, Date.now()]
+  refresh()
+}
+
+function globalSearch() {
+  router.push({ path: '/events', query: filters.value.keyword ? { keyword: filters.value.keyword } : {} })
+}
 
 onMounted(async () => {
   setFiltersFromRoute(route.query)
   await refresh()
 })
-
 watch(() => route.query, query => setFiltersFromRoute(query))
-watch(() => route.path, async () => {
+watch(() => route.fullPath, async () => {
   setFiltersFromRoute(route.query)
   await refresh()
 })
@@ -35,25 +59,35 @@ watch(() => route.path, async () => {
   <div class="app-wrapper">
     <aside class="sidebar-container">
       <div class="sidebar-logo-container">
-        <div class="sidebar-logo-text">Web Collection</div>
-        <span>前端采集平台</span>
+        <Monitor class="brand-mark" />
+        <span>统一观测工作台</span>
       </div>
       <el-scrollbar>
-        <el-menu :default-active="route.path" router background-color="#304156" text-color="#bfcbd9" active-text-color="#409eff">
-          <el-menu-item v-for="menu in menus" :key="menu.path" :index="menu.path">
-            <span>{{ menu.title }}</span>
-          </el-menu-item>
+        <el-menu :default-active="activeMenu" router>
+          <template v-for="group in groups" :key="group.label">
+            <div v-if="group.label" class="menu-group">{{ group.label }}</div>
+            <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span>{{ item.title }}</span>
+            </el-menu-item>
+          </template>
         </el-menu>
       </el-scrollbar>
+      <div class="sidebar-footer"><el-icon><Setting /></el-icon><span>项目设置</span><el-icon><ArrowDown /></el-icon></div>
     </aside>
 
     <section class="main-container">
       <header class="navbar">
-        <div class="breadcrumb-title">{{ title }}</div>
-        <el-form class="admin-key" @submit.prevent="refresh">
-          <el-input v-model="key" placeholder="Admin API Key" type="password" show-password />
-          <el-button type="primary" native-type="submit" :loading="loading">刷新</el-button>
-        </el-form>
+        <div class="context-selectors">
+          <el-select v-model="filters.appId" clearable placeholder="Web" @change="refresh"><el-option label="Web" value="web" /><el-option label="全部应用" value="" /></el-select>
+          <el-select model-value="production" disabled><el-option label="● 生产" value="production" /></el-select>
+          <el-input v-model="filters.release" placeholder="全部版本" clearable @change="refresh" />
+          <el-select placeholder="最近24小时" @change="applyQuickRange"><el-option label="最近1小时" value="1" /><el-option label="最近24小时" value="24" /><el-option label="最近7天" value="168" /><el-option label="全部时间" value="" /></el-select>
+        </div>
+        <el-input v-model="filters.keyword" class="global-search" placeholder="搜索错误、日志、追踪、会话ID、用户ID..." clearable @keyup.enter="globalSearch">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <div class="navbar-actions"><el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button><el-button :loading="loading" @click="refresh">刷新</el-button></div>
       </header>
 
       <main class="app-main">
