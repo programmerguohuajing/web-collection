@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { eventPager, filters, issuePager, queryFromFilters, refresh, replayPager } from '../dashboard.js'
 
@@ -10,16 +10,15 @@ const props = defineProps({
 const route = useRoute()
 const router = useRouter()
 const searching = ref(false)
+const globalFields = ['range', 'appId', 'release', 'keyword']
+const visibleFields = computed(() => props.fields.filter(name => !globalFields.includes(name)))
+const queryFields = computed(() => [...new Set([...globalFields, ...props.fields])])
 
 const fieldMap = {
-  range: { label: '时间范围' },
-  appId: { label: '应用' },
-  release: { label: '版本' },
   path: { label: 'URL / path' },
   userId: { label: '用户 ID' },
   userName: { label: '用户名' },
   userPhone: { label: '手机号' },
-  keyword: { label: '关键字' },
   type: { label: '事件类型' },
   status: { label: '错误状态' }
 }
@@ -30,7 +29,7 @@ async function search() {
     eventPager.value.page = 1
     issuePager.value.page = 1
     replayPager.value.page = 1
-    await router.replace(`${route.path}?${queryFromFilters({}, props.fields)}`)
+    await router.replace(`${route.path}?${queryFromFilters({}, queryFields.value)}`)
     await refresh()
   } finally {
     searching.value = false
@@ -38,24 +37,16 @@ async function search() {
 }
 
 async function reset() {
-  for (const name of props.fields) filters.value[name] = name === 'range' ? [] : ''
+  for (const name of visibleFields.value) filters.value[name] = ''
   await search()
 }
 </script>
 
 <template>
-  <el-card v-if="fields.length" shadow="never" class="query-card">
+  <el-card v-if="visibleFields.length" shadow="never" class="query-card">
     <el-form class="ruoyi-query" label-width="82px" @submit.prevent="search">
-      <el-form-item v-for="name in fields" :key="name" :label="fieldMap[name]?.label">
-        <el-date-picker
-          v-if="name === 'range'"
-          v-model="filters.range"
-          type="datetimerange"
-          value-format="x"
-          start-placeholder="开始"
-          end-placeholder="结束"
-        />
-        <el-select v-else-if="name === 'type'" v-model="filters.type" placeholder="请选择" clearable>
+      <el-form-item v-for="name in visibleFields" :key="name" :label="fieldMap[name]?.label">
+        <el-select v-if="name === 'type'" v-model="filters.type" placeholder="请选择" clearable>
           <el-option label="错误" value="error" />
           <el-option label="性能" value="perf" />
           <el-option label="行为" value="behavior" />
