@@ -162,11 +162,15 @@ function alertTrigger(event, issue, config) {
   if (event.type !== 'perf' || !Number.isFinite(Number(event.value))) return null
   const metric = String(event.metric || event.name || '').toLowerCase()
   const threshold = Number(config[metric])
-  return Number.isFinite(threshold) && Number(event.value) > threshold ? makeTrigger(metric, Number(event.value), 'warning', event) : null
+  return Number.isFinite(threshold) && Number(event.value) > threshold ? makeTrigger(metric, Number(event.value), 'warning', event, threshold) : null
 }
 
-function makeTrigger(metric, value, level, event) {
-  return { metric, value, level, message: `[Web Collection] ${event.appId} ${metric} 告警，值 ${value}，页面 ${event.url || event.path || '-'}` }
+function makeTrigger(metric, value, level, event, threshold) {
+  const page = event.path || event.url || '-'
+  const message = event.type === 'perf'
+    ? `[Web Collection] ${event.appId} ${metric.toUpperCase()} ${value}${metric === 'cls' ? '' : 'ms'}，超过阈值 ${threshold}${metric === 'cls' ? '' : 'ms'}，页面 ${page}`
+    : `[Web Collection] ${event.appId} ${event.name || metric}: ${event.message || '未知错误'}，页面 ${page}，版本 ${event.release || '-'}，Trace ${event.traceId || '-'}`
+  return { metric, value, level, message }
 }
 
 async function notify(message) {

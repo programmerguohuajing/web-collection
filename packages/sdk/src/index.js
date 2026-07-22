@@ -33,7 +33,7 @@ const STORE_KEY = '__web_collection_queue__'
  * @param {number} [options.maxRetries=3] - 单次上报失败后的最大重试次数
  * @param {number} [options.sampleRate=1] - 采样率（0~1），未命中则返回空实现
  * @param {boolean} [options.behavior=true] - 是否开启行为采集
- * @param {boolean} [options.console=false] - 是否将 console.warn/error 记录为错误面包屑
+ * @param {boolean} [options.console=true] - 是否采集 console 日志
  * @param {string} [options.collectKey=''] - 应用采集密钥
  * @param {boolean} [options.tracing=true] - 是否采集前端请求链路
  * @param {string[]} [options.traceOrigins=[]] - 允许透传 traceparent 的跨域 Origin；同源始终允许
@@ -74,7 +74,7 @@ export function createEys(options = {}) {
     sampleRate: 1,
     // behavior 控制是否开启行为采集。
     behavior: true,
-    console: false,
+    console: true,
     consoleLevels: ['log', 'info', 'warn', 'error'],
     collectKey: '',
     tracing: true,

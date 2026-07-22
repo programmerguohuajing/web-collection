@@ -83,6 +83,7 @@ function eventWhere(filters = {}) {
   addEq(parts, params, 'app_id', filters.appId)
   addEq(parts, params, 'release_name', filters.release)
   addEq(parts, params, 'type', filters.type)
+  addEq(parts, params, 'name', filters.name)
   addEq(parts, params, 'user_id', filters.userId)
   addLike(parts, params, 'user_name', filters.userName)
   addLike(parts, params, 'user_phone', filters.userPhone)

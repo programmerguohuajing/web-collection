@@ -7,6 +7,6 @@ import { behavior, behaviorEvents, behaviorPager, setPage, setPageSize, tableLoa
 
 <template>
   <SearchPanel :fields="['path', 'userId']" />
-  <RankPanel title="行为排行" subtitle="behavior / track" :items="behavior" />
+  <RankPanel class="section" title="行为排行" subtitle="behavior / track" :items="behavior" />
   <EventTable title="行为事件" :rows="behaviorEvents" :loading="tableLoading.behavior" :total="behaviorPager.total" :page="behaviorPager.page" :page-size="behaviorPager.pageSize" stream @page-change="setPage('behavior', $event)" @size-change="setPageSize('behavior', $event)" />
 </template>

@@ -2,8 +2,8 @@
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, ArrowDown, Bell, Connection, DataAnalysis, Files, Film, Grid,
-  Histogram, House, List, Monitor, Operation, Search, Setting, Stopwatch, Warning
+  Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
+  Histogram, House, List, Monitor, Operation, Search, Stopwatch, Warning
 } from '@element-plus/icons-vue'
 import { error, filters, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
 
@@ -73,7 +73,6 @@ watch(() => route.fullPath, async () => {
           </template>
         </el-menu>
       </el-scrollbar>
-      <div class="sidebar-footer"><el-icon><Setting /></el-icon><span>项目设置</span><el-icon><ArrowDown /></el-icon></div>
     </aside>
 
     <section class="main-container">

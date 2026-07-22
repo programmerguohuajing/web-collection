@@ -11,6 +11,13 @@ export function readableText(...values) {
   return firstReadable(values) || '-'
 }
 
+export function formatErrorLocation(event = {}) {
+  const { source, line, column } = event.props || {}
+  if (source && line) return `${source}:${line}:${column || 0}`
+  const match = String(event.stack || '').match(/((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/)
+  return match ? `${match[1]}:${match[2]}:${match[3]}` : '-'
+}
+
 export function scoreWebVitals(perf = {}) {
   const checks = [['fcp', 1800, 3000, 10], ['lcp', 2500, 4000, 25], ['inp', 200, 500, 25], ['cls', 0.1, 0.25, 25], ['ttfb', 800, 1800, 15]]
   let score = 0
