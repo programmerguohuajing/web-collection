@@ -5,7 +5,7 @@ const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(d
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
-    if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }))
+    if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }), request)
     try {
       let response
       if (url.pathname === '/health') response = json({ ok: true, runtime: 'cloudflare-workers' })
@@ -14,9 +14,9 @@ export default {
       else if (url.pathname.startsWith('/api/')) response = await adminApi(request, env, url)
       else if (url.pathname.startsWith('/sdk/')) response = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request))
       else response = await env.ASSETS.fetch(request)
-      return cors(response)
+      return cors(response, request)
     } catch (error) {
-      return cors(new Response(error?.message || 'server error', { status: 500 }))
+      return cors(new Response(error?.message || 'server error', { status: 500 }), request)
     }
   },
   async scheduled(controller, env) { await cleanup(env) }
@@ -155,7 +155,7 @@ function group(items,key){return items.reduce((out,item)=>((out[key(item)]||=[])
 function cleanObject(value){if(!value||typeof value!=='object')return null;return Object.fromEntries(Object.entries(value).slice(0,50).map(([k,v])=>[clip(k,80),redact(clip(typeof v==='object'?JSON.stringify(v):v,1000))]))}
 function cleanUrl(value){try{const u=new URL(String(value));for(const key of ['token','password','key','secret','authorization'])u.searchParams.delete(key);return clip(u.toString(),2048)}catch{return clip(value||'',2048)}}
 function redact(v){return String(v).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi,'$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g,'***$1')}
-function cors(response){const r=new Response(response.body,response);r.headers.set('access-control-allow-origin','*');r.headers.set('access-control-allow-methods','GET,POST,PUT,OPTIONS');r.headers.set('access-control-allow-headers','content-type,x-app-key,traceparent');return r}
+function cors(response,request){const r=new Response(response.body,response),origin=request.headers.get('origin');r.headers.set('access-control-allow-origin',origin||'*');if(origin){r.headers.set('access-control-allow-credentials','true');r.headers.append('vary','Origin')}r.headers.set('access-control-allow-methods','GET,POST,PUT,OPTIONS');r.headers.set('access-control-allow-headers','content-type,x-app-key,traceparent');return r}
 function parse(value,fallback){try{return typeof value==='string'?JSON.parse(value):value??fallback}catch{return fallback}}
 function strings(v){return Array.isArray(v)?v.map(String).map(s=>s.trim()).filter(Boolean):[]}
 function clip(v,n){return String(v??'').slice(0,n)} function rate(v){return Math.max(0,Math.min(1,Number(v??1)))} function origin(v){try{return new URL(v).origin}catch{return''}} function maskPhone(v=''){return String(v).replace(/^(\d{3})\d{4}(\d{4})$/,'$1****$2')} function random(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/[+/=]/g,'').slice(0,n*2)} async function sha256(v){return[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))].map(x=>x.toString(16).padStart(2,'0')).join('')}
