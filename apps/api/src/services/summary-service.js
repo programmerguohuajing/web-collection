@@ -24,8 +24,9 @@ import { percentile, scorePerf } from '../utils/domain.js'
 export function buildSummary(events, issuesById, replays) {
   const perfEvents = events.filter(e => e.type === 'perf' && Number.isFinite(Number(e.value)))
   const perf = {}
-  for (const metric of ['lcp', 'inp', 'fid', 'cls', 'fcp', 'fp', 'ttfb', 'longtask']) {
-    const value = percentile(perfEvents.filter(e => e.metric === metric).map(e => Number(e.value)), 75)
+  for (const metric of ['lcp', 'inp', 'fid', 'cls', 'fcp', 'fp', 'ttfb', 'longtask', 'white_screen', 'blank_screen_rate', 'first_screen', 'route_render', 'data_ready', 'dom_ready', 'page_load', 'js_boot', 'tbt', 'resource_failure_rate', 'slow_api_rate', 'dns', 'tcp', 'tls', 'request', 'download', 'cache_hit_rate', 'redirect', 'redirect_count']) {
+    const values = perfEvents.filter(e => e.metric === metric).map(e => Number(e.value))
+    const value = metric.endsWith('_rate') && values.length ? values.reduce((sum, item) => sum + item, 0) / values.length : percentile(values, 75)
     if (value !== null) perf[metric] = Number(value.toFixed(metric === 'cls' ? 4 : 0))
   }
   const issues = Object.values(issuesById).sort((a, b) => b.lastSeen - a.lastSeen)

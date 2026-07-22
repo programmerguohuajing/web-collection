@@ -39,7 +39,12 @@ function draw() {
     if (event.userId || event.deviceId) bucket.users.add(event.userId || event.deviceId)
     if (event.type === 'perf' && Number.isFinite(Number(event.value))) bucket.perf.push(Number(event.value))
   }
-  if (!props.events.length) buckets.forEach((item, index) => { item.errors = index % 5 + (index === 19 ? 18 : 0); item.users.add(index); item.perf = [18 + index % 7 + (index === 19 ? 45 : 0)] })
+  if (!props.events.length) {
+    ctx.textAlign = 'center'
+    ctx.fillText('暂无趋势数据', width / 2, height / 2)
+    ctx.textAlign = 'start'
+    return
+  }
   const series = [
     { color: '#ef4444', values: buckets.map(item => item.errors) },
     { color: '#6d4aff', values: buckets.map(item => item.users.size) },

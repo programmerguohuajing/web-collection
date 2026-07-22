@@ -30,29 +30,62 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
   onReady(() => {
     const nav = performance.getEntriesByType('navigation')[0]
     if (nav) {
-      metric('navigation', nav.duration, { dns: nav.domainLookupEnd - nav.domainLookupStart, tcp: nav.connectEnd - nav.connectStart, ttfb: nav.responseStart, load: nav.loadEventEnd, dcl: nav.domContentLoadedEventEnd, __traceId: pageTraceId, __spanId: pageTraceId.slice(0, 16) })
-      metric('ttfb', nav.responseStart, { dns: nav.domainLookupEnd - nav.domainLookupStart, tcp: nav.connectEnd - nav.connectStart, load: nav.loadEventEnd, dcl: nav.domContentLoadedEventEnd })
+      const values = navigationMetrics(nav)
+      metric('navigation', nav.duration, { ...values, __traceId: pageTraceId, __spanId: pageTraceId.slice(0, 16) })
+      for (const [name, value] of Object.entries(values)) metric(name, value)
     }
   })
 
   // Web Vitals 核心指标
   observe('paint', e => metric(e.name === 'first-contentful-paint' ? 'fcp' : 'fp', e.startTime))
-  observe('largest-contentful-paint', e => metric('lcp', e.startTime, { element: e.element?.tagName }))
+  observe('largest-contentful-paint', e => {
+    const props = { element: e.element?.tagName }
+    metric('lcp', e.startTime, props)
+    metric('first_screen', e.startTime, props)
+  })
   observe('first-input', e => metric('fid', e.processingStart - e.startTime, { name: e.name }))
   observe('event', e => metric('inp', e.duration, { name: e.name }))
-  observe('longtask', e => metric('longtask', e.duration, { name: e.name }))
+  let blockingTime = 0
+  observe('longtask', e => { blockingTime += Math.max(0, e.duration - 50); metric('longtask', e.duration, { name: e.name }); metric('tbt', blockingTime) })
   observeCls(metric)
   // 资源加载监控，过滤掉自身采集接口的请求
+  let resources = 0
+  let cacheHits = 0
+  let resourceFailures = 0
   observe('resource', e => {
     if (String(e.name).includes(endpoint)) return
+    resources++
+    if (e.transferSize === 0 && e.decodedBodySize > 0) cacheHits++
+    metric('cache_hit_rate', cacheHits / resources * 100)
+    metric('resource_failure_rate', resourceFailures / (resources + resourceFailures) * 100)
     metric('resource', e.duration, { name: e.name, initiatorType: e.initiatorType, transferSize: e.transferSize, ttfb: e.responseStart })
   })
+  addEventListener('error', event => {
+    if (!event.target?.src && !event.target?.href) return
+    resourceFailures++
+    metric('resource_failure_rate', resourceFailures / (resources + resourceFailures) * 100)
+  }, true)
 
   if (requests) {
     setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId })
     setupXhrMonitor({ endpoint, metric, tracing, traceOrigins, pageTraceId })
     setupWebSocketMonitor({ metric, error })
     setupSseMonitor({ metric, error })
+  }
+}
+
+export function navigationMetrics(nav) {
+  return {
+    dns: nav.domainLookupEnd - nav.domainLookupStart,
+    tcp: nav.connectEnd - nav.connectStart,
+    tls: nav.secureConnectionStart > 0 ? nav.connectEnd - nav.secureConnectionStart : 0,
+    request: nav.responseStart - nav.requestStart,
+    download: nav.responseEnd - nav.responseStart,
+    ttfb: nav.responseStart,
+    dom_ready: nav.domContentLoadedEventEnd,
+    page_load: nav.loadEventEnd,
+    redirect: nav.redirectEnd > 0 ? nav.redirectEnd - nav.redirectStart : 0,
+    redirect_count: nav.redirectCount || 0
   }
 }
 

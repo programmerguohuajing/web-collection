@@ -43,9 +43,12 @@ const STORE_KEY = '__web_collection_queue__'
  * @param {number} [options.replayMaxDuration=60000] - 单个路由页面最多录制时长（ms）
  * @param {number} [options.replayBatchSize=50] - 回放事件的批量上报数量
  * @param {object} [options.replayOptions={}] - rrweb 回放模块的附加配置
+ * @param {string} [options.whiteScreenSelector='#app > *'] - 首页有效内容选择器
+ * @param {number} [options.whiteScreenTimeout=5000] - 白屏判定阈值（ms）
  * @returns {object} SDK 客户端实例，包含 track/error/metric/flush/destroy 等方法
  */
 export function createEys(options = {}) {
+  const sdkStartedAt = performance.now()
   // 合并调用方传入的配置对象。
   // cfg 保存 SDK 运行期间使用的最终配置。
   const cfg = {
@@ -88,6 +91,8 @@ export function createEys(options = {}) {
     replayBatchSize: 50,
     // replayOptions 传递 rrweb 等回放模块的附加配置。
     replayOptions: {},
+    whiteScreenSelector: '#app > *',
+    whiteScreenTimeout: 5000,
     ...options
   }
   // 采样未命中时直接返回一个空实现客户端。
@@ -127,12 +132,29 @@ export function createEys(options = {}) {
 
   setupErrorMonitor({ error, clipSize: 500 })
   setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId })
-  if (cfg.behavior) setupBehaviorMonitor({ push, onRoute: cfg.replaySegmentByRoute ? () => endReplaySegment('route') : null })
+  observeWhiteScreen()
+  requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
+  if (cfg.behavior) setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') } })
   else if (cfg.replay && cfg.replaySegmentByRoute) setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') })
   if (cfg.exposure) setupExposureMonitor({ push })
   if (cfg.replay) startReplay()
 
-  return { track, error, metric, log, setUser, flush, destroy, startReplay, stopReplay: stopReplayRecording, flushReplay, addReplayEvent, takeReplaySnapshot, endReplaySegment }
+  return { track, error, metric, log, setUser, markPageReady: () => metric('data_ready', performance.now()), flush, destroy, startReplay, stopReplay: stopReplayRecording, flushReplay, addReplayEvent, takeReplaySnapshot, endReplaySegment }
+
+  function observeWhiteScreen() {
+    const started = performance.now()
+    const timer = setInterval(() => {
+      const element = document.querySelector(cfg.whiteScreenSelector)
+      if (element?.getBoundingClientRect().width && element.getBoundingClientRect().height) {
+        clearInterval(timer)
+        metric('white_screen', performance.now())
+        metric('blank_screen_rate', 0)
+      } else if (performance.now() - started >= cfg.whiteScreenTimeout) {
+        clearInterval(timer)
+        metric('blank_screen_rate', 100)
+      }
+    }, 100)
+  }
 
   /** 自定义事件追踪 */
   function track(name, props = {}) {
@@ -156,6 +178,9 @@ export function createEys(options = {}) {
   function metric(name, value, props = {}) {
     const { __traceId: traceId, __spanId: spanId, ...details } = props
     push({ type: 'perf', metric: name, value: Number(value), props: details, traceId, spanId })
+    if (name === 'fetch' || name === 'xhr') {
+      push({ type: 'perf', metric: 'slow_api_rate', value: Number(value) > 1000 ? 100 : 0, props: { threshold: 1000 } })
+    }
   }
 
   /** 结构化日志；服务端会再次执行脱敏。 */
@@ -380,7 +405,7 @@ function loadQueue(maxQueue) {
 
 /** 采样未命中时返回的空实现客户端，所有方法均为 no-op */
 function noopClient() {
-  return { track() {}, error() {}, metric() {}, log() {}, setUser() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
+  return { track() {}, error() {}, metric() {}, log() {}, setUser() {}, markPageReady() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
 }
 
 function randomHex(bytes) {

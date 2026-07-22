@@ -50,7 +50,26 @@ function nameLabel(row) {
     fcp: '首次内容渲染',
     fid: '首次输入延迟',
     ttfb: '首字节时间',
-    longtask: '长任务'
+    longtask: '长任务',
+    white_screen: '首页白屏时间',
+    blank_screen_rate: '白屏率',
+    first_screen: '首屏完成时间',
+    route_render: '路由切换渲染',
+    data_ready: '页面数据就绪',
+    dom_ready: 'DOM Ready',
+    page_load: '页面完全加载',
+    js_boot: 'JavaScript 初始化',
+    tbt: '总阻塞时间',
+    resource_failure_rate: '资源加载失败率',
+    slow_api_rate: '慢接口率',
+    dns: 'DNS 查询',
+    tcp: 'TCP 连接',
+    tls: 'TLS 握手',
+    request: '服务端响应',
+    download: 'HTML 下载',
+    cache_hit_rate: '缓存命中率',
+    redirect: '重定向耗时',
+    redirect_count: '重定向次数'
   }
   if (row.type === 'behavior' && row.props) {
     const tag = String(row.props.tag || row.props.elementType || '').toUpperCase()
