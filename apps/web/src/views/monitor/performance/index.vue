@@ -8,9 +8,13 @@ import { perfEvents, perfPager, setPage, setPageSize, summary, tableLoading } fr
 <template>
   <SearchPanel :fields="['path']" />
   <PerfPanel :perf="summary?.perf || {}" />
-  <section class="grid">
+  <section class="grid performance-grid">
     <EventTable title="慢接口" :rows="summary?.api || []" />
     <EventTable title="慢资源" :rows="summary?.resources || []" />
   </section>
   <EventTable title="性能事件" :rows="perfEvents" :loading="tableLoading.perf" :total="perfPager.total" :page="perfPager.page" :page-size="perfPager.pageSize" stream @page-change="setPage('perf', $event)" @size-change="setPageSize('perf', $event)" />
 </template>
+
+<style scoped>
+.performance-grid { margin-top: 14px; }
+</style>

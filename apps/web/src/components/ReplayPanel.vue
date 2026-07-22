@@ -22,11 +22,13 @@ let progressTimer = 0
 const REASON_MAP = {
   error: '报错',
   route: '页面跳转',
-  page_unload: '页面关闭'
+  page_unload: '页面关闭',
+  max_duration: '达到时长上限',
+  normal: '正常结束'
 }
 
 function reasonLabel(reason) {
-  return REASON_MAP[reason] || ''
+  return REASON_MAP[reason] || '未记录'
 }
 
 function replayUser(row) {
@@ -163,7 +165,7 @@ defineExpose({ play })
           </template>
         </el-table-column>
         <el-table-column label="结束原因" width="110">
-          <template #default="{ row }">{{ reasonLabel(row.endReason) || '' }}</template>
+          <template #default="{ row }">{{ reasonLabel(row.endReason) }}</template>
         </el-table-column>
         <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ row.lastSeen ? new Date(row.lastSeen).toLocaleString() : '' }}</template>
