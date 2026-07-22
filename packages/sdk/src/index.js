@@ -166,7 +166,7 @@ export function createEys(options = {}) {
     endReplaySegment('error')
     push({
       type: 'error',
-      name: err?.name || extra.name || 'Error',
+      name: extra.name || err?.name || 'Error',
       message: err?.message || serialize(err),
       stack: err?.stack || '',
       props: { ...extra, traceId: pageTraceId },
