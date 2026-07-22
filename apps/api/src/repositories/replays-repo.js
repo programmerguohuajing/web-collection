@@ -69,11 +69,11 @@ export async function listReplayEventRows(idOrSessionId) {
            order by id asc
            limit 1
          ), 9223372036854775807)
-       order by created_at asc`,
+       order by created_at asc, id asc`,
       [idOrSessionId, idOrSessionId, idOrSessionId, idOrSessionId]
     )
   }
-  return all('select events_json from replay_events where session_id = ? order by created_at asc', [idOrSessionId])
+  return all('select events_json from replay_events where session_id = ? order by created_at asc, id asc', [idOrSessionId])
 }
 
 /** 插入一条回放事件详情记录 */
