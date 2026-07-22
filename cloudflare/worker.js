@@ -3,13 +3,13 @@ import { SourceMapConsumer } from 'source-map-js'
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url)
     if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }), request)
     try {
       let response
       if (url.pathname === '/health') response = json({ ok: true, runtime: 'cloudflare-workers' })
-      else if (url.pathname === '/api/collect' && request.method === 'POST') response = await collect(request, env)
+      else if (url.pathname === '/api/collect' && request.method === 'POST') response = await collect(request, env, ctx)
       else if (url.pathname === '/api/collect.gif') response = await collectGif(url, env)
       else if (url.pathname.startsWith('/api/')) response = await adminApi(request, env, url)
       else if (url.pathname.startsWith('/sdk/')) response = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request))
@@ -22,16 +22,17 @@ export default {
   async scheduled(controller, env) { await cleanup(env) }
 }
 
-async function collect(request, env) {
+async function collect(request, env, ctx) {
   const payload = await request.json()
   const inputs = payload.type === 'replay' ? [payload] : Array.isArray(payload.events) ? payload.events : Array.isArray(payload) ? payload : [payload]
   const appId = clip(inputs[0]?.appId || 'default', 64)
   if (inputs.some(item => clip(item?.appId || 'default', 64) !== appId)) return new Response('mixed app ids', { status: 400 })
   const app = await env.DB.prepare('select enabled, sample_rate, replay_sample_rate, collect_key_hash, rules_json from applications where app_id=?').bind(appId).first()
   if (app?.collect_key_hash && await sha256(request.headers.get('x-app-key') || '') !== app.collect_key_hash) return new Response('bad app key', { status: 401 })
-  let count = 0
-  for (const input of inputs.slice(0, 100)) if (await record(env, sanitize(input), app)) count++
-  return json({ ok: true, count, received: inputs.length })
+  const events = inputs.slice(0, 100).map(sanitize)
+  // ponytail: acknowledge after validation; add a Queue if guaranteed ingestion is required.
+  ctx.waitUntil((async () => { for (const event of events) await record(env, event, app) })())
+  return json({ ok: true, accepted: events.length, received: inputs.length })
 }
 
 async function collectGif(url, env) {
@@ -42,6 +43,7 @@ async function collectGif(url, env) {
 
 async function record(env, event, application) {
   const now = Date.now()
+  if (event.type === 'error' && event.props?.name) event.name = clip(event.props.name, 160)
   await env.DB.prepare(`insert into applications (app_id,name,enabled,sample_rate,replay_sample_rate,created_at,updated_at) values (?,?,1,1,1,?,?) on conflict(app_id) do nothing`).bind(event.appId, event.appId, now, now).run()
   await env.DB.prepare(`insert into releases (app_id,release_name,status,created_at) values (?,?, 'active', ?) on conflict(app_id,release_name) do nothing`).bind(event.appId, event.release, now).run()
   const app = application || await env.DB.prepare('select enabled,sample_rate,replay_sample_rate,rules_json from applications where app_id=?').bind(event.appId).first()
@@ -60,12 +62,14 @@ async function record(env, event, application) {
 }
 
 async function upsertIssue(env, event) {
-  const fingerprint = await sha256(`${event.name}|${String(event.stack || event.message).split('\n').slice(0, 3).join('\n')}`)
+  const fingerprint = await sha256(issueKey(event))
   const previous = await env.DB.prepare('select * from issues where fingerprint=?').bind(fingerprint).first()
   const status = previous?.status === 'resolved' && previous.release_name !== event.release ? 'regression' : previous?.status || 'open'
   const original = await resolveSourceMap(env, event)
   await env.DB.prepare(`insert into issues (fingerprint,status,app_id,release_name,name,message,stack,url,props_json,breadcrumbs_json,original_json,count,first_seen,last_seen,resolved_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(fingerprint) do update set status=excluded.status,release_name=excluded.release_name,message=excluded.message,stack=excluded.stack,url=excluded.url,props_json=excluded.props_json,breadcrumbs_json=excluded.breadcrumbs_json,original_json=excluded.original_json,count=issues.count+1,last_seen=excluded.last_seen`).bind(fingerprint,status,event.appId,event.release,event.name,event.message,event.stack,event.url,JSON.stringify(event.props||null),JSON.stringify(event.breadcrumbs||null),JSON.stringify(original),1,previous?.first_seen||event.ts,event.ts,previous?.resolved_at||null).run()
 }
+
+export function issueKey(event) { const source=['FetchError','ResourceError','SseError','WebSocketError'].includes(event.name)?event.props?.source:'';return`${event.appId}|${event.name}|${source||String(event.stack||event.message).split('\n').slice(0,3).join('\n')}` }
 
 async function adminApi(request, env, url) {
   const path = url.pathname
@@ -139,7 +143,7 @@ async function saveRelease(env,appId,release,input){await env.DB.prepare(`insert
 async function settings(env){const row=await env.DB.prepare('select config_json from settings where id=1').first();return {...defaultSettings,...parse(row?.config_json,{}) ,retention:{...defaultSettings.retention,...parse(row?.config_json,{}).retention},alerts:{...defaultSettings.alerts,...parse(row?.config_json,{}).alerts}}}
 async function saveSettings(env,input){const value={retention:{...defaultSettings.retention,...input.retention},alerts:{...defaultSettings.alerts,...input.alerts}};await env.DB.prepare(`insert into settings(id,config_json,updated_at) values(1,?,?) on conflict(id) do update set config_json=excluded.config_json,updated_at=excluded.updated_at`).bind(JSON.stringify(value),Date.now()).run();return json(value)}
 async function saveSourceMap(env,input){const appId=clip(input.appId||'default',64),release=clip(input.release||'unknown',64),file=String(input.file||input.map?.file||'app.js').split('/').at(-1);await env.DB.prepare(`insert into sourcemaps(app_id,release_name,file_name,map_json,created_at) values(?,?,?,?,?) on conflict(app_id,release_name,file_name) do update set map_json=excluded.map_json,created_at=excluded.created_at`).bind(appId,release,file,JSON.stringify(input.map),Date.now()).run();return json({appId,release,file})}
-async function resolveSourceMap(env,event){const match=String(event.stack||'').match(/((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/),source=event.props?.source||match?.[1],line=Number(event.props?.line||match?.[2]),column=Number(event.props?.column||match?.[3]||0);if(!source||!line)return null;const row=await env.DB.prepare('select map_json from sourcemaps where app_id=? and release_name=? and file_name=?').bind(event.appId,event.release,source.split('/').at(-1)).first();if(!row)return null;const consumer=new SourceMapConsumer(parse(row.map_json,{})),pos=consumer.originalPositionFor({line,column});consumer.destroy?.();return pos?.source?{generatedFile:source,generatedLine:line,generatedColumn:column,source:pos.source,line:pos.line,column:pos.column,name:pos.name}:null}
+async function resolveSourceMap(env,event){const match=[...String(event.stack||'').matchAll(/((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/g)].find(item=>!/web-collection-sdk(?:\.[\w-]+)?\.js/i.test(item[1])),source=event.props?.line?event.props.source:match?.[1],line=Number(event.props?.line||match?.[2]),column=Number(event.props?.column||match?.[3]||0);if(!source||!line)return null;const row=await env.DB.prepare('select map_json from sourcemaps where app_id=? and release_name=? and file_name=?').bind(event.appId,event.release,source.split('/').at(-1)).first();if(!row)return null;const consumer=new SourceMapConsumer(parse(row.map_json,{})),pos=consumer.originalPositionFor({line,column});consumer.destroy?.();return pos?.source?{generatedFile:source,generatedLine:line,generatedColumn:column,source:pos.source,line:pos.line,column:pos.column,name:pos.name}:null}
 async function saveFunnel(env,input){const steps=strings(input.steps).slice(0,10);if(!input.name||steps.length<2)throw new Error('漏斗名称和至少两个步骤不能为空');const now=Date.now();const result=await env.DB.prepare('insert into funnels(name,app_id,steps_json,created_at,updated_at) values(?,?,?,?,?)').bind(clip(input.name,128),input.appId||null,JSON.stringify(steps),now,now).run();return json({id:result.meta.last_row_id})}
 async function runFunnel(env,id,url){const def=await env.DB.prepare('select * from funnels where id=?').bind(id).first();if(!def)throw new Error('漏斗不存在');const steps=parse(def.steps_json,[]),{where,values}=filters(url);const rows=(await env.DB.prepare(`select session_id,coalesce(nullif(user_id,''),device_id,session_id) actor,name,type,ts,release_name,case when user_agent like '%Edg/%' then 'Edge' when user_agent like '%Chrome/%' then 'Chrome' when user_agent like '%Firefox/%' then 'Firefox' when user_agent like '%Safari/%' then 'Safari' else 'Other' end browser,case when user_agent like '%Mobile%' then 'Mobile' else 'Desktop' end device from events ${where} ${where?'and':'where'} (name in (${steps.map(()=>'?').join(',')}) or type='error') order by ts limit 50000`).bind(...values,...steps).all()).results,actors=Object.values(group(rows,r=>r.actor)),counts=steps.map((_,i)=>actors.filter(a=>reaches(a,steps,i)).length),replayIds=(await env.DB.prepare('select distinct session_id from replays').all()).results;const lostSessions=actors.filter(a=>reaches(a,steps,0)&&!reaches(a,steps,steps.length-1)).slice(0,100).map(a=>({sessionId:a[0].session_id,actor:a[0].actor,lastEvent:a.filter(x=>x.type!=='error').at(-1)?.name,errors:a.filter(x=>x.type==='error').length,replaySessionId:replayIds.find(x=>x.session_id.startsWith(a[0].session_id))?.session_id}));return json({definition:def,steps:steps.map((step,i)=>({step,count:counts[i],rate:counts[0]?Number((counts[i]/counts[0]*100).toFixed(2)):0,lost:i?counts[i-1]-counts[i]:0})),lostSessions,dimensions:['release_name','browser','device'].map(field=>({field,items:dimensions(rows,steps,field)})),trend:dimensions(rows,steps,'day')})}
 async function saveDashboard(env,input){if(!input.name)throw new Error('仪表盘名称不能为空');const now=Date.now(),result=await env.DB.prepare('insert into dashboards(name,widgets_json,created_at,updated_at) values(?,?,?,?)').bind(clip(input.name,128),JSON.stringify(strings(input.widgets).slice(0,12)),now,now).run();return json({id:result.meta.last_row_id})}

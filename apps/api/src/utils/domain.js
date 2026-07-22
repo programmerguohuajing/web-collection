@@ -14,8 +14,10 @@ import { createHash } from 'node:crypto'
  * @returns {string} 16 位十六进制指纹
  */
 export function fingerprint(event) {
+  const name = event.props?.name || event.name
+  const source = ['FetchError', 'ResourceError', 'SseError', 'WebSocketError'].includes(name) ? event.props?.source : ''
   return createHash('sha1')
-    .update([event.appId, event.name, event.message, trimStack(event.stack)].filter(Boolean).join('|'))
+    .update([event.appId, name, source || event.message, source ? '' : trimStack(event.stack)].filter(Boolean).join('|'))
     .digest('hex')
     .slice(0, 16)
 }
