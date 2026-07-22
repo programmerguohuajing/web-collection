@@ -34,6 +34,8 @@ export interface EysOptions {
   replayMaxDuration?: number
   replayBatchSize?: number
   replayOptions?: Record<string, unknown>
+  whiteScreenSelector?: string
+  whiteScreenTimeout?: number
 }
 
 export interface EysClient {
@@ -42,6 +44,7 @@ export interface EysClient {
   metric(name: string, value: number, props?: Record<string, unknown>): void
   log(level: 'log' | 'info' | 'warn' | 'error' | string, message: unknown, props?: Record<string, unknown>): void
   setUser(user: EysUser): void
+  markPageReady(): void
   flush(force?: boolean): Promise<void> | void
   destroy(): void
   startReplay(): void

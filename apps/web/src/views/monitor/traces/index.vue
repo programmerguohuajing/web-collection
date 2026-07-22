@@ -32,7 +32,7 @@ watch(() => route.query, load)
     <el-table :data="spans" border>
       <el-table-column label="时间" width="140"><template #default="{ row }">{{ new Date(row.ts).toLocaleTimeString() }}</template></el-table-column>
       <el-table-column prop="metric" label="Span" width="120" />
-      <el-table-column prop="value" label="耗时(ms)" width="110" />
+      <el-table-column label="耗时(ms)" width="110"><template #default="{ row }">{{ Number(Number(row.value || 0).toFixed(2)) }}</template></el-table-column>
       <el-table-column prop="spanId" label="Span ID" width="150" />
       <el-table-column label="请求" min-width="260"><template #default="{ row }">{{ row.props?.method }} {{ row.props?.url || row.url }}</template></el-table-column>
       <el-table-column label="状态" width="90"><template #default="{ row }">{{ row.props?.status || '-' }}</template></el-table-column>
