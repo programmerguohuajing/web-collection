@@ -11,6 +11,18 @@ export function readableText(...values) {
   return firstReadable(values) || '-'
 }
 
+export function scoreWebVitals(perf = {}) {
+  const checks = [['fcp', 1800, 3000, 10], ['lcp', 2500, 4000, 25], ['inp', 200, 500, 25], ['cls', 0.1, 0.25, 25], ['ttfb', 800, 1800, 15]]
+  let score = 0
+  let measured = 0
+  for (const [name, good, poor, weight] of checks) {
+    if (perf[name] == null) continue
+    measured++
+    score += perf[name] <= good ? weight : perf[name] <= poor ? weight / 2 : 0
+  }
+  return measured ? { score: Math.round(score), grade: score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 50 ? 'C' : score >= 25 ? 'D' : 'F', measured } : null
+}
+
 function firstReadable(values) {
   for (const value of values) {
     if (value == null) continue

@@ -1,4 +1,6 @@
 <script setup>
+import { ref } from 'vue'
+
 defineProps({
   issues: { type: Array, default: () => [] },
   loading: Boolean,
@@ -7,6 +9,13 @@ defineProps({
   pageSize: { type: Number, default: 10 }
 })
 defineEmits(['resolve', 'page-change', 'size-change'])
+const selected = ref(null)
+const detailVisible = ref(false)
+
+function showDetail(row) {
+  selected.value = row
+  detailVisible.value = true
+}
 
 function issueNameLabel(name) {
   return ({
@@ -16,7 +25,7 @@ function issueNameLabel(name) {
     resource: '资源加载',
     error: '脚本错误',
     unhandledrejection: 'Promise 异常'
-  })[name] || '其他'
+  })[String(name || '').toLowerCase()] || name || '其他'
 }
 
 function sourceLabel(original) {
@@ -59,8 +68,9 @@ function sourceLabel(original) {
       <el-table-column label="Trace" min-width="180">
         <template #default="{ row }"><router-link v-if="row.props?.traceId" :to="`/traces?keyword=${row.props.traceId}`">{{ row.props.traceId }}</router-link><span v-else>-</span></template>
       </el-table-column>
-      <el-table-column label="操作" width="100" fixed="right">
+      <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" @click="showDetail(row)">详情</el-button>
           <el-button v-if="row.status !== 'resolved'" link type="primary" @click="$emit('resolve', row.fingerprint)">
             解决
           </el-button>
@@ -79,5 +89,27 @@ function sourceLabel(original) {
       @current-change="$emit('page-change', $event)"
       @size-change="$emit('size-change', $event)"
     />
+    <el-drawer v-model="detailVisible" title="错误详情" size="52%">
+      <el-descriptions v-if="selected" :column="1" border>
+        <el-descriptions-item label="错误类型">{{ selected.name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="错误信息">{{ selected.message || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="页面地址">{{ selected.url || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="版本">{{ selected.release || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="发生次数">{{ selected.count || 0 }}</el-descriptions-item>
+        <el-descriptions-item label="首次发生">{{ selected.firstSeen ? new Date(selected.firstSeen).toLocaleString() : '-' }}</el-descriptions-item>
+        <el-descriptions-item label="最近发生">{{ selected.lastSeen ? new Date(selected.lastSeen).toLocaleString() : '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <h3>堆栈</h3>
+      <pre>{{ selected?.stack || '未采集到堆栈' }}</pre>
+      <h3>附加信息</h3>
+      <pre>{{ JSON.stringify(selected?.props || {}, null, 2) }}</pre>
+      <h3>操作轨迹</h3>
+      <pre>{{ JSON.stringify(selected?.breadcrumbs || [], null, 2) }}</pre>
+    </el-drawer>
   </el-card>
 </template>
+
+<style scoped>
+pre { overflow: auto; padding: 12px; border-radius: 6px; background: #f5f7fa; white-space: pre-wrap; word-break: break-word; }
+h3 { margin: 20px 0 8px; }
+</style>

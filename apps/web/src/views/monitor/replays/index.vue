@@ -7,7 +7,8 @@ import { getReplay, replayPager, replays, setPage, setPageSize, tableLoading } f
 const route = useRoute()
 const panel = ref(null)
 watch(replays, async rows => {
-  const row = route.query.replayId && rows.find(item => item.replayId === route.query.replayId)
+  const replayId = String(route.query.replayId || '')
+  const row = replayId && rows.find(item => item.replayId === replayId || item.replayId.startsWith(`${replayId}_`) || replayId.startsWith(`${item.replayId}_`))
   if (row) { await nextTick(); panel.value?.play(row) }
 }, { immediate: true })
 </script>

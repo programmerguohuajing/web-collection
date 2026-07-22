@@ -16,6 +16,7 @@ const replayEl = ref(null)
 const isPlaying = ref(false)
 const progress = ref(0)
 const duration = ref(0)
+const currentReplayId = ref('')
 let currentReplayer = null
 let progressTimer = 0
 
@@ -56,6 +57,7 @@ function fitReplay(width, height) {
 }
 
 async function play(item) {
+  currentReplayId.value = item.replayId
   const events = await props.loadReplay(item.replayId)
   await nextTick()
   destroyPlayer()
@@ -148,7 +150,7 @@ defineExpose({ play })
           <small>{{ replays.length }} 条</small>
         </div>
       </template>
-      <el-table :data="replays" size="small" empty-text="暂无回放">
+      <el-table :data="replays" row-key="replayId" highlight-current-row :current-row-key="currentReplayId" size="small" empty-text="暂无回放">
         <el-table-column label="页面" min-width="260">
           <template #default="{ row }">
             <span class="table-ellipsis" :title="row.url || row.sessionId || ''">{{ row.url || row.sessionId || '' }}</span>
