@@ -14,7 +14,8 @@ export function readableText(...values) {
 export function formatErrorLocation(event = {}) {
   const { source, line, column } = event.props || {}
   if (source && line) return `${source}:${line}:${column || 0}`
-  const match = String(event.stack || '').match(/((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/)
+  const match = [...String(event.stack || '').matchAll(/((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/g)]
+    .find(item => !/web-collection-sdk(?:\.[\w-]+)?\.js/i.test(item[1]))
   return match ? `${match[1]}:${match[2]}:${match[3]}` : '-'
 }
 

@@ -17,7 +17,8 @@ function showDetail(row) {
   detailVisible.value = true
 }
 
-function issueNameLabel(name) {
+function issueNameLabel(issue) {
+  const name = issue?.props?.name || issue?.name
   return ({
     click: '点击',
     fetch: '接口请求',
@@ -48,7 +49,7 @@ function sourceLabel(original) {
         </template>
       </el-table-column>
       <el-table-column label="类型" width="120">
-        <template #default="{ row }">{{ issueNameLabel(row.name) }}</template>
+        <template #default="{ row }">{{ issueNameLabel(row) }}</template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="110" />
       <el-table-column label="版本" width="130">
@@ -91,7 +92,7 @@ function sourceLabel(original) {
     />
     <el-drawer v-model="detailVisible" title="错误详情" size="52%">
       <el-descriptions v-if="selected" :column="1" border>
-        <el-descriptions-item label="错误类型">{{ selected.name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="错误类型">{{ issueNameLabel(selected) }}</el-descriptions-item>
         <el-descriptions-item label="错误信息">{{ selected.message || '-' }}</el-descriptions-item>
         <el-descriptions-item label="页面地址">{{ selected.url || '-' }}</el-descriptions-item>
         <el-descriptions-item label="版本">{{ selected.release || '-' }}</el-descriptions-item>

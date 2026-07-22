@@ -1,7 +1,16 @@
 {
   "name": "@web-collection/sdk",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "type": "module",
+  "files": [
+    "dist",
+    "index.d.ts",
+    "platform.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "dist/web-collection-sdk.iife.js",
   "module": "dist/web-collection-sdk.es.js",
   "types": "index.d.ts",
@@ -42,12 +51,10 @@
     "build": "vite build && vite build --config vite.platform.config.js",
     "test": "node test/platform.test.js && node test/console.test.js && node test/click.test.js && node test/error.test.js"
   },
-  "dependencies": {
-    "rrweb": "2.1.0",
-    "vite": "^6.3.5"
-  },
   "devDependencies": {
+    "rrweb": "2.1.0",
     "terser": "^5.49.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^6.3.5"
   }
 }
