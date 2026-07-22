@@ -363,7 +363,7 @@ createEys({
   maxRetries: 3,
   sampleRate: 1,
   behavior: true,
-  console: false,
+  console: true,
   consoleLevels: ['log', 'info', 'warn', 'error'],
   collectKey: '',
   tracing: true,
