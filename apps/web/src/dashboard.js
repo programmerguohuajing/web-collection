@@ -3,15 +3,17 @@ import { computed, ref } from 'vue'
 const apiBase = import.meta.env.VITE_API_BASE || ''
 
 export const loading = ref(false)
-export const tableLoading = ref({ events: false, perf: false, behavior: false, issues: false, replays: false })
+export const tableLoading = ref({ events: false, errorEvents: false, perf: false, behavior: false, issues: false, replays: false })
 export const error = ref('')
 export const summary = ref(null)
 export const events = ref([])
+export const errorEvents = ref([])
 export const perfEvents = ref([])
 export const behaviorEvents = ref([])
 export const issues = ref([])
 export const replays = ref([])
 export const eventPager = ref({ page: 1, pageSize: 10, total: 0 })
+export const errorEventPager = ref({ page: 1, pageSize: 10, total: 0 })
 export const perfPager = ref({ page: 1, pageSize: 10, total: 0 })
 export const behaviorPager = ref({ page: 1, pageSize: 10, total: 0 })
 export const issuePager = ref({ page: 1, pageSize: 10, total: 0 })
@@ -70,9 +72,10 @@ export async function refresh() {
   loading.value = true
   error.value = ''
   try {
-    const [summaryData, eventData, issueData, replayData, perfData, behaviorData] = await Promise.all([
+    const [summaryData, eventData, errorEventData, issueData, replayData, perfData, behaviorData] = await Promise.all([
       api(`/api/summary?${queryFromFilters()}`),
       loadPaged('events'),
+      loadPaged('errorEvents'),
       loadPaged('issues'),
       loadPaged('replays'),
       loadPaged('perf'),
@@ -80,6 +83,7 @@ export async function refresh() {
     ])
     summary.value = summaryData
     setPaged(events, eventPager, eventData)
+    setPaged(errorEvents, errorEventPager, errorEventData)
     setPaged(issues, issuePager, issueData)
     setPaged(replays, replayPager, replayData)
     setPaged(perfEvents, perfPager, perfData)
@@ -121,8 +125,8 @@ async function refreshPaged(kind) {
 
 async function loadPaged(kind) {
   const pager = pagerMap()[kind]
-  const endpoint = { events: '/api/events', perf: '/api/events', behavior: '/api/events', issues: '/api/issues', replays: '/api/replays' }[kind]
-  const type = { perf: 'perf', behavior: 'behavior' }[kind]
+  const endpoint = { events: '/api/events', errorEvents: '/api/events', perf: '/api/events', behavior: '/api/events', issues: '/api/issues', replays: '/api/replays' }[kind]
+  const type = { errorEvents: 'error', perf: 'perf', behavior: 'behavior' }[kind]
   const query = queryFromFilters(type ? { type } : {})
   return api(`${endpoint}?${query}&page=${pager.value.page}&pageSize=${pager.value.pageSize}`)
 }
@@ -133,11 +137,11 @@ function setPaged(target, pager, data) {
 }
 
 function pagerMap() {
-  return { events: eventPager, perf: perfPager, behavior: behaviorPager, issues: issuePager, replays: replayPager }
+  return { events: eventPager, errorEvents: errorEventPager, perf: perfPager, behavior: behaviorPager, issues: issuePager, replays: replayPager }
 }
 
 function targetMap() {
-  return { events, perf: perfEvents, behavior: behaviorEvents, issues, replays }
+  return { events, errorEvents, perf: perfEvents, behavior: behaviorEvents, issues, replays }
 }
 
 export async function resolveIssue(fingerprint) {

@@ -6,7 +6,7 @@ import { record } from 'rrweb'
  * 录制页面 DOM 变化、用户交互等事件，用于在后台回放用户操作路径。
  * 默认开启输入框脱敏（maskAllInputs）、密码/邮箱/电话等敏感字段遮挡，
  * 支持 `.eys-block`（遮挡）和 `.eys-ignore`（忽略）CSS 类名控制。
- * 每分钟自动生成全量快照（checkoutEveryNms），确保回放数据完整性。
+ * 回放分段重启时会自动生成新的全量快照。
  *
  * @param {object} opts
  * @param {Function} opts.emit - rrweb 事件回调，每产生一个录制事件时调用
@@ -24,7 +24,6 @@ export function setupReplayMonitor({ emit, options = {} }) {
     ignoreSelector: '.eys-ignore',
     slimDOMOptions: true,
     inlineStylesheet: true,
-    checkoutEveryNms: 60000,
     recordCanvas: false,
     collectFonts: true,
     errorHandler: () => {},

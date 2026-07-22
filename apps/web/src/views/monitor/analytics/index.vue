@@ -74,7 +74,7 @@ watch(() => route.query, query => { if (query.tab) tab.value = query.tab; load()
     </el-tab-pane>
     <el-tab-pane label="漏斗分析" name="funnels">
       <el-form inline @submit.prevent="saveFunnel"><el-form-item label="名称"><el-input v-model="funnelForm.name" /></el-form-item><el-form-item label="应用"><el-input v-model="funnelForm.appId" /></el-form-item><el-form-item label="步骤"><el-input v-model="funnelForm.stepsText" placeholder="view,add_cart,pay" style="width:320px" /></el-form-item><el-button type="primary" @click="saveFunnel">保存漏斗</el-button></el-form>
-      <el-table :data="funnels" border><el-table-column prop="name" label="名称" /><el-table-column prop="app_id" label="应用" /><el-table-column label="步骤"><template #default="{ row }">{{ row.steps_json?.join(' → ') }}</template></el-table-column><el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="run(row)">分析</el-button></template></el-table-column></el-table>
+      <el-table :data="funnels" border empty-text="暂无漏斗，请填写名称和至少两个步骤后保存"><el-table-column prop="name" label="名称" /><el-table-column prop="app_id" label="应用" /><el-table-column label="步骤"><template #default="{ row }">{{ row.steps_json?.join(' → ') }}</template></el-table-column><el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="run(row)">分析</el-button></template></el-table-column></el-table>
       <template v-if="funnelResult">
         <h2 class="analysis-title">转化与流失</h2>
         <el-table :data="funnelResult.steps" border><el-table-column prop="step" label="步骤" /><el-table-column prop="count" label="用户数" /><el-table-column prop="rate" label="转化率(%)" /><el-table-column prop="lost" label="流失" /></el-table>
