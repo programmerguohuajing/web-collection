@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import TrendChart from '../../../components/TrendChart.vue'
 import { events, issues, replays, summary } from '../../../dashboard.js'
+import { formatDuration, readableText } from '../../../utils/format.js'
 
 const router = useRouter()
 const primaryIssue = computed(() => issues.value.find(item => item.status !== 'resolved') || issues.value[0])
@@ -10,12 +11,12 @@ const affectedUsers = computed(() => issues.value.reduce((sum, item) => sum + Nu
 const p95 = computed(() => summary.value?.perf?.lcp || summary.value?.performance?.lcp?.p95 || 0)
 const activityRows = computed(() => {
   const errorRows = issues.value.slice(0, 3).map(item => ({
-    ts: item.lastSeen, title: item.message || item.name, level: item.status === 'regression' ? 'P1' : 'P2',
+    ts: item.lastSeen, title: readableText(item.message, item.name), level: item.status === 'regression' ? 'P1' : 'P2',
     impact: item.affectedUsers || item.count || 0, path: item.url || '-', traceId: item.props?.traceId,
     logs: item.count || 0, replay: item.props?.sessionId, release: item.release
   }))
   const eventRows = events.value.filter(item => item.type !== 'error').slice(0, 4).map(item => ({
-    ts: item.ts, title: item.message || item.name || item.metric || item.type, level: item.type === 'perf' ? 'P3' : '-',
+    ts: item.ts, title: readableText(item.message, item.name, item.metric, item.type), level: item.type === 'perf' ? 'P3' : '-',
     impact: item.userId ? 1 : 0, path: item.path || item.url || '-', traceId: item.traceId,
     logs: item.type === 'log' ? 1 : 0, replay: item.sessionId, release: item.release
   }))
@@ -31,14 +32,14 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
 
   <section v-if="primaryIssue" class="incident-banner">
     <el-tag type="danger" effect="dark">P1</el-tag>
-    <div><b>检测到高优先级问题</b><strong>{{ primaryIssue.message || primaryIssue.name }}</strong><small>发生于 {{ new Date(primaryIssue.lastSeen).toLocaleString() }} · 影响用户 {{ primaryIssue.affectedUsers || primaryIssue.count || 0 }}</small></div>
+    <div><b>检测到高优先级问题</b><strong>{{ readableText(primaryIssue.message, primaryIssue.name) }}</strong><small>发生于 {{ new Date(primaryIssue.lastSeen).toLocaleString() }} · 影响用户 {{ primaryIssue.affectedUsers || primaryIssue.count || 0 }}</small></div>
     <el-button type="primary" @click="openIssue">查看高优先级问题</el-button>
   </section>
 
   <section class="metrics overview-metrics">
     <el-card shadow="never"><span>错误数</span><strong class="danger-value">{{ summary?.errors ?? summary?.issueCount ?? issues.length }}</strong><small>当前筛选范围内</small></el-card>
     <el-card shadow="never"><span>受影响用户</span><strong class="violet-value">{{ affectedUsers }}</strong><small>关联错误与会话</small></el-card>
-    <el-card shadow="never"><span>P95 页面加载耗时</span><strong class="primary-value">{{ p95 ? `${Math.round(p95)} ms` : '-' }}</strong><small>Core Web Vitals</small></el-card>
+    <el-card shadow="never"><span>P95 页面加载耗时</span><strong class="primary-value">{{ p95 ? formatDuration(p95) : '-' }}</strong><small>Core Web Vitals</small></el-card>
     <el-card shadow="never"><span>活跃会话</span><strong class="success-value">{{ summary?.users ?? replays.length }}</strong><small>当前筛选范围内</small></el-card>
   </section>
 

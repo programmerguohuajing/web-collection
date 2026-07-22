@@ -145,7 +145,7 @@ export function createEys(options = {}) {
     push({
       type: 'error',
       name: err?.name || extra.name || 'Error',
-      message: err?.message || String(err),
+      message: err?.message || serialize(err),
       stack: err?.stack || '',
       props: { ...extra, traceId: pageTraceId },
       traceId: pageTraceId

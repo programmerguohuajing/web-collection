@@ -1,4 +1,6 @@
 <script setup>
+import { formatDuration } from '../utils/format.js'
+
 const props = defineProps({
   title: String,
   rows: { type: Array, default: () => [] },
@@ -10,11 +12,6 @@ const props = defineProps({
   showUser: { type: Boolean, default: true }
 })
 defineEmits(['page-change', 'size-change'])
-
-function formatMs(value) {
-  if (value == null || Number.isNaN(Number(value))) return '-'
-  return `${Math.round(Number(value))}ms`
-}
 
 function typeLabel(type) {
   return ({ track: '埋点', perf: '性能', performance: '性能', behavior: '行为', error: '错误', replay: '回放' })[type] || '其他'
@@ -100,8 +97,8 @@ function nameLabel(row) {
           <template #default="{ row }"><span class="table-ellipsis" :title="row.name">{{ row.name }}</span></template>
         </el-table-column>
         <el-table-column prop="count" label="次数" width="90" />
-        <el-table-column label="平均" width="100"><template #default="{ row }">{{ formatMs(row.avg) }}</template></el-table-column>
-        <el-table-column label="P75" width="100"><template #default="{ row }">{{ formatMs(row.p75) }}</template></el-table-column>
+        <el-table-column label="平均" width="100"><template #default="{ row }">{{ formatDuration(row.avg) }}</template></el-table-column>
+        <el-table-column label="P75" width="100"><template #default="{ row }">{{ formatDuration(row.p75) }}</template></el-table-column>
       </template>
     </el-table>
     <el-pagination
