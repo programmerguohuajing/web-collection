@@ -53,7 +53,7 @@ export function queryFromFilters(extra = {}, names = null) {
 export function setFiltersFromRoute(query = {}) {
   filters.value = {
     ...filterDefaults,
-    range: query.startTime && query.endTime ? [query.startTime, query.endTime] : [],
+    range: query.startTime && query.endTime ? [Number(query.startTime), Number(query.endTime)] : [],
     appId: query.appId || '',
     release: query.release || '',
     path: query.path || '',

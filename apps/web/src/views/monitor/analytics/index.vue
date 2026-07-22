@@ -49,7 +49,7 @@ watch(() => route.query, query => { if (query.tab) tab.value = query.tab; load()
 </script>
 
 <template>
-  <SearchPanel :fields="['range', 'appId', 'release', 'userId']" />
+  <SearchPanel :fields="['userId']" />
   <div class="metrics section">
     <el-card><span>近 5 分钟会话</span><strong>{{ live.sessions || 0 }}</strong></el-card>
     <el-card><span>近 5 分钟用户</span><strong>{{ live.users || 0 }}</strong></el-card>

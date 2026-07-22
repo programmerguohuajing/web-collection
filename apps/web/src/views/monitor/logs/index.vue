@@ -25,7 +25,7 @@ watch(() => route.query, load)
 </script>
 
 <template>
-  <SearchPanel :fields="['range', 'appId', 'release', 'userId', 'keyword']" />
+  <SearchPanel :fields="['userId']" />
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><b>结构化日志</b><el-space><el-select v-model="query.level" clearable placeholder="全部级别" style="width:130px" @change="load"><el-option v-for="level in ['log','info','warn','error']" :key="level" :label="level" :value="level" /></el-select><el-button @click="load">刷新</el-button></el-space></div></template>
     <el-table v-loading="loading" :data="rows" border>
