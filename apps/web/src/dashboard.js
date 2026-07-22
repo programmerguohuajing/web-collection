@@ -135,7 +135,7 @@ async function refreshPaged(kind) {
 async function loadPaged(kind) {
   const pager = pagerMap()[kind]
   const endpoint = { events: '/api/events', errorEvents: '/api/events', perf: '/api/events', behavior: '/api/events', issues: '/api/issues', replays: '/api/replays' }[kind]
-  const type = { errorEvents: 'error', perf: 'perf', behavior: 'behavior' }[kind]
+  const type = { errorEvents: 'error', perf: 'perf', behavior: 'behavior,track' }[kind]
   const query = queryFromFilters(type ? { type } : {})
   return api(`${endpoint}?${query}&page=${pager.value.page}&pageSize=${pager.value.pageSize}`)
 }

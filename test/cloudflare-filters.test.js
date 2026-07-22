@@ -6,6 +6,10 @@ const result = filters(new URL('https://example.com/api/events?type=error&path=%
 assert.equal(result.where, 'where type=? and (path like ? or url like ?)')
 assert.deepEqual(result.values, ['error', '%/login/login%', '%/login/login%'])
 
+const behavior = filters(new URL('https://example.com/api/events?type=behavior,track'))
+assert.equal(behavior.where, 'where type in (?,?)')
+assert.deepEqual(behavior.values, ['behavior', 'track'])
+
 const logs = filters(new URL('https://example.com/api/logs?name=warn'), 'log')
 assert.equal(logs.where, 'where type=? and name=?')
 assert.deepEqual(logs.values, ['log', 'warn'])
