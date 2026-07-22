@@ -1,5 +1,5 @@
 <script setup>
-import { formatDuration } from '../utils/format.js'
+import { formatDuration, formatErrorLocation, readableText } from '../utils/format.js'
 
 const props = defineProps({
   title: String,
@@ -13,8 +13,9 @@ const props = defineProps({
 })
 defineEmits(['page-change', 'size-change'])
 
-function typeLabel(type) {
-  return ({ track: '埋点', perf: '性能', performance: '性能', behavior: '行为', error: '错误', replay: '回放' })[type] || '其他'
+function typeLabel(row) {
+  if (row.type === 'behavior') return ({ click: '点击', pv: '页面访问', page_leave: '页面离开', route: '路由切换', replaceState: '路由切换', pushState: '路由切换', popstate: '路由切换', scroll: '滚动', exposure: '曝光' })[row.name] || '行为'
+  return ({ track: '埋点', perf: '性能', performance: '性能', error: '错误', replay: '回放' })[row.type] || '其他'
 }
 
 function userLabel(row) {
@@ -23,6 +24,7 @@ function userLabel(row) {
 }
 
 function nameLabel(row) {
+  if (row.type === 'error') return readableText(row.message, row.name)
   const raw = row.name || row.message || row.metric || '-'
   const labels = {
     click: '点击',
@@ -96,10 +98,13 @@ function nameLabel(row) {
           <template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template>
         </el-table-column>
         <el-table-column label="类型" width="100">
-          <template #default="{ row }">{{ typeLabel(row.type) }}</template>
+          <template #default="{ row }">{{ typeLabel(row) }}</template>
         </el-table-column>
-        <el-table-column label="名称" min-width="180">
+        <el-table-column :label="props.title?.includes('错误') ? '错误信息' : '名称'" min-width="220">
           <template #default="{ row }"><span class="table-ellipsis" :title="nameLabel(row)">{{ nameLabel(row) }}</span></template>
+        </el-table-column>
+        <el-table-column v-if="props.title?.includes('错误')" label="源码位置" min-width="220">
+          <template #default="{ row }"><span class="table-ellipsis" :title="formatErrorLocation(row)">{{ formatErrorLocation(row) }}</span></template>
         </el-table-column>
         <el-table-column label="页面" min-width="240">
           <template #default="{ row }"><span class="table-ellipsis" :title="row.path || row.url || '-'">{{ row.path || row.url || '-' }}</span></template>

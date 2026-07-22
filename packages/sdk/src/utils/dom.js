@@ -12,19 +12,19 @@ export function elementInfo(el) {
     tag: el.tagName,
     id: el.id || '',
     className: String(el.className || '').slice(0, 160),
-    text: clip(text || el.value || '', 120),
+    text: clip(text, 120),
     ariaLabel: clip(el.getAttribute?.('aria-label') || '', 120),
     title: clip(el.getAttribute?.('title') || '', 120),
+    placeholder: clip(el.getAttribute?.('placeholder') || '', 120),
     role: clip(el.getAttribute?.('role') || '', 40),
     type: clip(el.getAttribute?.('type') || '', 40),
     name: clip(el.getAttribute?.('name') || '', 80),
-    href: clip(el.getAttribute?.('href') || '', 200),
-    value: clip(el.value || '', 120)
+    href: clip(el.getAttribute?.('href') || '', 200)
   }
   for (const item of el.attributes || []) {
     if (item.name.startsWith('data-track-')) props[item.name.slice(11)] = item.value
   }
-  props.label = props.text || props.ariaLabel || props.title || props.name || props.id || props.tag
+  props.label = props.text || props.ariaLabel || props.title || props.placeholder || props.name || props.id || props.tag
   return props
 }
 

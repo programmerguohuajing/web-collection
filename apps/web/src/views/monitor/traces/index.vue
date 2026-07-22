@@ -25,7 +25,7 @@ watch(() => route.query, load)
       <el-table-column prop="span_count" label="Span" width="80" />
       <el-table-column prop="error_count" label="错误" width="80" />
       <el-table-column prop="release_name" label="版本" width="120" />
-      <el-table-column prop="url" label="页面" min-width="260" show-overflow-tooltip />
+      <el-table-column label="页面" min-width="260"><template #default="{ row }"><span class="table-ellipsis" :title="row.url">{{ row.url }}</span></template></el-table-column>
     </el-table>
   </el-card>
   <el-drawer v-model="active" size="65%" :title="`链路 ${active?.trace_id || ''}`">

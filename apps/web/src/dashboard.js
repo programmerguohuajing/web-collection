@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 
-const apiBase = import.meta.env.VITE_API_BASE || ''
+const apiBase = import.meta.env?.VITE_API_BASE || ''
 
 export const loading = ref(false)
 export const tableLoading = ref({ events: false, errorEvents: false, perf: false, behavior: false, issues: false, replays: false })
@@ -36,7 +36,16 @@ export const filters = ref({ ...filterDefaults })
 
 export const latestErrors = computed(() => issues.value.slice(0, 8))
 export const byType = computed(() => Object.entries(summary.value?.byType || {}).map(([name, count]) => [typeLabel(name), count]))
-export const behavior = computed(() => Object.entries(summary.value?.behavior || {}).slice(0, 12).map(([name, count]) => [behaviorLabel(name), count]))
+export const behavior = computed(() => rankBehavior(summary.value?.behavior))
+
+export function rankBehavior(source = {}) {
+  const totals = new Map()
+  for (const [name, count] of Object.entries(source || {})) {
+    const label = behaviorLabel(name)
+    totals.set(label, (totals.get(label) || 0) + Number(count || 0))
+  }
+  return [...totals].sort((a, b) => b[1] - a[1]).slice(0, 12)
+}
 
 export function queryFromFilters(extra = {}, names = null) {
   const f = filters.value
