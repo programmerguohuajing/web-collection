@@ -246,7 +246,7 @@ export function createEys(options = {}) {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(cfg.collectKey ? { 'x-app-key': cfg.collectKey } : {}) },
           body,
-          keepalive: force
+          keepalive: force && body.length < 64000
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
       } else {
