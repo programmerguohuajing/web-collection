@@ -82,7 +82,7 @@ function eventWhere(filters = {}) {
   addRange(parts, params, 'ts', filters.startTime, filters.endTime)
   addEq(parts, params, 'app_id', filters.appId)
   addEq(parts, params, 'release_name', filters.release)
-  addEq(parts, params, 'type', filters.type)
+  addIn(parts, params, 'type', filters.type)
   addEq(parts, params, 'name', filters.name)
   addEq(parts, params, 'user_id', filters.userId)
   addLike(parts, params, 'user_name', filters.userName)
@@ -106,6 +106,13 @@ function addEq(parts, params, field, value) {
   if (!value) return
   parts.push(`${field} = ?`)
   params.push(value)
+}
+
+function addIn(parts, params, field, value) {
+  const values = String(value || '').split(',').filter(Boolean)
+  if (!values.length) return
+  parts.push(values.length === 1 ? `${field} = ?` : `${field} in (${values.map(() => '?').join(',')})`)
+  params.push(...values)
 }
 
 function addLike(parts, params, field, value) {

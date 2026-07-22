@@ -3,7 +3,7 @@ import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
-  Histogram, House, List, Monitor, Operation, Search, Stopwatch, Warning
+  Histogram, House, Monitor, Operation, Search, Stopwatch, Warning
 } from '@element-plus/icons-vue'
 import { error, filters, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
 
@@ -18,8 +18,7 @@ const groups = [
   ] },
   { label: '可观测', items: [
     { title: '日志平台', path: '/logs', icon: Files },
-    { title: '链路追踪', path: '/traces', icon: Connection },
-    { title: '事件流', path: '/events', icon: List }
+    { title: '链路追踪', path: '/traces', icon: Connection }
   ] },
   { label: '产品分析', items: [
     { title: '漏斗分析', path: '/analytics?tab=funnels', match: 'funnels', icon: Histogram },
@@ -41,7 +40,7 @@ function applyQuickRange(value) {
 }
 
 function globalSearch() {
-  router.push({ path: '/events', query: filters.value.keyword ? { keyword: filters.value.keyword } : {} })
+  router.push({ path: '/behavior', query: filters.value.keyword ? { keyword: filters.value.keyword } : {} })
 }
 
 onMounted(async () => {
@@ -83,7 +82,7 @@ watch(() => route.fullPath, async () => {
           <el-input v-model="filters.release" placeholder="全部版本" clearable @change="refresh" />
           <el-select placeholder="最近24小时" @change="applyQuickRange"><el-option label="最近1小时" value="1" /><el-option label="最近24小时" value="24" /><el-option label="最近7天" value="168" /><el-option label="全部时间" value="" /></el-select>
         </div>
-        <el-input v-model="filters.keyword" class="global-search" placeholder="搜索错误、日志、追踪、会话ID、用户ID..." clearable @keyup.enter="globalSearch">
+        <el-input v-model="filters.keyword" class="global-search" placeholder="搜索行为、埋点关键字..." clearable @keyup.enter="globalSearch">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <div class="navbar-actions"><el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button><el-button :loading="loading" @click="refresh">刷新</el-button></div>
