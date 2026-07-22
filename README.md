@@ -2,6 +2,8 @@
 
 Web Collection 是 pnpm monorepo 版前端监控系统，包含 Vue3 + Element Plus 控制台、Node API 服务和浏览器 SDK。
 
+使用控制台定位错误、性能、回放、链路和埋点问题，请参阅 [用户手册](docs/user-manual.md)。
+
 ## 目录
 
 - `apps/web`: 前端监控控制台

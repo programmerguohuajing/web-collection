@@ -11,7 +11,8 @@ import { elementInfo } from '../utils/dom.js'
  */
 export function setupClickMonitor({ push }) {
   addEventListener('click', event => {
-    const target = event.target?.closest?.('[data-track],button,a,input,textarea,select,[role="button"]')
+    const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement
+    const target = source?.closest?.('[data-track],button,a,input,textarea,select,[role="button"],uni-button') || source
     if (!target) return
     const props = elementInfo(target)
     const label = props.tag === 'BUTTON'
