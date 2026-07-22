@@ -374,8 +374,24 @@ createEys({
   replaySegmentByRoute: true,
   replayMaxDuration: 60000,
   replayBatchSize: 50,
-  replayOptions: {}
+  replayOptions: {},
+  // 首页首个有效内容节点，用于计算白屏时间和白屏率
+  whiteScreenSelector: '#app > *',
+  // 超过该时间仍未出现有效内容，则记为白屏
+  whiteScreenTimeout: 5000
 })
+```
+
+首页关键数据渲染完成后，可主动标记“页面数据就绪”时间：
+
+```js
+const eys = createEys({
+  endpoint: '/api/collect',
+  appId: 'web'
+})
+
+await loadHomeData()
+eys.markPageReady()
 ```
 
 ## 脚本一览
