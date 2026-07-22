@@ -60,6 +60,7 @@ export async function recordEvents(inputs) {
 export async function recordEvent(input) {
   await initPromise
   const event = { id: randomUUID(), ts: Date.now(), appId: 'default', release: 'unknown', ...input }
+  if (event.type === 'error' && event.props?.name) event.name = event.props.name
   await ensureApplication(event.appId, event.release)
   if (!await shouldCollect(event.appId, event.type) || !await passesRules(event)) return null
   if (event.type === 'replay') {
@@ -315,6 +316,7 @@ function firstFrame(stack, props = {}) {
   const line = Number(props?.line)
   const column = Number(props?.column)
   if (source && line) return { file: source, line, column: column || 0 }
-  const match = String(stack).match(/(?:at\s+.*?\()?((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/)
+  const match = [...String(stack).matchAll(/(?:at\s+.*?\()?((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/g)]
+    .find(item => !/web-collection-sdk(?:\.[\w-]+)?\.js/i.test(item[1]))
   return match ? { file: match[1], line: Number(match[2]), column: Number(match[3]) } : null
 }

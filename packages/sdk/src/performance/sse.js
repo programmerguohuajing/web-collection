@@ -4,6 +4,8 @@ export function setupSseMonitor({ metric, error }) {
 
   window.EventSource = function (url, init) {
     const start = performance.now()
+    const stack = new Error('SseError').stack?.split('\n') || []
+    const callerStack = [stack[0], ...stack.slice(2)].filter(Boolean).join('\n')
     const source = new NativeEventSource(url, init)
     const target = String(url)
     let messages = 0
@@ -18,7 +20,9 @@ export function setupSseMonitor({ metric, error }) {
       bytes += String(event.data || '').length
     })
     source.addEventListener('error', event => {
-      error(new Error('SseError'), { name: 'SseError', source: target, readyState: source.readyState, eventType: event.type })
+      const failure = new Error('SseError')
+      if (callerStack) failure.stack = callerStack
+      error(failure, { name: 'SseError', source: target, readyState: source.readyState, eventType: event.type })
     })
     source.close = function () {
       metric('sse', performance.now() - start, { url: target, phase: 'close', messages, bytes })
