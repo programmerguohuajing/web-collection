@@ -3,12 +3,13 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import TrendChart from '../../../components/TrendChart.vue'
 import { events, issues, replays, summary } from '../../../dashboard.js'
-import { formatDuration, readableText } from '../../../utils/format.js'
+import { formatDuration, readableText, scoreWebVitals } from '../../../utils/format.js'
 
 const router = useRouter()
 const primaryIssue = computed(() => issues.value.find(item => item.status !== 'resolved') || issues.value[0])
 const affectedUsers = computed(() => issues.value.reduce((sum, item) => sum + Number(item.affectedUsers || 0), 0))
 const p95 = computed(() => summary.value?.perf?.lcp || summary.value?.performance?.lcp?.p95 || 0)
+const health = computed(() => summary.value?.perfScore || scoreWebVitals(summary.value?.perf))
 const activityRows = computed(() => {
   const errorRows = issues.value.slice(0, 3).map(item => ({
     ts: item.lastSeen, title: readableText(item.message, item.name), level: item.status === 'regression' ? 'P1' : 'P2',
@@ -41,6 +42,7 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
     <el-card shadow="never"><span>受影响用户</span><strong class="violet-value">{{ affectedUsers }}</strong><small>关联错误与会话</small></el-card>
     <el-card shadow="never"><span>P95 页面加载耗时</span><strong class="primary-value">{{ p95 ? formatDuration(p95) : '-' }}</strong><small>Core Web Vitals</small></el-card>
     <el-card shadow="never"><span>活跃会话</span><strong class="success-value">{{ summary?.users ?? replays.length }}</strong><small>当前筛选范围内</small></el-card>
+    <el-card shadow="never"><span>页面健康度</span><strong class="health-value">{{ health ? `${health.score} / 100` : '-' }}</strong><small>{{ health ? `Web Vitals · ${health.grade} 级` : '暂无 Web Vitals 数据' }}</small></el-card>
   </section>
 
   <el-card shadow="never" class="panel section trend-panel">
@@ -62,3 +64,10 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
     </el-table>
   </el-card>
 </template>
+
+<style scoped>
+.overview-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.health-value { color: #0f766e; }
+@media (max-width: 1000px) { .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .overview-metrics { grid-template-columns: 1fr; } }
+</style>
