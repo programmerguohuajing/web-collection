@@ -12,31 +12,51 @@ export async function listLogs(filters = {}) {
 }
 
 export async function listTraces(filters = {}) {
-  const { where, params } = whereFor(filters, ['trace_id is not null'])
-  const rows = await all(`select trace_id, min(ts) started_at, max(ts) ended_at, count(*)::integer span_count,
-    max(case when type='error' or coalesce((props_json->>'status')::integer, 0) >= 400 then 1 else 0 end)::integer error_count,
-    max(app_id) app_id, max(release_name) release_name, max(url) url
-    from events ${where} group by trace_id order by started_at desc limit 200`, params)
-  return rows.map(row => ({ ...row, started_at: Number(row.started_at), ended_at: Number(row.ended_at), duration: Number(row.ended_at) - Number(row.started_at) }))
+  const { where, params } = whereFor(filters, ["trace_id<>''"])
+  const page = pageOf(filters)
+  const [rows, totalRows] = await Promise.all([
+    all(`select trace_id, min(ts) started_at, max(ts) ended_at, count(*)::integer span_count,
+      max(case when type='error' or coalesce((props_json->>'status')::integer, 0) >= 400 then 1 else 0 end)::integer error_count,
+      max(app_id) app_id, max(release_name) release_name, max(url) url
+      from events ${where} group by trace_id order by started_at desc limit ? offset ?`, [...params, page.pageSize, (page.page - 1) * page.pageSize]),
+    all(`select count(*)::integer count from (select 1 from events ${where} group by trace_id) traces`, params)
+  ])
+  return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(row => ({ ...row, started_at: Number(row.started_at), ended_at: Number(row.ended_at), duration: Number(row.ended_at) - Number(row.started_at) })) }
 }
 
-export async function getTrace(traceId) {
-  return (await all('select * from events where trace_id=? order by ts asc', [traceId])).map(mapEvent)
+export async function getTrace(traceId, filters = {}) {
+  const page = pageOf(filters)
+  if (!traceId?.trim()) return { ...page, total: 0, items: [] }
+  const [rows, totalRows] = await Promise.all([
+    all('select * from events where trace_id=? order by ts asc limit ? offset ?', [traceId, page.pageSize, (page.page - 1) * page.pageSize]),
+    all('select count(*)::integer count from events where trace_id=?', [traceId])
+  ])
+  return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(mapEvent) }
 }
 
 export async function getSessions(filters = {}) {
-  const { where, params } = whereFor(filters, ['session_id is not null'])
-  const rows = await all(`select session_id, max(user_id) user_id, max(user_name) user_name, max(device_id) device_id,
-    min(ts) started_at, max(ts) ended_at, count(*)::integer event_count,
-    count(*) filter(where type='error')::integer error_count,
-    array_agg(distinct path) filter(where path is not null) paths
-    from events ${where} group by session_id order by ended_at desc limit 200`, params)
+  const { where, params } = whereFor(filters, ["session_id<>''"])
+  const page = pageOf(filters)
+  const [rows, totalRows] = await Promise.all([
+    all(`select session_id, max(user_id) user_id, max(user_name) user_name, max(device_id) device_id,
+      min(ts) started_at, max(ts) ended_at, count(*)::integer event_count,
+      count(*) filter(where type='error')::integer error_count,
+      array_agg(distinct path) filter(where path is not null) paths
+      from events ${where} group by session_id order by ended_at desc limit ? offset ?`, [...params, page.pageSize, (page.page - 1) * page.pageSize]),
+    all(`select count(*)::integer count from (select 1 from events ${where} group by session_id) sessions`, params)
+  ])
   const replays = await all('select distinct session_id from replay_events order by session_id')
-  return rows.map(row => ({ ...row, started_at: Number(row.started_at), ended_at: Number(row.ended_at), duration: Number(row.ended_at) - Number(row.started_at), replaySessionId: replays.find(item => item.session_id.startsWith(row.session_id))?.session_id }))
+  return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(row => ({ ...row, started_at: Number(row.started_at), ended_at: Number(row.ended_at), duration: Number(row.ended_at) - Number(row.started_at), replaySessionId: replays.find(item => item.session_id.startsWith(row.session_id))?.session_id })) }
 }
 
-export async function getSessionEvents(sessionId) {
-  return (await all('select * from events where session_id=? order by ts asc limit 2000', [sessionId])).map(mapEvent)
+export async function getSessionEvents(sessionId, filters = {}) {
+  const page = pageOf(filters)
+  if (!sessionId?.trim()) return { ...page, total: 0, items: [] }
+  const [rows, totalRows] = await Promise.all([
+    all('select * from events where session_id=? order by ts asc limit ? offset ?', [sessionId, page.pageSize, (page.page - 1) * page.pageSize]),
+    all('select count(*)::integer count from events where session_id=?', [sessionId])
+  ])
+  return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(mapEvent) }
 }
 
 export async function getPaths(filters = {}) {
@@ -67,7 +87,14 @@ export async function getReleaseComparison(filters = {}) {
     from events ${where} group by release_name order by max(ts) desc limit 20`, params)
 }
 
-export async function listFunnels() { return all('select * from funnel_definitions order by updated_at desc') }
+export async function listFunnels(filters = {}) {
+  const page = pageOf(filters)
+  const [items, totalRows] = await Promise.all([
+    all('select * from funnel_definitions order by updated_at desc limit ? offset ?', [page.pageSize, (page.page - 1) * page.pageSize]),
+    all('select count(*)::integer count from funnel_definitions')
+  ])
+  return { ...page, total: Number(totalRows[0]?.count || 0), items }
+}
 
 export async function listFunnelEventNames(filters = {}) {
   const { where, params } = whereFor(filters, ["type in ('behavior','track')", "name is not null", "name<>''"])

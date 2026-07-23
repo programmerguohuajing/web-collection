@@ -130,7 +130,7 @@ app.post('/api/issues/:id/resolve', async (req, res, next) => {
   }
 })
 app.get('/api/applications', async (req, res, next) => {
-  try { res.json(await listApplications()) } catch (err) { next(err) }
+  try { res.json(await listApplications(req.query)) } catch (err) { next(err) }
 })
 app.put('/api/applications/:appId', async (req, res, next) => {
   try { res.json(await saveApplication({ ...req.body, appId: req.params.appId })) } catch (err) { next(err) }
@@ -139,7 +139,7 @@ app.delete('/api/applications/:appId', async (req, res, next) => {
   try { res.json(await deleteApplication(req.params.appId)) } catch (err) { next(err) }
 })
 app.get('/api/applications/:appId/releases', async (req, res, next) => {
-  try { res.json(await listReleases(req.params.appId)) } catch (err) { next(err) }
+  try { res.json(await listReleases(req.params.appId, req.query)) } catch (err) { next(err) }
 })
 app.put('/api/applications/:appId/releases/:release', async (req, res, next) => {
   try { res.json(await saveRelease(req.params.appId, { ...req.body, release: req.params.release })) } catch (err) { next(err) }
@@ -161,14 +161,14 @@ app.post('/api/applications/:appId/collect-key', async (req, res, next) => {
 })
 app.get('/api/logs', async (req, res, next) => { try { res.json(await listLogs(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/traces', async (req, res, next) => { try { res.json(await listTraces(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await getTrace(req.params.traceId)) } catch (err) { next(err) } })
+app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await getTrace(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/sessions', async (req, res, next) => { try { res.json(await getSessions(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId)) } catch (err) { next(err) } })
+app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/event-names', async (req, res, next) => { try { res.json(await listFunnelEventNames(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels()) } catch (err) { next(err) } })
+app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels(filters(req.query))) } catch (err) { next(err) } })
 app.post('/api/funnels', async (req, res, next) => { try { res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
 app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await deleteFunnel(req.params.id)) } catch (err) { next(err) } })
 app.get('/api/funnels/:id/run', async (req, res, next) => { try { res.json(await runFunnel(req.params.id, filters(req.query))) } catch (err) { next(err) } })

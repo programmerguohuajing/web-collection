@@ -6,10 +6,11 @@ import SearchPanel from '../../../components/SearchPanel.vue'
 import { getReplay, replayPager, replays, setPage, setPageSize, tableLoading } from '../../../dashboard.js'
 const route = useRoute()
 const panel = ref(null)
-watch(replays, async rows => {
-  const replayId = String(route.query.replayId || '')
-  const row = replayId && rows.find(item => item.replayId === replayId || item.replayId.startsWith(`${replayId}_`) || replayId.startsWith(`${item.replayId}_`))
-  if (row) { await nextTick(); panel.value?.play(row) }
+watch(() => route.query.replayId, async value => {
+  const replayId = String(value || '')
+  if (!replayId) return
+  await nextTick()
+  await panel.value?.play({ replayId })
 }, { immediate: true })
 </script>
 
