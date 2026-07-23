@@ -16,8 +16,8 @@ export function setupClickMonitor({ push }) {
     if (!target) return
     const props = elementInfo(target)
     const label = props.tag === 'BUTTON'
-      ? (props.text || props.ariaLabel || props.title || props.name || props.id || props.label || props.tag)
-      : (props.label || props.text || props.ariaLabel || props.title || props.name || props.id || props.tag)
+      ? (props.text || props.ariaLabel || props.title || props.name || props.id || props.label)
+      : (props.label || props.text || props.ariaLabel || props.alt || props.title || props.name || props.id)
     push({
       type: 'behavior',
       name: 'click',

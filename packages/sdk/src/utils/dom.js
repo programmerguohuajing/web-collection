@@ -14,6 +14,7 @@ export function elementInfo(el) {
     className: String(el.className || '').slice(0, 160),
     text: clip(text, 120),
     ariaLabel: clip(el.getAttribute?.('aria-label') || '', 120),
+    alt: clip(el.getAttribute?.('alt') || '', 120),
     title: clip(el.getAttribute?.('title') || '', 120),
     placeholder: clip(el.getAttribute?.('placeholder') || '', 120),
     role: clip(el.getAttribute?.('role') || '', 40),
@@ -24,7 +25,7 @@ export function elementInfo(el) {
   for (const item of el.attributes || []) {
     if (item.name.startsWith('data-track-')) props[item.name.slice(11)] = item.value
   }
-  props.label = props.text || props.ariaLabel || props.title || props.placeholder || props.name || props.id || props.tag
+  props.label = props.text || props.ariaLabel || props.alt || props.title || props.placeholder || props.name || props.id || ''
   return props
 }
 

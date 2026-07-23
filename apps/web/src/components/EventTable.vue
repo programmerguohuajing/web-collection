@@ -1,6 +1,8 @@
 <script setup>
 import { formatDuration, formatErrorLocation, readableText } from '../utils/format.js'
 
+const genericElementLabels = new Set(['A', 'BUTTON', 'DIV', 'IMG', 'INPUT', 'SELECT', 'SPAN', 'TEXTAREA', 'UNI-BUTTON', 'UNI-IMAGE'])
+
 const props = defineProps({
   title: String,
   rows: { type: Array, default: () => [] },
@@ -75,10 +77,9 @@ function nameLabel(row) {
   }
   if (row.type === 'behavior' && row.props) {
     const tag = String(row.props.tag || row.props.elementType || '').toUpperCase()
-    const text = row.props.text || row.props.elementLabel || row.props.ariaLabel || row.props.title || row.props.name || row.props.id || ''
-    if ((tag === 'BUTTON' || tag === 'A') && text) return `点击：${text}`
-    const name = row.props.elementLabel || row.props.text || row.props.ariaLabel || row.props.title || row.props.name || row.props.id || ''
-    if (name) return `点击：${name}`
+    const name = row.props.elementLabel || row.props.text || row.props.ariaLabel || row.props.alt || row.props.title || row.props.name || row.props.id || ''
+    const normalizedName = String(name).trim().toUpperCase()
+    if (name && normalizedName !== tag && !genericElementLabels.has(normalizedName)) return `点击：${name}`
   }
   return labels[raw] || raw
 }

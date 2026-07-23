@@ -23,3 +23,20 @@ listener({ target: div })
 assert.equal(events[0].name, 'click')
 assert.equal(events[0].props.elementLabel, '提交订单')
 assert.equal(events[0].props.elementType, 'DIV')
+
+const image = {
+  ...div,
+  tagName: 'IMG',
+  className: '',
+  innerText: '',
+  textContent: '',
+  getAttribute: name => name === 'alt' ? '商品主图' : ''
+}
+listener({ target: image })
+assert.equal(events[1].props.elementLabel, '商品主图')
+
+listener({ target: { ...image, getAttribute: () => '' } })
+assert.equal(events[2].props.elementLabel, '')
+
+listener({ target: { ...image, tagName: 'UNI-BUTTON', getAttribute: () => '' } })
+assert.equal(events[3].props.elementLabel, '')
