@@ -21,6 +21,7 @@ const releasePager = reactive({ page: 1, pageSize: 10, total: 0 })
 const releaseForm = reactive({ release: '', status: 'active' })
 const appForm = reactive({ appId: '', name: '', platform: 'web', owner: '', enabled: true, sampleRate: 1, replaySampleRate: 1, allowedOrigins: '', blockedTypes: '', blockedNames: '' })
 const newCollectKey = ref('')
+const collectKeyDialog = ref(false)
 const channelDialog = ref(false)
 const channelSaving = ref(false)
 const channelTesting = ref(0)
@@ -78,7 +79,16 @@ async function removeApp(row) {
   await load()
 }
 function lines(value) { return String(value || '').split(/[,\n]/).map(item => item.trim()).filter(Boolean) }
-async function resetKey(row) { newCollectKey.value = (await rotateCollectKey(row.app_id)).collectKey }
+async function resetKey(row) {
+  collectKeyDialog.value = false
+  newCollectKey.value = ''
+  try {
+    newCollectKey.value = (await rotateCollectKey(row.app_id)).collectKey
+    collectKeyDialog.value = true
+  } catch (error) {
+    ElMessage.error(error.message || '采集密钥生成失败')
+  }
+}
 
 async function submitSettings() {
   await saveGovernanceSettings(settings)
@@ -437,7 +447,7 @@ onMounted(load)
     </el-form>
     <template #footer><el-button @click="appDialog=false">取消</el-button><el-button type="primary" @click="submitApp">保存</el-button></template>
   </el-dialog>
-  <el-dialog v-model="newCollectKey" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input :model-value="newCollectKey" readonly style="margin-top:12px" /></el-dialog>
+  <el-dialog v-model="collectKeyDialog" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input :model-value="newCollectKey" readonly style="margin-top:12px" /></el-dialog>
 
   <el-dialog v-model="releaseDialog" :title="`${activeAppId} 版本管理`" width="620px">
     <el-form inline @submit.prevent="submitRelease">
