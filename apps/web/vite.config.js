@@ -5,12 +5,14 @@
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
+const apiProxy = process.env.VITE_API_PROXY || 'http://127.0.0.1:8787'
+
 export default defineConfig({
   plugins: [vue()],
   server: {
     host: true,
     proxy: {
-      '/api': 'http://192.168.17.45:8787'
+      '/api': apiProxy
     }
   }
 })
