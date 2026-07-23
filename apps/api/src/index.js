@@ -12,7 +12,7 @@ import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
 import { authorizeCollect, cleanupExpiredData, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
-import { getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions, getTrace, listDashboards, listFunnels, listLogs, listTraces, runFunnel, saveDashboard, saveFunnel } from './services/analytics-service.js'
+import { deleteFunnel, getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions, getTrace, listDashboards, listFunnelEventNames, listFunnels, listLogs, listTraces, runFunnel, saveDashboard, saveFunnel } from './services/analytics-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -161,8 +161,10 @@ app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { 
 app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/analytics/event-names', async (req, res, next) => { try { res.json(await listFunnelEventNames(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels()) } catch (err) { next(err) } })
 app.post('/api/funnels', async (req, res, next) => { try { res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
+app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await deleteFunnel(req.params.id)) } catch (err) { next(err) } })
 app.get('/api/funnels/:id/run', async (req, res, next) => { try { res.json(await runFunnel(req.params.id, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/dashboards', async (req, res, next) => { try { res.json(await listDashboards()) } catch (err) { next(err) } })
 app.post('/api/dashboards', async (req, res, next) => { try { res.json(await saveDashboard(req.body || {})) } catch (err) { next(err) } })

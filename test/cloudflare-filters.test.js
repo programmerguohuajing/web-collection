@@ -27,4 +27,37 @@ assert.equal(writes, 0)
 await pending
 assert.equal(writes, 3)
 
+let eventNamesSql = ''
+let eventNamesValues = []
+const eventNamesResponse = await worker.fetch(new Request('https://example.com/api/analytics/event-names?appId=web&type=error'), {
+  DB: {
+    prepare(sql) {
+      eventNamesSql = sql
+      return {
+        bind(...values) { eventNamesValues = values; return this },
+        async all() { return { results: [{ name: 'click', count: 12 }] } }
+      }
+    }
+  }
+})
+assert.match(eventNamesSql, /type in \('behavior','track'\)/)
+assert.doesNotMatch(eventNamesSql, /type=\?/)
+assert.deepEqual(eventNamesValues, ['web'])
+assert.deepEqual(await eventNamesResponse.json(), [{ name: 'click', count: 12 }])
+
+let deletedId
+const deleteResponse = await worker.fetch(new Request('https://example.com/api/funnels/7', { method: 'DELETE' }), {
+  DB: {
+    prepare() {
+      return {
+        bind(id) { deletedId = id; return this },
+        async run() { return { meta: { changes: 1 } } }
+      }
+    }
+  }
+})
+assert.equal(deleteResponse.status, 200)
+assert.equal(deletedId, 7)
+assert.match(deleteResponse.headers.get('access-control-allow-methods'), /DELETE/)
+
 console.log('cloudflare filters tests passed')

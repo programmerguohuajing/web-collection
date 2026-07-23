@@ -1,4 +1,5 @@
 <script setup>
+import { ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, queryFromFilters } from '../../../dashboard.js'
@@ -15,10 +16,11 @@ const paths = ref([])
 const live = ref({})
 const releases = ref([])
 const funnels = ref([])
+const funnelEventNames = ref([])
 const funnelResult = ref(null)
 const dashboards = ref([])
 const selectedDashboardId = ref(null)
-const funnelForm = reactive({ name: '', appId: '', stepsText: '' })
+const funnelForm = reactive({ name: '', appId: '', steps: [] })
 const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors', 'releases'] })
 let timer = 0
 
@@ -28,17 +30,24 @@ async function load() {
   loading.value = true
   try {
     const query = queryFromFilters()
-    ;[sessions.value, paths.value, live.value, releases.value, funnels.value, dashboards.value] = await Promise.all([
-      api(`/api/analytics/sessions?${query}`), api(`/api/analytics/paths?${query}`), api(`/api/analytics/live?${query}`), api(`/api/analytics/releases?${query}`), api('/api/funnels'), api('/api/dashboards')
+    ;[sessions.value, paths.value, live.value, releases.value, funnelEventNames.value, funnels.value, dashboards.value] = await Promise.all([
+      api(`/api/analytics/sessions?${query}`), api(`/api/analytics/paths?${query}`), api(`/api/analytics/live?${query}`), api(`/api/analytics/releases?${query}`), api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`), api('/api/funnels'), api('/api/dashboards')
     ])
   } finally { loading.value = false }
 }
 
 async function saveFunnel() {
-  await api('/api/funnels', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...funnelForm, steps: funnelForm.stepsText.split(/[,\n]/) }) })
-  funnelForm.name = ''; funnelForm.stepsText = ''; await load()
+  await api('/api/funnels', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(funnelForm) })
+  funnelForm.name = ''; funnelForm.steps = []; await load()
 }
 async function run(item) { funnelResult.value = await api(`/api/funnels/${item.id}/run?${queryFromFilters()}`) }
+async function removeFunnel(item) {
+  const confirmed = await ElMessageBox.confirm(`确定删除漏斗“${item.name}”吗？`, '删除漏斗', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  await api(`/api/funnels/${item.id}`, { method: 'DELETE' })
+  if (funnelResult.value?.definition?.id === item.id) funnelResult.value = null
+  await load()
+}
 async function saveDashboard() { await api('/api/dashboards', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(dashboardForm) }); dashboardForm.name = ''; await load() }
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 async function openSession(row) { activeSession.value = row; sessionEvents.value = await api(`/api/analytics/sessions/${encodeURIComponent(row.session_id)}`) }
@@ -73,8 +82,9 @@ watch(() => route.query, query => { if (query.tab) tab.value = query.tab; load()
       <el-table :data="paths" border><el-table-column prop="path" label="路径" min-width="500" /><el-table-column prop="count" label="会话数" width="120" /></el-table>
     </el-tab-pane>
     <el-tab-pane label="漏斗分析" name="funnels">
-      <el-form inline @submit.prevent="saveFunnel"><el-form-item label="名称"><el-input v-model="funnelForm.name" /></el-form-item><el-form-item label="应用"><el-input v-model="funnelForm.appId" /></el-form-item><el-form-item label="步骤"><el-input v-model="funnelForm.stepsText" placeholder="view,add_cart,pay" style="width:320px" /></el-form-item><el-button type="primary" @click="saveFunnel">保存漏斗</el-button></el-form>
-      <el-table :data="funnels" border empty-text="暂无漏斗，请填写名称和至少两个步骤后保存"><el-table-column prop="name" label="名称" /><el-table-column prop="app_id" label="应用" /><el-table-column label="步骤"><template #default="{ row }">{{ row.steps_json?.join(' → ') }}</template></el-table-column><el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="run(row)">分析</el-button></template></el-table-column></el-table>
+      <el-form inline @submit.prevent="saveFunnel"><el-form-item label="名称"><el-input v-model="funnelForm.name" /></el-form-item><el-form-item label="应用"><el-input v-model="funnelForm.appId" /></el-form-item><el-form-item label="步骤"><el-select v-model="funnelForm.steps" multiple filterable placeholder="请选择至少两个已采集事件" style="width:360px"><el-option v-for="item in funnelEventNames" :key="item.name" :label="`${item.name}（${item.count}）`" :value="item.name" /></el-select></el-form-item><el-button type="primary" @click="saveFunnel">保存漏斗</el-button></el-form>
+      <el-space wrap class="section"><span>可选步骤（{{ funnelEventNames.length }}）：</span><el-tag v-for="item in funnelEventNames" :key="item.name" type="info">{{ item.name }}（{{ item.count }}）</el-tag></el-space>
+      <el-table :data="funnels" border empty-text="暂无漏斗，请填写名称和至少两个步骤后保存"><el-table-column prop="name" label="名称" /><el-table-column prop="app_id" label="应用" /><el-table-column label="步骤"><template #default="{ row }">{{ row.steps_json?.join(' → ') }}</template></el-table-column><el-table-column label="操作" width="140"><template #default="{ row }"><el-button link type="primary" @click="run(row)">分析</el-button><el-button link type="danger" @click="removeFunnel(row)">删除</el-button></template></el-table-column></el-table>
       <template v-if="funnelResult">
         <h2 class="analysis-title">转化与流失</h2>
         <el-table :data="funnelResult.steps" border><el-table-column prop="step" label="步骤" /><el-table-column prop="count" label="用户数" /><el-table-column prop="rate" label="转化率(%)" /><el-table-column prop="lost" label="流失" /></el-table>
