@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import worker, { alertMessage, filters, issueKey } from '../cloudflare/worker.js'
+import worker, { alertMessage, filters, issueKey, replayFilters } from '../cloudflare/worker.js'
 
 const result = filters(new URL('https://example.com/api/events?type=error&path=%2Flogin%2Flogin'))
 
@@ -13,6 +13,10 @@ assert.deepEqual(behavior.values, ['behavior', 'track'])
 const logs = filters(new URL('https://example.com/api/logs?name=warn'), 'log')
 assert.equal(logs.where, 'where type=? and name=?')
 assert.deepEqual(logs.values, ['log', 'warn'])
+
+const replays = replayFilters(new URL('https://example.com/api/replays?appId=web&release=1.2.3&path=%2Fcheckout&startTime=10&endTime=20'))
+assert.equal(replays.where, 'where app_id=? and release_name=? and url like ? and created_at>=? and created_at<=?')
+assert.deepEqual(replays.values, ['web', '1.2.3', '%/checkout%', 10, 20])
 
 assert.equal(alertMessage({ type: 'perf', appId: 'web', value: 4200, path: '/home' }, 'lcp', 4000), '[Web Collection] web LCP 4200ms，超过阈值 4000ms，页面 /home')
 assert.equal(alertMessage({ type: 'error', appId: 'web', name: 'TypeError', message: 'boom', path: '/home', release: '1.0.0', traceId: 'trace-1' }, 'error'), '[Web Collection] web TypeError: boom，页面 /home，版本 1.0.0，Trace trace-1')

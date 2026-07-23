@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, queryFromFilters } from '../../../dashboard.js'
+import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 
 const traces = ref([])
 const route = useRoute()
@@ -12,7 +12,7 @@ const loading = ref(false)
 async function load() { loading.value = true; try { traces.value = await api(`/api/traces?${queryFromFilters()}`) } finally { loading.value = false } }
 async function open(row) { active.value = row; spans.value = await api(`/api/traces/${row.trace_id}`) }
 onMounted(load)
-watch(() => route.query, load)
+watch([() => route.query, refreshVersion], load)
 </script>
 
 <template>

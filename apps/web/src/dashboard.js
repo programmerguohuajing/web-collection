@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 const apiBase = import.meta.env?.VITE_API_BASE || ''
 
 export const loading = ref(false)
+export const refreshVersion = ref(0)
 export const tableLoading = ref({ events: false, errorEvents: false, perf: false, behavior: false, issues: false, replays: false })
 export const error = ref('')
 export const summary = ref(null)
@@ -62,20 +63,40 @@ export function queryFromFilters(extra = {}, names = null) {
   return params.toString()
 }
 
-export function setFiltersFromRoute(query = {}) {
+export function setFiltersFromRoute(query = {}, preserve = false) {
+  const current = preserve
+    ? {
+        ...filterDefaults,
+        range: filters.value.range,
+        appId: filters.value.appId,
+        release: filters.value.release,
+        keyword: filters.value.keyword
+      }
+    : filterDefaults
   filters.value = {
-    ...filterDefaults,
-    range: query.startTime && query.endTime ? [Number(query.startTime), Number(query.endTime)] : [],
-    appId: query.appId || '',
-    release: query.release || '',
-    path: query.path || '',
-    userId: query.userId || '',
-    userName: query.userName || '',
-    userPhone: query.userPhone || '',
-    keyword: query.keyword || '',
-    type: query.type || '',
-    status: query.status || ''
+    ...current,
+    range: query.startTime && query.endTime ? [Number(query.startTime), Number(query.endTime)] : current.range,
+    appId: query.appId ?? current.appId,
+    release: query.release ?? current.release,
+    path: query.path ?? current.path,
+    userId: query.userId ?? current.userId,
+    userName: query.userName ?? current.userName,
+    userPhone: query.userPhone ?? current.userPhone,
+    keyword: query.keyword ?? current.keyword,
+    type: query.type ?? current.type,
+    status: query.status ?? current.status
   }
+}
+
+export function resetPages() {
+  for (const pager of [eventPager, errorEventPager, perfPager, behaviorPager, issuePager, replayPager]) {
+    pager.value.page = 1
+  }
+}
+
+export async function refreshAll() {
+  refreshVersion.value += 1
+  await refresh()
 }
 
 export async function refresh() {
