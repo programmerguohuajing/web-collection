@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { all, run, scalar } from './db.js'
+import { buildAlertContext, createAlertDeliveries } from './alerting.js'
 
 export const defaultSettings = {
   retention: { eventsDays: 30, logsDays: 14, replaysDays: 7, resolvedIssuesDays: 90, sourcemapsDays: 180, alertsDays: 90 },
@@ -156,19 +157,24 @@ export async function processAlert(event, issue) {
   const since = Date.now() - settings.alerts.cooldownMinutes * 60000
   const recent = await all('select id from alert_history where app_id=? and metric=? and fingerprint=? and created_at>=? limit 1', [event.appId, trigger.metric, fingerprint, since])
   if (recent.length) return
-  const result = await notify(trigger.message)
-  await run(
-    `insert into alert_history (app_id, metric, fingerprint, level, value, message, notified, notify_error, created_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [event.appId, trigger.metric, fingerprint, trigger.level, trigger.value, trigger.message, result.ok, result.error || null, Date.now()]
+  const result = await run(
+    `insert into alert_history (app_id, metric, fingerprint, level, value, message, notified, context_json, created_at)
+     values (?, ?, ?, ?, ?, ?, false, ?::jsonb, ?) returning id`,
+    [event.appId, trigger.metric, fingerprint, trigger.level, trigger.value, trigger.message, JSON.stringify(buildAlertContext(event, trigger.threshold)), Date.now()]
   )
+  await createAlertDeliveries(Number(result.rows[0].id))
 }
 
 export async function listAlerts(filters = {}) {
   const page = Math.max(1, Number(filters.page) || 1)
   const pageSize = Math.max(1, Math.min(100, Number(filters.pageSize) || 10))
   const [items, total] = await Promise.all([
-    all('select * from alert_history order by created_at desc limit ? offset ?', [pageSize, (page - 1) * pageSize]),
+    all(`select a.*,
+      (select count(*) from alert_deliveries d where d.alert_id=a.id) delivery_total,
+      (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status='sent') delivery_sent,
+      (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('failed','dead')) delivery_failed,
+      (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('pending','sending')) delivery_pending
+      from alert_history a order by created_at desc limit ? offset ?`, [pageSize, (page - 1) * pageSize]),
     scalar('select count(*) count from alert_history')
   ])
   return { items, total, page, pageSize }
@@ -202,26 +208,11 @@ function makeTrigger(metric, value, level, event, threshold) {
   const message = event.type === 'perf'
     ? `[Web Collection] ${event.appId} ${metric.toUpperCase()} ${value}${metric === 'cls' ? '' : 'ms'}，超过阈值 ${threshold}${metric === 'cls' ? '' : 'ms'}，页面 ${page}`
     : `[Web Collection] ${event.appId} ${event.name || metric}: ${event.message || '未知错误'}，页面 ${page}，版本 ${event.release || '-'}，Trace ${event.traceId || '-'}`
-  return { metric, value, level, message }
+  return { metric, value, level, message, threshold }
 }
 
 function pageOf(filters) {
   return { page: Math.max(1, Number(filters.page || 1)), pageSize: Math.max(1, Math.min(100, Number(filters.pageSize || 10))) }
-}
-
-async function notify(message) {
-  const webhook = process.env.FEISHU_WEBHOOK_URL
-  if (!webhook) return { ok: false, error: 'FEISHU_WEBHOOK_URL 未配置' }
-  try {
-    const response = await fetch(webhook, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ msg_type: 'text', content: { text: message } }),
-      signal: AbortSignal.timeout(5000)
-    })
-    return response.ok ? { ok: true } : { ok: false, error: `HTTP ${response.status}` }
-  } catch (error) {
-    return { ok: false, error: String(error.message || error).slice(0, 500) }
-  }
 }
 
 function normalizeSettings(input = {}) {

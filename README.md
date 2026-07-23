@@ -40,6 +40,11 @@ ADMIN_API_KEY=your-secret-key
 COLLECT_TOKEN=
 CORS_ORIGIN=http://127.0.0.1:5173
 FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/your-token
+ALERT_SECRET_MASTER_KEY=replace-with-a-long-random-value
+ALERT_PUBLIC_BASE_URL=https://monitor.example.com
+QSTASH_TOKEN=
+QSTASH_CURRENT_SIGNING_KEY=
+QSTASH_NEXT_SIGNING_KEY=
 ```
 
 也可以拆分 PostgreSQL 配置：
@@ -159,7 +164,24 @@ pnpm sourcemaps:upload -- --dir apps/web/dist --app-id web --release 1.0.0 \
   --endpoint https://monitor.example.com --key "$WEB_COLLECTION_ADMIN_KEY"
 ```
 
-控制台的“采集治理”页面可以管理应用、版本、事件/回放采样率、数据保留周期、告警阈值、飞书通知记录和 CSV 报表导出。生产试点步骤见 [docs/production-pilot.md](docs/production-pilot.md)。
+控制台的“采集治理”页面可以管理应用、版本、事件/回放采样率、数据保留周期、告警阈值、邮件、短信、飞书、企业微信、钉钉、Webhook 渠道及 CSV 报表导出。生产试点步骤见 [docs/production-pilot.md](docs/production-pilot.md)。
+
+### 多渠道告警
+
+渠道密钥在数据库中使用 AES-GCM 加密，`ALERT_SECRET_MASTER_KEY` 只允许通过服务端环境变量或 Worker Secret 配置。启用 QStash 后，告警投递会异步执行并重试 5 次；未配置 QStash 时自动回退为后台直接发送。
+
+Cloudflare 部署需要先执行迁移并配置密钥：
+
+```bash
+pnpm exec wrangler d1 migrations apply web-collection --remote
+pnpm exec wrangler secret put ALERT_SECRET_MASTER_KEY
+pnpm exec wrangler secret put ALERT_PUBLIC_BASE_URL
+pnpm exec wrangler secret put QSTASH_TOKEN
+pnpm exec wrangler secret put QSTASH_CURRENT_SIGNING_KEY
+pnpm exec wrangler secret put QSTASH_NEXT_SIGNING_KEY
+```
+
+`ALERT_PUBLIC_BASE_URL` 填写控制台公开地址，例如 `https://monitor.example.com`。旧的 `FEISHU_WEBHOOK_URL` 在没有配置新渠道时继续作为兼容回退。
 
 ## SDK 接入
 
