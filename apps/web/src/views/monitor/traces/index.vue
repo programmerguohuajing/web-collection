@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 
@@ -8,11 +8,30 @@ const route = useRoute()
 const spans = ref([])
 const active = ref(null)
 const loading = ref(false)
+const pager = reactive({ page: 1, pageSize: 10, total: 0 })
+const spanPager = reactive({ page: 1, pageSize: 10, total: 0 })
 
-async function load() { loading.value = true; try { traces.value = await api(`/api/traces?${queryFromFilters()}`) } finally { loading.value = false } }
-async function open(row) { active.value = row; spans.value = await api(`/api/traces/${row.trace_id}`) }
+async function load() {
+  loading.value = true
+  try {
+    const data = await api(`/api/traces?${queryFromFilters({ page: pager.page, pageSize: pager.pageSize })}`)
+    traces.value = data.items
+    Object.assign(pager, { page: data.page, pageSize: data.pageSize, total: data.total })
+  } finally { loading.value = false }
+}
+async function loadSpans() {
+  const data = await api(`/api/traces/${encodeURIComponent(active.value.trace_id)}?page=${spanPager.page}&pageSize=${spanPager.pageSize}`)
+  spans.value = data.items
+  Object.assign(spanPager, { page: data.page, pageSize: data.pageSize, total: data.total })
+}
+async function open(row) {
+  if (!row.trace_id?.trim()) return
+  active.value = row
+  spanPager.page = 1
+  await loadSpans()
+}
 onMounted(load)
-watch([() => route.query, refreshVersion], load)
+watch([() => route.query, refreshVersion], () => { pager.page = 1; load() })
 </script>
 
 <template>
@@ -27,6 +46,7 @@ watch([() => route.query, refreshVersion], load)
       <el-table-column prop="release_name" label="版本" width="120" />
       <el-table-column label="页面" min-width="260"><template #default="{ row }"><span class="table-ellipsis" :title="row.url">{{ row.url }}</span></template></el-table-column>
     </el-table>
+    <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="pager.page" :page-size="pager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="pager.total" @current-change="value => { pager.page = value; load() }" @size-change="value => { pager.page = 1; pager.pageSize = value; load() }" />
   </el-card>
   <el-drawer v-model="active" size="65%" :title="`链路 ${active?.trace_id || ''}`">
     <el-table :data="spans" border>
@@ -37,5 +57,6 @@ watch([() => route.query, refreshVersion], load)
       <el-table-column label="请求" min-width="260"><template #default="{ row }">{{ row.props?.method }} {{ row.props?.url || row.url }}</template></el-table-column>
       <el-table-column label="状态" width="90"><template #default="{ row }">{{ row.props?.status || '-' }}</template></el-table-column>
     </el-table>
+    <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="spanPager.page" :page-size="spanPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="spanPager.total" @current-change="value => { spanPager.page = value; loadSpans() }" @size-change="value => { spanPager.page = 1; spanPager.pageSize = value; loadSpans() }" />
   </el-drawer>
 </template>

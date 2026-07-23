@@ -199,8 +199,8 @@ export async function getReplay(replayKey) {
   return promise
 }
 
-export async function loadGovernance(page = 1, pageSize = 10) {
-  const [applications, settings, alerts] = await Promise.all([api('/api/applications'), api('/api/settings'), api(`/api/alerts?page=${page}&pageSize=${pageSize}`)])
+export async function loadGovernance({ alertPage = 1, alertPageSize = 10, appPage = 1, appPageSize = 10 } = {}) {
+  const [applications, settings, alerts] = await Promise.all([api(`/api/applications?page=${appPage}&pageSize=${appPageSize}`), api('/api/settings'), api(`/api/alerts?page=${alertPage}&pageSize=${alertPageSize}`)])
   return { applications, settings, alerts }
 }
 
@@ -212,8 +212,8 @@ export async function saveApplication(app) {
 export async function deleteApplication(appId) { return api(`/api/applications/${encodeURIComponent(appId)}`, { method: 'DELETE' }) }
 export async function rotateCollectKey(appId) { return api(`/api/applications/${encodeURIComponent(appId)}/collect-key`, { method: 'POST' }) }
 
-export async function loadReleases(appId) {
-  return api(`/api/applications/${encodeURIComponent(appId)}/releases`)
+export async function loadReleases(appId, page = 1, pageSize = 10) {
+  return api(`/api/applications/${encodeURIComponent(appId)}/releases?page=${page}&pageSize=${pageSize}`)
 }
 
 export async function saveRelease(appId, release, status) {
@@ -237,10 +237,13 @@ export async function downloadReport(kind) {
   const res = await fetch(`${apiBase}/api/export/${kind}.csv?${queryFromFilters()}`)
   if (!res.ok) throw new Error(await res.text())
   const link = document.createElement('a')
-  link.href = URL.createObjectURL(await res.blob())
+  const href = URL.createObjectURL(await res.blob())
+  link.href = href
   link.download = `web-collection-${kind}.csv`
+  document.body.append(link)
   link.click()
-  URL.revokeObjectURL(link.href)
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(href), 0)
 }
 
 export async function api(path, options = {}) {

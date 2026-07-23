@@ -258,7 +258,8 @@ export function createEys(options = {}) {
 
   /**
    * 批量上报队列中的事件。
-   * force=true 时优先使用 sendBeacon（适合页面卸载场景），
+   * force=true 且未配置采集密钥时优先使用 sendBeacon（适合页面卸载场景），
+   * 配置 collectKey 后改用 fetch + keepalive，以便携带 x-app-key。
    * 否则使用 fetch；两者都不可用时降级为 GIF 图片上报。
    * 上报失败后增加 retry 计数，超过最大重试次数的事件会被丢弃。
    * @param {boolean} [force=false] - 是否强制立即上报（页面卸载等场景）
@@ -269,7 +270,7 @@ export function createEys(options = {}) {
     const batch = queue.slice(0, cfg.batchSize)
     const body = JSON.stringify({ events: batch })
     try {
-      if (force && navigator.sendBeacon && body.length < 64000) {
+      if (force && !cfg.collectKey && navigator.sendBeacon && body.length < 64000) {
         if (!navigator.sendBeacon(cfg.endpoint, new Blob([body], { type: 'application/json' }))) throw new Error('beacon failed')
       } else if (originalFetch) {
         const res = await originalFetch(cfg.endpoint, {

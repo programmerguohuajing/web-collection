@@ -41,11 +41,18 @@ export async function shouldCollect(appId, type) {
   return rate >= 1 || (rate > 0 && Math.random() < rate)
 }
 
-export async function listApplications() {
-  return all(`select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.created_at, a.updated_at,
+export async function listApplications(filters = {}) {
+  const page = pageOf(filters)
+  const select = `select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.created_at, a.updated_at,
     (a.collect_key_hash is not null) as collect_key_enabled, count(distinct r.release_name)::integer as release_count
     from applications a left join releases r on r.app_id = a.app_id
-    group by a.app_id order by a.updated_at desc`)
+    group by a.app_id order by a.updated_at desc`
+  if (filters.page == null && filters.pageSize == null) return all(select)
+  const [items, total] = await Promise.all([
+    all(`${select} limit ? offset ?`, [page.pageSize, (page.page - 1) * page.pageSize]),
+    scalar('select count(*) count from applications')
+  ])
+  return { ...page, total, items }
 }
 
 export async function saveApplication(input) {
@@ -102,8 +109,13 @@ export async function passesRules(event) {
   return true
 }
 
-export async function listReleases(appId) {
-  return all('select app_id, release_name, status, created_at from releases where app_id = ? order by created_at desc', [appId])
+export async function listReleases(appId, filters = {}) {
+  const page = pageOf(filters)
+  const [items, total] = await Promise.all([
+    all('select app_id, release_name, status, created_at from releases where app_id = ? order by created_at desc limit ? offset ?', [appId, page.pageSize, (page.page - 1) * page.pageSize]),
+    scalar('select count(*) count from releases where app_id=?', [appId])
+  ])
+  return { ...page, total, items }
 }
 
 export async function saveRelease(appId, input) {
@@ -191,6 +203,10 @@ function makeTrigger(metric, value, level, event, threshold) {
     ? `[Web Collection] ${event.appId} ${metric.toUpperCase()} ${value}${metric === 'cls' ? '' : 'ms'}，超过阈值 ${threshold}${metric === 'cls' ? '' : 'ms'}，页面 ${page}`
     : `[Web Collection] ${event.appId} ${event.name || metric}: ${event.message || '未知错误'}，页面 ${page}，版本 ${event.release || '-'}，Trace ${event.traceId || '-'}`
   return { metric, value, level, message }
+}
+
+function pageOf(filters) {
+  return { page: Math.max(1, Number(filters.page || 1)), pageSize: Math.max(1, Math.min(100, Number(filters.pageSize || 10))) }
 }
 
 async function notify(message) {

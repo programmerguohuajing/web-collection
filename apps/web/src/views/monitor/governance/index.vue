@@ -4,14 +4,17 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteApplication, deleteRelease, downloadReport, loadGovernance, loadReleases, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease } from '../../../dashboard.js'
 
 const loading = ref(false)
+const exporting = ref('')
 const applications = ref([])
 const alerts = ref([])
+const appPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const alertPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const settings = reactive({ retention: {}, alerts: {} })
 const appDialog = ref(false)
 const releaseDialog = ref(false)
 const activeAppId = ref('')
 const releases = ref([])
+const releasePager = reactive({ page: 1, pageSize: 10, total: 0 })
 const releaseForm = reactive({ release: '', status: 'active' })
 const appForm = reactive({ appId: '', name: '', platform: 'web', owner: '', enabled: true, sampleRate: 1, replaySampleRate: 1, allowedOrigins: '', blockedTypes: '', blockedNames: '' })
 const newCollectKey = ref('')
@@ -19,8 +22,9 @@ const newCollectKey = ref('')
 async function load() {
   loading.value = true
   try {
-    const data = await loadGovernance(alertPager.page, alertPager.pageSize)
-    applications.value = data.applications
+    const data = await loadGovernance({ alertPage: alertPager.page, alertPageSize: alertPager.pageSize, appPage: appPager.page, appPageSize: appPager.pageSize })
+    applications.value = data.applications.items
+    Object.assign(appPager, { page: data.applications.page, pageSize: data.applications.pageSize, total: data.applications.total })
     alerts.value = data.alerts.items
     Object.assign(alertPager, { page: data.alerts.page, pageSize: data.alerts.pageSize, total: data.alerts.total })
     Object.assign(settings.retention, data.settings.retention)
@@ -41,6 +45,7 @@ async function submitApp() {
   await saveApplication({ ...appForm, rules: { allowedOrigins: lines(appForm.allowedOrigins), blockedTypes: lines(appForm.blockedTypes), blockedNames: lines(appForm.blockedNames) } })
   appDialog.value = false
   ElMessage.success('应用配置已保存')
+  appPager.page = 1
   await load()
 }
 async function removeApp(row) {
@@ -48,6 +53,7 @@ async function removeApp(row) {
   if (!confirmed) return
   await deleteApplication(row.app_id)
   ElMessage.success('应用已删除')
+  if (applications.value.length === 1 && appPager.page > 1) appPager.page--
   await load()
 }
 function lines(value) { return String(value || '').split(/[,\n]/).map(item => item.trim()).filter(Boolean) }
@@ -61,8 +67,15 @@ async function submitSettings() {
 
 async function openReleases(row) {
   activeAppId.value = row.app_id
-  releases.value = await loadReleases(row.app_id)
+  releasePager.page = 1
+  await loadReleasePage()
   releaseDialog.value = true
+}
+
+async function loadReleasePage() {
+  const data = await loadReleases(activeAppId.value, releasePager.page, releasePager.pageSize)
+  releases.value = data.items
+  Object.assign(releasePager, { page: data.page, pageSize: data.pageSize, total: data.total })
 }
 
 async function submitRelease() {
@@ -70,7 +83,8 @@ async function submitRelease() {
   if (!release) return ElMessage.warning('请输入版本号')
   try {
     await saveRelease(activeAppId.value, release, releaseForm.status)
-    releases.value = await loadReleases(activeAppId.value)
+    releasePager.page = 1
+    await loadReleasePage()
     releaseForm.release = ''
     ElMessage.success('版本已保存')
     await load()
@@ -82,7 +96,8 @@ async function removeRelease(row) {
   const confirmed = await ElMessageBox.confirm(`确定删除版本“${row.release_name}”吗？SDK 继续上报该版本时会重新出现。`, '删除版本', { type: 'warning' }).then(() => true).catch(() => false)
   if (!confirmed) return
   await deleteRelease(activeAppId.value, row.release_name)
-  releases.value = await loadReleases(activeAppId.value)
+  if (releases.value.length === 1 && releasePager.page > 1) releasePager.page--
+  await loadReleasePage()
   ElMessage.success('版本已删除')
   await load()
 }
@@ -90,6 +105,18 @@ async function removeRelease(row) {
 async function cleanup() {
   const result = await runCleanup()
   ElMessage.success(`清理完成：${Object.values(result).reduce((sum, value) => sum + value, 0)} 条`)
+}
+
+async function exportReport(kind) {
+  exporting.value = kind
+  try {
+    await downloadReport(kind)
+    ElMessage.success('报表已导出')
+  } catch (error) {
+    ElMessage.error(error.message || '报表导出失败')
+  } finally {
+    exporting.value = ''
+  }
 }
 
 onMounted(load)
@@ -110,6 +137,7 @@ onMounted(load)
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="270"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
       </el-table>
+      <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="appPager.page" :page-size="appPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="appPager.total" @current-change="value => { appPager.page = value; load() }" @size-change="value => { appPager.page = 1; appPager.pageSize = value; load() }" />
     </el-card>
 
     <el-card shadow="never" class="section panel">
@@ -138,7 +166,7 @@ onMounted(load)
     </el-card>
 
     <el-card shadow="never" class="section panel">
-      <template #header><div class="panel-head"><b>报表与告警记录</b><el-space><el-button @click="downloadReport('events')">导出事件</el-button><el-button @click="downloadReport('issues')">导出错误</el-button><el-button @click="downloadReport('replays')">导出回放</el-button></el-space></div></template>
+      <template #header><div class="panel-head"><b>报表与告警记录</b><el-space><el-button :loading="exporting === 'events'" :disabled="Boolean(exporting)" @click="exportReport('events')">导出事件</el-button><el-button :loading="exporting === 'issues'" :disabled="Boolean(exporting)" @click="exportReport('issues')">导出错误</el-button><el-button :loading="exporting === 'replays'" :disabled="Boolean(exporting)" @click="exportReport('replays')">导出回放</el-button></el-space></div></template>
       <el-table :data="alerts" border>
         <el-table-column prop="created_at" label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
         <el-table-column prop="app_id" label="应用" width="140" />
@@ -180,5 +208,6 @@ onMounted(load)
       <el-table-column label="首次上报时间" width="190"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" @click="removeRelease(row)">删除</el-button></template></el-table-column>
     </el-table>
+    <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="releasePager.page" :page-size="releasePager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="releasePager.total" @current-change="value => { releasePager.page = value; loadReleasePage() }" @size-change="value => { releasePager.page = 1; releasePager.pageSize = value; loadReleasePage() }" />
   </el-dialog>
 </template>
