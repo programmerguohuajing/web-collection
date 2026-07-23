@@ -392,7 +392,7 @@ onMounted(load)
   <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑告警渠道' : '新增告警渠道'" width="760px">
     <el-form :model="channelForm" label-width="120px">
       <el-form-item label="渠道名称"><el-input v-model="channelForm.name" maxlength="128" /></el-form-item>
-      <el-form-item label="渠道类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="[value, label] in channelTypeOptions" :key="value" :label="label" :value="value" /></el-select></el-form-item>
+      <el-form-item label="渠道类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="item in channelTypeOptions" :key="item[0]" :label="item[1]" :value="item[0]" /></el-select></el-form-item>
       <el-form-item label="HTTPS 地址">
         <el-input v-model="channelForm.endpoint" type="password" show-password :placeholder="channelForm.configured ? '已配置；留空保持原值' : 'https://...'" />
       </el-form-item>
@@ -415,8 +415,8 @@ onMounted(load)
       </template>
       <el-form-item label="附加密钥 JSON"><el-input v-model="channelForm.secretsText" type="textarea" :rows="3" placeholder='{"apiKey":"仅写入，不回显"}' /><small>保存后不回显；编辑时填写的同名字段会覆盖旧值，其余密钥保持不变。</small></el-form-item>
       <el-form-item label="应用范围"><el-select v-model="channelForm.appIds" multiple clearable collapse-tags style="width:100%" placeholder="留空表示全部应用"><el-option v-for="app in applicationOptions" :key="app.app_id" :label="`${app.name} (${app.app_id})`" :value="app.app_id" /></el-select></el-form-item>
-      <el-form-item label="告警级别"><el-select v-model="channelForm.levels" multiple clearable style="width:100%" placeholder="留空表示全部级别"><el-option v-for="[value, label] in levelOptions" :key="value" :label="label" :value="value" /></el-select></el-form-item>
-      <el-form-item label="告警指标"><el-select v-model="channelForm.metrics" multiple clearable collapse-tags style="width:100%" placeholder="留空表示全部指标"><el-option v-for="[value, label] in metricOptions" :key="value" :label="label" :value="value" /></el-select></el-form-item>
+      <el-form-item label="告警级别"><el-select v-model="channelForm.levels" multiple clearable style="width:100%" placeholder="留空表示全部级别"><el-option v-for="item in levelOptions" :key="item[0]" :label="item[1]" :value="item[0]" /></el-select></el-form-item>
+      <el-form-item label="告警指标"><el-select v-model="channelForm.metrics" multiple clearable collapse-tags style="width:100%" placeholder="留空表示全部指标"><el-option v-for="item in metricOptions" :key="item[0]" :label="item[1]" :value="item[0]" /></el-select></el-form-item>
       <el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item>
     </el-form>
     <template #footer><el-button @click="channelDialog=false">取消</el-button><el-button type="primary" :loading="channelSaving" @click="submitChannel">保存</el-button></template>
