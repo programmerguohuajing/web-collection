@@ -11,10 +11,13 @@ const route = useRoute()
 const router = useRouter()
 const searching = ref(false)
 const globalFields = ['range', 'appId', 'release', 'keyword']
-const visibleFields = computed(() => props.fields.filter(name => !globalFields.includes(name)))
+const visibleFields = computed(() => props.fields)
 const queryFields = computed(() => [...new Set([...globalFields, ...props.fields])])
 
 const fieldMap = {
+  traceId: { label: 'Trace ID' },
+  range: { label: '时间' },
+  release: { label: '版本' },
   path: { label: 'URL / path' },
   userId: { label: '用户 ID' },
   userName: { label: '用户名' },
@@ -37,7 +40,7 @@ async function search() {
 }
 
 async function reset() {
-  for (const name of visibleFields.value) filters.value[name] = ''
+  for (const name of visibleFields.value) filters.value[name] = name === 'range' ? [] : ''
   await search()
 }
 </script>
@@ -46,7 +49,8 @@ async function reset() {
   <el-card v-if="visibleFields.length" shadow="never" class="query-card">
     <el-form class="ruoyi-query" label-width="82px" @submit.prevent="search">
       <el-form-item v-for="name in visibleFields" :key="name" :label="fieldMap[name]?.label">
-        <el-select v-if="name === 'type'" v-model="filters.type" placeholder="请选择" clearable>
+        <el-date-picker v-if="name === 'range'" v-model="filters.range" type="datetimerange" value-format="x" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" />
+        <el-select v-else-if="name === 'type'" v-model="filters.type" placeholder="请选择" clearable>
           <el-option label="错误" value="error" />
           <el-option label="性能" value="perf" />
           <el-option label="行为" value="behavior" />

@@ -183,6 +183,12 @@ pnpm exec wrangler secret put QSTASH_NEXT_SIGNING_KEY
 
 `ALERT_PUBLIC_BASE_URL` 填写控制台公开地址，例如 `https://monitor.example.com`。旧的 `FEISHU_WEBHOOK_URL` 在没有配置新渠道时继续作为兼容回退。
 
+### 产品分析 V2
+
+Node/PostgreSQL 部署支持事件趋势、用户/会话去重、事件属性过滤与拆分、同会话漏斗、交互式用户路径、保存分析及仪表盘引用。用户统计优先使用 `userId`，缺失时回退 `deviceId`。
+
+Cloudflare Worker 保留原有产品分析能力，控制台会通过 `/api/capabilities` 自动隐藏 V2 入口。
+
 ## SDK 接入
 
 ### NPM 接入

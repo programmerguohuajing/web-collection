@@ -279,9 +279,19 @@ export async function ensureSchema() {
     created_at bigint not null,
     updated_at bigint not null
   )`)
+  await run(`create table if not exists analytics_insights (
+    id bigserial primary key,
+    name varchar(128) not null,
+    kind varchar(32) not null,
+    definition_json jsonb not null,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
   await run(`create index if not exists idx_events_ts on events(ts)`)
   await run(`create index if not exists idx_events_trace on events(trace_id, ts)`)
   await run(`create index if not exists idx_events_session on events(session_id, ts)`)
+  await run(`create index if not exists idx_events_analytics on events(app_id, name, ts)`)
+  await run(`create index if not exists idx_events_props_gin on events using gin(props_json jsonb_path_ops)`)
   await run(`create index if not exists idx_replay_events_created_at on replay_events(created_at)`)
   await run(`create index if not exists idx_replay_events_app_created_at on replay_events(app_id, created_at)`)
   await run(`create index if not exists idx_alert_history_created_at on alert_history(created_at)`)
