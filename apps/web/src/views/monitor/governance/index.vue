@@ -167,7 +167,7 @@ onMounted(load)
 
     <el-card shadow="never" class="section panel">
       <template #header><div class="panel-head"><b>报表与告警记录</b><el-space><el-button :loading="exporting === 'events'" :disabled="Boolean(exporting)" @click="exportReport('events')">导出事件</el-button><el-button :loading="exporting === 'issues'" :disabled="Boolean(exporting)" @click="exportReport('issues')">导出错误</el-button><el-button :loading="exporting === 'replays'" :disabled="Boolean(exporting)" @click="exportReport('replays')">导出回放</el-button></el-space></div></template>
-      <el-table :data="alerts" border>
+      <el-table :data="alerts" border :tooltip-options="{ appendTo: 'body', teleported: true }">
         <el-table-column prop="created_at" label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
         <el-table-column prop="app_id" label="应用" width="140" />
         <el-table-column prop="metric" label="指标" width="110" />
