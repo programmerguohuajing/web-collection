@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
+import SearchPanel from '../../../components/SearchPanel.vue'
 
 const traces = ref([])
 const route = useRoute()
@@ -35,6 +36,7 @@ watch([() => route.query, refreshVersion], () => { pager.page = 1; load() })
 </script>
 
 <template>
+  <SearchPanel :fields="['traceId', 'range', 'release', 'path']" />
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><b>前端链路</b><el-button @click="load">刷新</el-button></div></template>
     <el-table v-loading="loading" :data="traces" border @row-click="open">

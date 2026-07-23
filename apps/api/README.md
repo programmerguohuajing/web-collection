@@ -189,6 +189,11 @@ pnpm sourcemaps:upload -- --dir apps/web/dist --app-id web --release 1.0.0 \
 | `PUT /api/applications/:appId/releases/:release` | 新增版本或更新版本状态 |
 | `GET/PUT /api/settings` | 数据保留周期和告警阈值 |
 | `GET /api/alerts` | 告警通知记录 |
+| `GET /api/capabilities` | 查询当前运行时支持的平台能力 |
+| `POST /api/analytics/insights/query` | 事件趋势、用户数和会话数分析 |
+| `GET /api/analytics/event-properties` | 查询事件可用属性 |
+| `GET/POST/PUT/DELETE /api/analytics/insights` | 保存分析定义管理 |
+| `POST /api/analytics/paths/query` | 用户路径节点与转移分析 |
 | `POST /api/maintenance/cleanup` | 立即执行过期数据清理 |
 | `GET /api/export/events.csv` | 导出事件报表 |
 | `GET /api/export/issues.csv` | 导出错误报表 |

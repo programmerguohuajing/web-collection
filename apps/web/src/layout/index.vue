@@ -10,7 +10,7 @@ import { api, error, filters, loading, queryFromFilters, refresh, refreshAll, re
 const route = useRoute()
 const router = useRouter()
 const applications = ref([])
-const dataQueryNames = ['appId', 'release', 'startTime', 'endTime', 'path', 'userId', 'userName', 'userPhone', 'keyword', 'type', 'status']
+const dataQueryNames = ['appId', 'release', 'startTime', 'endTime', 'traceId', 'path', 'userId', 'userName', 'userPhone', 'keyword', 'type', 'status']
 const groups = [
   { label: '', items: [{ title: '总览', path: '/overview', icon: House }] },
   { label: '监控', items: [
