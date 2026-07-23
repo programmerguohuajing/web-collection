@@ -17,6 +17,7 @@ const isPlaying = ref(false)
 const progress = ref(0)
 const duration = ref(0)
 const currentReplayId = ref('')
+const loadingReplayId = ref('')
 let currentReplayer = null
 let progressTimer = 0
 
@@ -58,7 +59,11 @@ function fitReplay(width, height) {
 
 async function play(item) {
   currentReplayId.value = item.replayId
-  const events = await props.loadReplay(item.replayId)
+  loadingReplayId.value = item.replayId
+  const events = await props.loadReplay(item.replayId).finally(() => {
+    if (loadingReplayId.value === item.replayId) loadingReplayId.value = ''
+  })
+  if (currentReplayId.value !== item.replayId) return
   await nextTick()
   destroyPlayer()
   if (!events.length || !replayEl.value) return
@@ -84,6 +89,10 @@ async function play(item) {
   } catch (error) {
     destroyPlayer()
   }
+}
+
+function prefetch(item) {
+  props.loadReplay(item.replayId).catch(() => {})
 }
 
 function playReplay() {
@@ -174,7 +183,7 @@ defineExpose({ play })
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="play(row)">播放</el-button>
+            <el-button link type="primary" :loading="loadingReplayId === row.replayId" @mouseenter="prefetch(row)" @focus="prefetch(row)" @click="play(row)">播放</el-button>
           </template>
         </el-table-column>
       </el-table>

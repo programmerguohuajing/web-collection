@@ -18,6 +18,7 @@ export const perfPager = ref({ page: 1, pageSize: 10, total: 0 })
 export const behaviorPager = ref({ page: 1, pageSize: 10, total: 0 })
 export const issuePager = ref({ page: 1, pageSize: 10, total: 0 })
 export const replayPager = ref({ page: 1, pageSize: 10, total: 0 })
+const replayCache = new Map()
 
 export const filterDefaults = {
   range: [],
@@ -167,11 +168,18 @@ export async function uploadSourceMap(payload) {
 }
 
 export async function getReplay(replayKey) {
-  return api(`/api/replays/${encodeURIComponent(replayKey)}`)
+  const cached = replayCache.get(replayKey)
+  if (cached?.expiresAt > Date.now()) return cached.promise
+  const promise = api(`/api/replays/${encodeURIComponent(replayKey)}`).catch(error => {
+    replayCache.delete(replayKey)
+    throw error
+  })
+  replayCache.set(replayKey, { promise, expiresAt: Date.now() + 30000 })
+  return promise
 }
 
-export async function loadGovernance() {
-  const [applications, settings, alerts] = await Promise.all([api('/api/applications'), api('/api/settings'), api('/api/alerts?limit=50')])
+export async function loadGovernance(page = 1, pageSize = 10) {
+  const [applications, settings, alerts] = await Promise.all([api('/api/applications'), api('/api/settings'), api(`/api/alerts?page=${page}&pageSize=${pageSize}`)])
   return { applications, settings, alerts }
 }
 
