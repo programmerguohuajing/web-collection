@@ -20,7 +20,7 @@ assert.equal(issueKey({ appId: 'web', name: 'SseError', stack: 'sdk line', props
 
 let writes = 0
 let pending
-const statement = { bind() { return this }, first: async () => null, run: async () => { await new Promise(resolve => setTimeout(resolve, 20)); writes++; return { meta: {} } } }
+const statement = { bind() { return this }, first: async () => ({ enabled: 1, sample_rate: 1, replay_sample_rate: 1, rules_json: '{"allowedOrigins":["*"]}' }), run: async () => { await new Promise(resolve => setTimeout(resolve, 20)); writes++; return { meta: {} } } }
 const response = await worker.fetch(new Request('https://example.com/api/collect', { method: 'POST', body: JSON.stringify({ type: 'behavior', name: 'pv' }) }), { DB: { prepare: () => ({ ...statement }) } }, { waitUntil: promise => { pending = promise } })
 assert.equal(response.status, 200)
 assert.equal(writes, 0)

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { all, run } from './db.js'
+import { all, run, scalar } from './db.js'
 
 export const defaultSettings = {
   retention: { eventsDays: 30, logsDays: 14, replaysDays: 7, resolvedIssuesDays: 90, sourcemapsDays: 180, alertsDays: 90 },
@@ -98,7 +98,7 @@ export async function passesRules(event) {
   }
   const rules = cached.rules
   if (rules.blockedTypes.includes(event.type) || rules.blockedNames.includes(event.name)) return false
-  if (rules.allowedOrigins.length && !rules.allowedOrigins.includes(originOf(event.url))) return false
+  if (rules.allowedOrigins.length && !rules.allowedOrigins.includes('*') && !rules.allowedOrigins.includes(originOf(event.url))) return false
   return true
 }
 
@@ -152,8 +152,14 @@ export async function processAlert(event, issue) {
   )
 }
 
-export async function listAlerts(limit = 100) {
-  return all('select * from alert_history order by created_at desc limit ?', [Math.min(500, Number(limit) || 100)])
+export async function listAlerts(filters = {}) {
+  const page = Math.max(1, Number(filters.page) || 1)
+  const pageSize = Math.max(1, Math.min(100, Number(filters.pageSize) || 10))
+  const [items, total] = await Promise.all([
+    all('select * from alert_history order by created_at desc limit ? offset ?', [pageSize, (page - 1) * pageSize]),
+    scalar('select count(*) count from alert_history')
+  ])
+  return { items, total, page, pageSize }
 }
 
 export async function cleanupExpiredData() {

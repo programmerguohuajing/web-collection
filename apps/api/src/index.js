@@ -154,7 +154,7 @@ app.put('/api/settings', async (req, res, next) => {
   try { res.json(await saveSettings(req.body || {})) } catch (err) { next(err) }
 })
 app.get('/api/alerts', async (req, res, next) => {
-  try { res.json(await listAlerts(req.query.limit)) } catch (err) { next(err) }
+  try { res.json(await listAlerts(req.query)) } catch (err) { next(err) }
 })
 app.post('/api/applications/:appId/collect-key', async (req, res, next) => {
   try { res.json(await rotateCollectKey(req.params.appId)) } catch (err) { next(err) }

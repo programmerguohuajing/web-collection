@@ -1,14 +1,15 @@
 <script setup>
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
   Histogram, House, Monitor, Operation, Search, Stopwatch, Warning
 } from '@element-plus/icons-vue'
-import { error, filters, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
+import { api, error, filters, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
 
 const route = useRoute()
 const router = useRouter()
+const applications = ref([])
 const groups = [
   { label: '', items: [{ title: '总览', path: '/overview', icon: House }] },
   { label: '监控', items: [
@@ -45,7 +46,7 @@ function globalSearch() {
 
 onMounted(async () => {
   setFiltersFromRoute(route.query)
-  await refresh()
+  ;[applications.value] = await Promise.all([api('/api/applications'), refresh()])
 })
 watch(() => route.query, query => setFiltersFromRoute(query))
 watch(() => route.fullPath, async () => {
@@ -77,7 +78,7 @@ watch(() => route.fullPath, async () => {
     <section class="main-container">
       <header class="navbar">
         <div class="context-selectors">
-          <el-select v-model="filters.appId" clearable placeholder="Web" @change="refresh"><el-option label="Web" value="web" /><el-option label="全部应用" value="" /></el-select>
+          <el-select v-model="filters.appId" clearable placeholder="全部应用" @change="refresh"><el-option v-for="item in applications" :key="item.app_id" :label="item.name || item.app_id" :value="item.app_id" /><el-option label="全部应用" value="" /></el-select>
           <el-select model-value="production" disabled><el-option label="● 生产" value="production" /></el-select>
           <el-input v-model="filters.release" placeholder="全部版本" clearable @change="refresh" />
           <el-select placeholder="最近24小时" @change="applyQuickRange"><el-option label="最近1小时" value="1" /><el-option label="最近24小时" value="24" /><el-option label="最近7天" value="168" /><el-option label="全部时间" value="" /></el-select>
