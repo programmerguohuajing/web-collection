@@ -116,6 +116,7 @@ export function computeFunnel(rows, steps, replayRows = []) {
 }
 
 export async function listDashboards() { return all('select * from dashboard_definitions order by updated_at desc') }
+export async function deleteDashboard(id) { await run('delete from dashboard_definitions where id=?', [id]); return { ok: true } }
 export async function saveDashboard(input) {
   const name = String(input.name || '').trim().slice(0, 128)
   if (!name) throw new Error('仪表盘名称不能为空')

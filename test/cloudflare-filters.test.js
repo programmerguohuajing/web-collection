@@ -60,4 +60,22 @@ assert.equal(deleteResponse.status, 200)
 assert.equal(deletedId, 7)
 assert.match(deleteResponse.headers.get('access-control-allow-methods'), /DELETE/)
 
+const applicationDeletes = []
+const deleteApplicationResponse = await worker.fetch(new Request('https://example.com/api/applications/test-app', { method: 'DELETE' }), {
+  DB: {
+    prepare(sql) {
+      let values
+      return {
+        bind(...bound) { values = bound; return this },
+        async run() { applicationDeletes.push([sql, values]); return { meta: { changes: 1 } } }
+      }
+    }
+  }
+})
+assert.equal(deleteApplicationResponse.status, 200)
+assert.deepEqual(applicationDeletes, [
+  ['delete from releases where app_id=?', ['test-app']],
+  ['delete from applications where app_id=?', ['test-app']]
+])
+
 console.log('cloudflare filters tests passed')
