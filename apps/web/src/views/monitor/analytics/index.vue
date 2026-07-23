@@ -49,6 +49,15 @@ async function removeFunnel(item) {
   await load()
 }
 async function saveDashboard() { await api('/api/dashboards', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(dashboardForm) }); dashboardForm.name = ''; await load() }
+async function removeDashboard() {
+  const item = dashboards.value.find(entry => entry.id === selectedDashboardId.value)
+  if (!item) return
+  const confirmed = await ElMessageBox.confirm(`确定删除仪表盘“${item.name}”吗？`, '删除仪表盘', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  await api(`/api/dashboards/${item.id}`, { method: 'DELETE' })
+  selectedDashboardId.value = null
+  await load()
+}
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 async function openSession(row) { activeSession.value = row; sessionEvents.value = await api(`/api/analytics/sessions/${encodeURIComponent(row.session_id)}`) }
 
@@ -100,7 +109,7 @@ watch(() => route.query, query => { if (query.tab) tab.value = query.tab; load()
       <el-table :data="releases" border><el-table-column prop="release" label="版本" /><el-table-column prop="events" label="事件" /><el-table-column prop="users" label="用户" /><el-table-column prop="errors" label="错误" /><el-table-column prop="lcp" label="平均 LCP" /></el-table>
     </el-tab-pane>
     <el-tab-pane label="自定义仪表盘" name="dashboards">
-      <el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" class="section" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select>
+      <el-space class="section"><el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select><el-button type="danger" plain :disabled="!selectedDashboardId" @click="removeDashboard">删除仪表盘</el-button></el-space>
       <el-form inline><el-form-item label="名称"><el-input v-model="dashboardForm.name" /></el-form-item><el-form-item label="组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in ['live','sessions','errors','releases']" :key="item" :value="item">{{ item }}</el-checkbox></el-checkbox-group></el-form-item><el-button type="primary" @click="saveDashboard">保存</el-button></el-form>
       <el-alert v-if="activeDashboard" :title="`当前仪表盘：${activeDashboard.name}（${activeDashboard.widgets_json?.join('、')}）`" type="success" :closable="false" />
       <div v-if="activeDashboard" class="metrics section custom-dashboard">

@@ -88,9 +88,11 @@ async function adminApi(request, env, url) {
   if (path === '/api/analytics/releases') return releasesReport(env, url)
   if (path === '/api/analytics/event-names') return funnelEventNames(env, url)
   if (path === '/api/applications' && request.method === 'GET') return json((await env.DB.prepare(`select app_id,name,platform,owner,enabled,sample_rate,replay_sample_rate,rules_json,created_at,updated_at,(collect_key_hash is not null) collect_key_enabled,(select count(*) from releases r where r.app_id=applications.app_id) release_count from applications order by updated_at desc`).all()).results.map(row => ({ ...row, rules_json: parse(row.rules_json, {}) })))
+  if (/^\/api\/applications\/[^/]+$/.test(path) && request.method === 'DELETE') { const id=decodeURIComponent(path.split('/').at(-1)); await env.DB.prepare('delete from releases where app_id=?').bind(id).run(); await env.DB.prepare('delete from applications where app_id=?').bind(id).run(); return json({ok:true}) }
   if (/^\/api\/applications\/[^/]+$/.test(path) && request.method === 'PUT') return saveApplication(env, decodeURIComponent(path.split('/').at(-1)), await request.json())
   if (/\/collect-key$/.test(path) && request.method === 'POST') return rotateKey(env, decodeURIComponent(path.split('/').at(-2)))
   if (/\/releases$/.test(path) && request.method === 'GET') return json((await env.DB.prepare('select * from releases where app_id=? order by created_at desc').bind(decodeURIComponent(path.split('/').at(-2))).all()).results)
+  if (/\/releases\/[^/]+$/.test(path) && request.method === 'DELETE') { await env.DB.prepare('delete from releases where app_id=? and release_name=?').bind(decodeURIComponent(path.split('/').at(-3)),decodeURIComponent(path.split('/').at(-1))).run(); return json({ok:true}) }
   if (/\/releases\/[^/]+$/.test(path) && request.method === 'PUT') return saveRelease(env, decodeURIComponent(path.split('/').at(-3)), decodeURIComponent(path.split('/').at(-1)), await request.json())
   if (path === '/api/settings') return request.method === 'PUT' ? saveSettings(env, await request.json()) : json(await settings(env))
   if (path === '/api/alerts') return json((await env.DB.prepare('select * from alerts order by created_at desc limit 100').all()).results)
@@ -102,6 +104,7 @@ async function adminApi(request, env, url) {
   if (/\/funnels\/\d+\/run$/.test(path)) return runFunnel(env, Number(path.split('/').at(-2)), url)
   if (path === '/api/dashboards' && request.method === 'GET') return json((await env.DB.prepare('select * from dashboards order by updated_at desc').all()).results.map(row => ({...row,widgets_json:parse(row.widgets_json,[])})))
   if (path === '/api/dashboards' && request.method === 'POST') return saveDashboard(env, await request.json())
+  if (/^\/api\/dashboards\/\d+$/.test(path) && request.method === 'DELETE') { await env.DB.prepare('delete from dashboards where id=?').bind(Number(path.split('/').at(-1))).run(); return json({ok:true}) }
   if (path === '/api/maintenance/cleanup' && request.method === 'POST') return json(await cleanup(env))
   if (/^\/api\/export\/(events|issues|replays)\.csv$/.test(path)) return exportCsv(env, RegExp.$1)
   return new Response('not found', { status: 404 })
