@@ -21,8 +21,9 @@ import { percentile, scorePerf } from '../utils/domain.js'
  *   - alerts：性能和回归告警列表
  *   - issues：错误列表
  */
-export function buildSummary(events, issuesById, replays) {
-  const perfEvents = events.filter(e => e.type === 'perf' && Number.isFinite(Number(e.value)))
+export function buildSummary(events, issuesById, replays, performanceEvents = events) {
+  const perfEvents = performanceEvents.filter(e => e.type === 'perf' && Number.isFinite(Number(e.value)) && !(e.metric === 'page_load' && Number(e.value) <= 0))
+  const perfCounts = countBy(perfEvents, 'metric')
   const perf = {}
   for (const metric of ['lcp', 'inp', 'fid', 'cls', 'fcp', 'fp', 'ttfb', 'longtask', 'white_screen', 'blank_screen_rate', 'first_screen', 'route_render', 'data_ready', 'dom_ready', 'page_load', 'js_boot', 'tbt', 'resource_failure_rate', 'slow_api_rate', 'dns', 'tcp', 'tls', 'request', 'download', 'cache_hit_rate', 'redirect', 'redirect_count']) {
     const values = perfEvents.filter(e => e.metric === metric).map(e => Number(e.value))
@@ -36,6 +37,7 @@ export function buildSummary(events, issuesById, replays) {
     regressionCount: issues.filter(i => i.status === 'regression').length,
     lastSeen: events[0]?.ts || null,
     perf,
+    perfCounts,
     perfScore: scorePerf(perf),
     byType: countBy(events, 'type'),
     behavior: countBy(events.filter(e => e.type === 'behavior' || e.type === 'track'), 'name'),
