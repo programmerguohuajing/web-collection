@@ -6,6 +6,7 @@ import { deleteApplication, deleteRelease, downloadReport, loadGovernance, loadR
 const loading = ref(false)
 const applications = ref([])
 const alerts = ref([])
+const alertPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const settings = reactive({ retention: {}, alerts: {} })
 const appDialog = ref(false)
 const releaseDialog = ref(false)
@@ -18,9 +19,10 @@ const newCollectKey = ref('')
 async function load() {
   loading.value = true
   try {
-    const data = await loadGovernance()
+    const data = await loadGovernance(alertPager.page, alertPager.pageSize)
     applications.value = data.applications
-    alerts.value = data.alerts
+    alerts.value = data.alerts.items
+    Object.assign(alertPager, { page: data.alerts.page, pageSize: data.alerts.pageSize, total: data.alerts.total })
     Object.assign(settings.retention, data.settings.retention)
     Object.assign(settings.alerts, data.settings.alerts)
   } finally { loading.value = false }
@@ -145,6 +147,7 @@ onMounted(load)
         <el-table-column prop="message" label="告警内容" min-width="320" show-overflow-tooltip />
         <el-table-column label="通知" width="100"><template #default="{ row }"><el-tag :type="row.notified ? 'success' : 'warning'">{{ row.notified ? '已发送' : '未发送' }}</el-tag></template></el-table-column>
       </el-table>
+      <el-pagination class="pager" v-model:current-page="alertPager.page" v-model:page-size="alertPager.pageSize" :total="alertPager.total" layout="total, sizes, prev, pager, next" @change="load" />
     </el-card>
   </div>
 
