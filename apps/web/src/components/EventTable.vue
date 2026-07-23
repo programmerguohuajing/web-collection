@@ -1,5 +1,5 @@
 <script setup>
-import { formatDuration, formatErrorLocation, readableText } from '../utils/format.js'
+import { behaviorDetailLabel, formatDuration, formatErrorLocation, readableText } from '../utils/format.js'
 
 const genericElementLabels = new Set(['A', 'BUTTON', 'DIV', 'IMG', 'INPUT', 'SELECT', 'SPAN', 'TEXTAREA', 'UNI-BUTTON', 'UNI-IMAGE'])
 
@@ -14,9 +14,10 @@ const props = defineProps({
   showUser: { type: Boolean, default: true }
 })
 defineEmits(['page-change', 'size-change'])
+const behaviorTable = props.title?.includes('行为')
 
 function typeLabel(row) {
-  if (row.type === 'behavior') return ({ click: '点击', pv: '页面访问', page_leave: '页面离开', route: '路由切换', replaceState: '路由切换', pushState: '路由切换', popstate: '路由切换', scroll: '滚动', exposure: '曝光' })[row.name] || '行为'
+  if (row.type === 'behavior') return ({ click: '点击', pv: '页面访问', page_leave: '页面离开', route: '路由切换', replaceState: '路由切换', pushState: '路由切换', hashchange: '路由切换', popstate: '路由切换', scroll: '滚动', exposure: '曝光' })[row.name] || '行为'
   return ({ track: '埋点', perf: '性能', performance: '性能', error: '错误', replay: '回放' })[row.type] || '其他'
 }
 
@@ -99,10 +100,16 @@ function nameLabel(row) {
           <template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template>
         </el-table-column>
         <el-table-column label="类型" width="100">
-          <template #default="{ row }">{{ typeLabel(row) }}</template>
+          <template #default="{ row }">
+            <el-tag v-if="behaviorTable" size="small" effect="plain">{{ typeLabel(row) }}</el-tag>
+            <template v-else>{{ typeLabel(row) }}</template>
+          </template>
         </el-table-column>
-        <el-table-column :label="props.title?.includes('错误') ? '错误信息' : '名称'" min-width="220">
-          <template #default="{ row }"><span class="table-ellipsis" :title="nameLabel(row)">{{ nameLabel(row) }}</span></template>
+        <el-table-column :label="props.title?.includes('错误') ? '错误信息' : behaviorTable ? '详情' : '名称'" min-width="220">
+          <template #default="{ row }">
+            <span v-if="behaviorTable" class="table-ellipsis" :title="behaviorDetailLabel(row)">{{ behaviorDetailLabel(row) }}</span>
+            <span v-else class="table-ellipsis" :title="nameLabel(row)">{{ nameLabel(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column v-if="props.title?.includes('错误')" label="源码位置" min-width="220">
           <template #default="{ row }"><span class="table-ellipsis" :title="formatErrorLocation(row)">{{ formatErrorLocation(row) }}</span></template>
