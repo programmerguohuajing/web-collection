@@ -1,4 +1,5 @@
 import { SourceMapConsumer } from 'source-map-js'
+import { alertContext, channelMatches, decryptSecrets, encryptSecrets, normalizeChannel, publicChannel, publishDelivery, sendChannel, verifyQStash } from '../packages/alerting.js'
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
@@ -19,7 +20,10 @@ export default {
       return cors(new Response(error?.message || 'server error', { status: 500 }), request)
     }
   },
-  async scheduled(controller, env) { await cleanup(env) }
+  async scheduled(controller, env) {
+    await retryPendingAlertDeliveries(env)
+    if (controller.cron === '17 3 * * *') await cleanup(env)
+  }
 }
 
 async function collect(request, env, ctx) {
@@ -56,8 +60,8 @@ async function record(env, event, application) {
   }
   const id = crypto.randomUUID()
   await env.DB.prepare(`insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,name,metric,value,message,stack,props_json,breadcrumbs_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(event.props||null),JSON.stringify(event.breadcrumbs||null)).run()
-  if (event.type === 'error') await upsertIssue(env, event)
-  if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event)
+  const issue = event.type === 'error' ? await upsertIssue(env, event) : null
+  if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event, issue)
   return true
 }
 
@@ -67,12 +71,14 @@ async function upsertIssue(env, event) {
   const status = previous?.status === 'resolved' && previous.release_name !== event.release ? 'regression' : previous?.status || 'open'
   const original = await resolveSourceMap(env, event)
   await env.DB.prepare(`insert into issues (fingerprint,status,app_id,release_name,name,message,stack,url,props_json,breadcrumbs_json,original_json,count,first_seen,last_seen,resolved_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(fingerprint) do update set status=excluded.status,release_name=excluded.release_name,message=excluded.message,stack=excluded.stack,url=excluded.url,props_json=excluded.props_json,breadcrumbs_json=excluded.breadcrumbs_json,original_json=excluded.original_json,count=issues.count+1,last_seen=excluded.last_seen`).bind(fingerprint,status,event.appId,event.release,event.name,event.message,event.stack,event.url,JSON.stringify(event.props||null),JSON.stringify(event.breadcrumbs||null),JSON.stringify(original),1,previous?.first_seen||event.ts,event.ts,previous?.resolved_at||null).run()
+  return { fingerprint, status, count: Number(previous?.count || 0) + 1 }
 }
 
 export function issueKey(event) { const source=['FetchError','ResourceError','SseError','WebSocketError'].includes(event.name)?event.props?.source:'';return`${event.appId}|${event.name}|${source||String(event.stack||event.message).split('\n').slice(0,3).join('\n')}` }
 
 async function adminApi(request, env, url) {
   const path = url.pathname
+  if (path === '/api/internal/alerts/deliver' && request.method === 'POST') return consumeAlertDelivery(request, env)
   if (path === '/api/events') return pagedEvents(env, url)
   if (path === '/api/logs') return pagedEvents(env, url, 'log')
   if (path === '/api/summary') return summary(env, url)
@@ -96,6 +102,13 @@ async function adminApi(request, env, url) {
   if (/\/releases\/[^/]+$/.test(path) && request.method === 'PUT') return saveRelease(env, decodeURIComponent(path.split('/').at(-3)), decodeURIComponent(path.split('/').at(-1)), await request.json())
   if (path === '/api/settings') return request.method === 'PUT' ? saveSettings(env, await request.json()) : json(await settings(env))
   if (path === '/api/alerts') return alertList(env, url)
+  if (path === '/api/alert-channels' && request.method === 'GET') return alertChannelList(env, url)
+  if (path === '/api/alert-channels' && request.method === 'POST') return saveAlertChannel(env, null, await request.json())
+  if (/^\/api\/alert-channels\/\d+$/.test(path) && request.method === 'PUT') return saveAlertChannel(env, Number(path.split('/').at(-1)), await request.json())
+  if (/^\/api\/alert-channels\/\d+$/.test(path) && request.method === 'DELETE') return removeAlertChannel(env, Number(path.split('/').at(-1)))
+  if (/^\/api\/alert-channels\/\d+\/test$/.test(path) && request.method === 'POST') return testAlertChannel(env, Number(path.split('/').at(-2)))
+  if (path === '/api/alert-deliveries' && request.method === 'GET') return alertDeliveryList(env, url)
+  if (/^\/api\/alert-deliveries\/\d+\/retry$/.test(path) && request.method === 'POST') return retryAlertDelivery(env, Number(path.split('/').at(-2)))
   if (/\/issues\/[^/]+\/resolve$/.test(path) && request.method === 'POST') { const id=decodeURIComponent(path.split('/').at(-2)); await env.DB.prepare(`update issues set status='resolved',resolved_at=? where fingerprint=?`).bind(Date.now(),id).run(); return json(await env.DB.prepare('select * from issues where fingerprint=?').bind(id).first()) }
   if (path === '/api/sourcemaps' && request.method === 'POST') return saveSourceMap(env, await request.json())
   if (path === '/api/funnels' && request.method === 'GET') return funnelList(env, url)
@@ -146,7 +159,17 @@ function percentile75(values){if(!values.length)return null;const sorted=[...val
 function aggregatePerf(rows,keyFn){const grouped=new Map();for(const row of rows){const key=keyFn(row),item=grouped.get(key)||{name:key,count:0,total:0,values:[]},value=Number(row.value)||0;item.count++;item.total+=value;item.values.push(value);grouped.set(key,item)}return[...grouped.values()].map(item=>({name:item.name,count:item.count,avg:Math.round(item.total/item.count),p75:percentile75(item.values)})).sort((a,b)=>b.p75-a.p75).slice(0,10)}
 
 async function replayList(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=replayFilters(url);const rows=await env.DB.prepare(`select session_id replayId,session_id,max(user_id) userId,max(user_name) userName,max(user_phone) userPhone,min(created_at) firstSeen,max(created_at) lastSeen,max(url) url,max(release_name) release,max(end_reason) endReason,count(*) eventCount from replays ${where} group by app_id,session_id order by lastSeen desc limit ? offset ?`).bind(...values,size,(page-1)*size).all();const total=await env.DB.prepare(`select count(*) count from (select 1 from replays ${where} group by app_id,session_id)`).bind(...values).first();return json({items:rows.results,total:Number(total.count),page,pageSize:size})}
-async function alertList(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.max(1,Math.min(100,Number(url.searchParams.get('pageSize')||10))),rows=await env.DB.prepare('select * from alerts order by created_at desc limit ? offset ?').bind(pageSize,(page-1)*pageSize).all(),total=await env.DB.prepare('select count(*) count from alerts').first();return json({items:rows.results,total:Number(total.count),page,pageSize})}
+async function alertList(env,url){
+  const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.max(1,Math.min(100,Number(url.searchParams.get('pageSize')||10)))
+  const rows=await env.DB.prepare(`select a.*,
+    (select count(*) from alert_deliveries d where d.alert_id=a.id) delivery_total,
+    (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status='sent') delivery_sent,
+    (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('failed','dead')) delivery_failed,
+    (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('pending','sending')) delivery_pending
+    from alerts a order by created_at desc limit ? offset ?`).bind(pageSize,(page-1)*pageSize).all()
+  const total=await env.DB.prepare('select count(*) count from alerts').first()
+  return json({items:rows.results,total:Number(total.count),page,pageSize})
+}
 async function applicationList(env,url){const select=`select app_id,name,platform,owner,enabled,sample_rate,replay_sample_rate,rules_json,created_at,updated_at,(collect_key_hash is not null) collect_key_enabled,(select count(*) from releases r where r.app_id=applications.app_id) release_count from applications order by updated_at desc`;if(!url.searchParams.has('page')&&!url.searchParams.has('pageSize'))return json((await env.DB.prepare(select).all()).results.map(mapApplication));const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare(`${select} limit ? offset ?`).bind(pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from applications').first()]);return json({items:rows.results.map(mapApplication),total:Number(total.count),page,pageSize})}
 async function releaseList(env,appId,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare('select * from releases where app_id=? order by created_at desc limit ? offset ?').bind(appId,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from releases where app_id=?').bind(appId).first()]);return json({items:rows.results,total:Number(total.count),page,pageSize})}
 async function replayEvents(env,id){const rows=(await env.DB.prepare('select events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;return json(rows.flatMap(row=>parse(row.events_json,[])))}
@@ -170,8 +193,181 @@ async function resolveSourceMap(env,event){const match=[...String(event.stack||'
 async function saveFunnel(env,input){const steps=strings(input.steps).slice(0,10);if(!input.name||steps.length<2)throw new Error('漏斗名称和至少两个步骤不能为空');const now=Date.now();const result=await env.DB.prepare('insert into funnels(name,app_id,steps_json,created_at,updated_at) values(?,?,?,?,?)').bind(clip(input.name,128),input.appId||null,JSON.stringify(steps),now,now).run();return json({id:result.meta.last_row_id})}
 async function runFunnel(env,id,url){const def=await env.DB.prepare('select * from funnels where id=?').bind(id).first();if(!def)throw new Error('漏斗不存在');const scoped=new URL(url);if(def.app_id&&!scoped.searchParams.get('appId'))scoped.searchParams.set('appId',def.app_id);const steps=parse(def.steps_json,[]),{where,values}=filters(scoped);const rows=(await env.DB.prepare(`select session_id,coalesce(nullif(user_id,''),device_id,session_id) actor,name,type,ts,release_name,case when user_agent like '%Edg/%' then 'Edge' when user_agent like '%Chrome/%' then 'Chrome' when user_agent like '%Firefox/%' then 'Firefox' when user_agent like '%Safari/%' then 'Safari' else 'Other' end browser,case when user_agent like '%Mobile%' then 'Mobile' else 'Desktop' end device from events ${where} ${where?'and':'where'} (name in (${steps.map(()=>'?').join(',')}) or type='error') order by ts limit 50000`).bind(...values,...steps).all()).results,actors=Object.values(group(rows,r=>r.actor)),counts=steps.map((_,i)=>actors.filter(a=>reaches(a,steps,i)).length),replayIds=(await env.DB.prepare('select distinct session_id from replays').all()).results;const lostSessions=actors.filter(a=>reaches(a,steps,0)&&!reaches(a,steps,steps.length-1)).slice(0,100).map(a=>({sessionId:a[0].session_id,actor:a[0].actor,lastEvent:a.filter(x=>x.type!=='error').at(-1)?.name,errors:a.filter(x=>x.type==='error').length,replaySessionId:replayIds.find(x=>x.session_id.startsWith(a[0].session_id))?.session_id}));return json({definition:def,steps:steps.map((step,i)=>({step,count:counts[i],rate:counts[0]?Number((counts[i]/counts[0]*100).toFixed(2)):0,lost:i?counts[i-1]-counts[i]:0})),lostSessions,dimensions:['release_name','browser','device'].map(field=>({field,items:dimensions(rows,steps,field)})),trend:dimensions(rows,steps,'day')})}
 async function saveDashboard(env,input){if(!input.name)throw new Error('仪表盘名称不能为空');const now=Date.now(),result=await env.DB.prepare('insert into dashboards(name,widgets_json,created_at,updated_at) values(?,?,?,?)').bind(clip(input.name,128),JSON.stringify(strings(input.widgets).slice(0,12)),now,now).run();return json({id:result.meta.last_row_id})}
-async function alert(env,event){const config=(await settings(env)).alerts;if(!config.enabled)return;const metric=event.type==='log'?'log_error':event.type==='error'?'error':String(event.metric||'').toLowerCase(),threshold=Number(config[metric]);if(event.type==='perf'&&(!Number.isFinite(threshold)||event.value<=threshold))return;if(event.type==='log'&&!config.logError||event.type==='error'&&!config.error)return;const since=Date.now()-config.cooldownMinutes*60000,recent=await env.DB.prepare('select id from alerts where app_id=? and metric=? and created_at>=?').bind(event.appId,metric,since).first();if(recent)return;await env.DB.prepare('insert into alerts(app_id,metric,level,value,message,notified,created_at) values(?,?,?,?,?,0,?)').bind(event.appId,metric,event.type==='perf'?'warning':'error',event.value||1,alertMessage(event,metric,threshold),Date.now()).run()}
+async function alert(env,event,issue){
+  const config=(await settings(env)).alerts
+  if(!config.enabled)return
+  const metric=event.type==='log'?'log_error':event.type==='error'&&issue?.status==='regression'?'regression':event.type==='error'?'error':String(event.metric||'').toLowerCase(),threshold=Number(config[metric])
+  if(event.type==='perf'&&(!Number.isFinite(threshold)||event.value<=threshold))return
+  if(event.type==='log'&&!config.logError||metric==='regression'&&!config.regression||metric==='error'&&(!config.error||Number(issue?.count||1)<Number(config.errorCount||1)))return
+  const since=Date.now()-config.cooldownMinutes*60000
+  const fingerprint=issue?.fingerprint||await sha256(event.type==='error'?issueKey(event):`${event.metric||event.name||event.type}:${event.url||event.path||''}`)
+  const recent=await env.DB.prepare('select id from alerts where app_id=? and metric=? and fingerprint=? and created_at>=?').bind(event.appId,metric,fingerprint,since).first()
+  if(recent)return
+  const now=Date.now(),level=metric==='regression'?'critical':event.type==='perf'?'warning':'error'
+  const result=await env.DB.prepare('insert into alerts(app_id,metric,fingerprint,level,value,message,notified,context_json,created_at) values(?,?,?,?,?,?,0,?,?)').bind(event.appId,metric,fingerprint,level,event.value||1,alertMessage(event,metric,threshold),JSON.stringify(alertContext(event,event.type==='perf'?threshold:undefined)),now).run()
+  await createAlertDeliveries(env,Number(result.meta.last_row_id))
+}
 export function alertMessage(event,metric,threshold){const page=event.path||event.url||'-';if(event.type==='perf'){const unit=metric==='cls'?'':'ms';return`[Web Collection] ${event.appId} ${metric.toUpperCase()} ${event.value}${unit}，超过阈值 ${threshold}${unit}，页面 ${page}`}return`[Web Collection] ${event.appId} ${event.name||metric}: ${event.message||'未知错误'}，页面 ${page}，版本 ${event.release||'-'}，Trace ${event.traceId||'-'}`}
+
+async function alertChannelList(env,url){
+  const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.max(1,Math.min(100,Number(url.searchParams.get('pageSize')||10)))
+  const [rows,total]=await Promise.all([
+    env.DB.prepare('select * from alert_channels order by updated_at desc limit ? offset ?').bind(pageSize,(page-1)*pageSize).all(),
+    env.DB.prepare('select count(*) count from alert_channels').first()
+  ])
+  return json({items:rows.results.map(publicChannel),total:Number(total.count),page,pageSize})
+}
+
+async function saveAlertChannel(env,id,input){
+  const value=normalizeChannel(input),now=Date.now(),existing=id?await env.DB.prepare('select * from alert_channels where id=?').bind(id).first():null
+  if(id&&!existing)throw new Error('告警渠道不存在')
+  const secrets=Object.keys(value.secrets).length?await encryptSecrets({...await decryptSecrets(existing?.secret_ciphertext,env.ALERT_SECRET_MASTER_KEY),...value.secrets},env.ALERT_SECRET_MASTER_KEY):existing?.secret_ciphertext||null
+  const values=[value.name,value.type,value.enabled?1:0,JSON.stringify(value.config),secrets,JSON.stringify(value.appIds),JSON.stringify(value.levels),JSON.stringify(value.metrics),now]
+  if(id)await env.DB.prepare('update alert_channels set name=?,type=?,enabled=?,config_json=?,secret_ciphertext=?,app_ids_json=?,levels_json=?,metrics_json=?,updated_at=? where id=?').bind(...values,id).run()
+  else{
+    const result=await env.DB.prepare('insert into alert_channels(name,type,enabled,config_json,secret_ciphertext,app_ids_json,levels_json,metrics_json,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?)').bind(...values,now).run()
+    id=Number(result.meta.last_row_id)
+  }
+  return json(publicChannel(await env.DB.prepare('select * from alert_channels where id=?').bind(id).first()))
+}
+
+async function removeAlertChannel(env,id){
+  const now=Date.now()
+  await env.DB.prepare(`update alert_deliveries set status='cancelled',last_error='渠道已删除',updated_at=? where channel_id=? and status in ('pending','sending','failed')`).bind(now,id).run()
+  await env.DB.prepare('delete from alert_channels where id=?').bind(id).run()
+  return json({ok:true})
+}
+
+async function testAlertChannel(env,id){
+  const channel=await env.DB.prepare('select * from alert_channels where id=?').bind(id).first()
+  if(!channel)throw new Error('告警渠道不存在')
+  const now=Date.now()
+  try{
+    await sendChannel(channel,await decryptSecrets(channel.secret_ciphertext,env.ALERT_SECRET_MASTER_KEY),{
+      id:'test',appId:'test-app',metric:'error',level:'error',value:1,
+      message:'[测试告警] Web Collection 告警渠道配置验证',page:'/governance',release:'test',traceId:'test',createdAt:now
+    })
+    await env.DB.prepare(`update alert_channels set last_test_status='sent',last_test_error=null,last_test_at=?,updated_at=? where id=?`).bind(now,now,id).run()
+    return json({ok:true})
+  }catch(error){
+    const message=alertError(error)
+    await env.DB.prepare(`update alert_channels set last_test_status='failed',last_test_error=?,last_test_at=?,updated_at=? where id=?`).bind(message,now,now,id).run()
+    throw new Error(message)
+  }
+}
+
+async function alertDeliveryList(env,url){
+  const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.max(1,Math.min(100,Number(url.searchParams.get('pageSize')||10))),parts=[],values=[]
+  if(url.searchParams.get('alertId')){parts.push('alert_id=?');values.push(Number(url.searchParams.get('alertId')))}
+  if(url.searchParams.get('status')){parts.push('status=?');values.push(url.searchParams.get('status'))}
+  const where=parts.length?`where ${parts.join(' and ')}`:''
+  const [rows,total]=await Promise.all([
+    env.DB.prepare(`select * from alert_deliveries ${where} order by created_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),
+    env.DB.prepare(`select count(*) count from alert_deliveries ${where}`).bind(...values).first()
+  ])
+  return json({items:rows.results,total:Number(total.count),page,pageSize})
+}
+
+async function createAlertDeliveries(env,alertId){
+  const alertRow=await env.DB.prepare('select * from alerts where id=?').bind(alertId).first()
+  if(!alertRow)return
+  const alertValue=workerAlert(alertRow),channels=(await env.DB.prepare('select * from alert_channels where enabled=1').all()).results
+  const matched=channels.filter(channel=>channelMatches(channel,alertValue))
+  if(!channels.length&&env.FEISHU_WEBHOOK_URL){
+    try{
+      await sendChannel({type:'feishu',config_json:'{}'},{url:env.FEISHU_WEBHOOK_URL},alertValue)
+      await env.DB.prepare('update alerts set notified=1,notify_error=null where id=?').bind(alertId).run()
+    }catch(error){
+      await env.DB.prepare('update alerts set notified=0,notify_error=? where id=?').bind(alertError(error),alertId).run()
+    }
+    return
+  }
+  for(const channel of matched){
+    const now=Date.now(),result=await env.DB.prepare(`insert into alert_deliveries(alert_id,channel_id,channel_name,channel_type,status,created_at,updated_at) values(?,?,?,?, 'pending', ?, ?)`).bind(alertId,channel.id,channel.name,channel.type,now,now).run()
+    await queueOrDeliverAlert(env,Number(result.meta.last_row_id))
+  }
+  await updateWorkerAlertStatus(env,alertId)
+}
+
+async function retryAlertDelivery(env,id){
+  const row=await env.DB.prepare('select alert_id from alert_deliveries where id=?').bind(id).first()
+  if(!row)throw new Error('投递记录不存在')
+  await env.DB.prepare(`update alert_deliveries set status='pending',last_error=null,queue_message_id=null,updated_at=? where id=?`).bind(Date.now(),id).run()
+  await queueOrDeliverAlert(env,id)
+  return json(await env.DB.prepare('select * from alert_deliveries where id=?').bind(id).first())
+}
+
+async function consumeAlertDelivery(request,env){
+  const body=await request.text(),valid=await verifyQStash({
+    body,signature:request.headers.get('upstash-signature'),url:request.url,
+    currentSigningKey:env.QSTASH_CURRENT_SIGNING_KEY,nextSigningKey:env.QSTASH_NEXT_SIGNING_KEY
+  })
+  if(!valid)return json({error:'invalid QStash signature'},401)
+  const retried=Number(request.headers.get('upstash-retried')||0),deliveryId=Number(parse(body,{}).deliveryId)
+  try{
+    await deliverWorkerAlert(env,deliveryId,retried)
+    return json({ok:true})
+  }catch(error){
+    const dead=retried>=5
+    return json({error:alertError(error)},dead?489:500,dead?{'Upstash-NonRetryable-Error':'true'}:{})
+  }
+}
+
+async function retryPendingAlertDeliveries(env){
+  const rows=(await env.DB.prepare(`select id from alert_deliveries where status='pending' and queue_message_id is null and updated_at<? order by updated_at limit 100`).bind(Date.now()-60000).all()).results
+  for(const row of rows)await queueOrDeliverAlert(env,Number(row.id))
+  return rows.length
+}
+
+async function queueOrDeliverAlert(env,id){
+  if(!env.QSTASH_TOKEN||!env.ALERT_PUBLIC_BASE_URL){
+    try{await deliverWorkerAlert(env,id)}catch{}
+    return
+  }
+  try{
+    const messageId=await publishDelivery({token:env.QSTASH_TOKEN,baseUrl:env.ALERT_PUBLIC_BASE_URL,deliveryId:id})
+    await env.DB.prepare('update alert_deliveries set queue_message_id=?,last_error=null,updated_at=? where id=?').bind(messageId,Date.now(),id).run()
+  }catch(error){
+    await env.DB.prepare('update alert_deliveries set last_error=?,updated_at=? where id=?').bind(alertError(error),Date.now(),id).run()
+  }
+}
+
+async function deliverWorkerAlert(env,id,retried=0){
+  const row=await env.DB.prepare(`select d.*,c.config_json,c.secret_ciphertext,a.app_id,a.metric,a.level,a.value,a.message,a.context_json,a.created_at alert_created_at
+    from alert_deliveries d left join alert_channels c on c.id=d.channel_id join alerts a on a.id=d.alert_id where d.id=?`).bind(id).first()
+  if(!row||['sent','cancelled'].includes(row.status))return
+  if(!row.channel_id){
+    await env.DB.prepare(`update alert_deliveries set status='cancelled',last_error='渠道不存在',updated_at=? where id=?`).bind(Date.now(),id).run()
+    return
+  }
+  const now=Date.now(),claimed=await env.DB.prepare(`update alert_deliveries set status='sending',attempts=attempts+1,updated_at=? where id=? and (status in ('pending','failed','dead') or (status='sending' and updated_at<?))`).bind(now,id,now-10000).run()
+  if(!claimed.meta.changes){
+    if(row.status==='sending')throw new Error('投递正在处理中')
+    return
+  }
+  try{
+    const result=await sendChannel({type:row.channel_type,config_json:row.config_json},await decryptSecrets(row.secret_ciphertext,env.ALERT_SECRET_MASTER_KEY),workerAlert(row))
+    const now=Date.now()
+    await env.DB.prepare(`update alert_deliveries set status='sent',provider_message_id=?,last_error=null,sent_at=?,updated_at=? where id=?`).bind(result.providerMessageId,now,now,id).run()
+  }catch(error){
+    await env.DB.prepare('update alert_deliveries set status=?,last_error=?,updated_at=? where id=?').bind(retried>=5?'dead':'failed',alertError(error),Date.now(),id).run()
+    await updateWorkerAlertStatus(env,row.alert_id)
+    throw error
+  }
+  await updateWorkerAlertStatus(env,row.alert_id)
+}
+
+async function updateWorkerAlertStatus(env,alertId){
+  const stats=await env.DB.prepare(`select count(*) total,sum(case when status='sent' then 1 else 0 end) sent,sum(case when status in ('failed','dead') then 1 else 0 end) failed from alert_deliveries where alert_id=?`).bind(alertId).first()
+  await env.DB.prepare('update alerts set notified=?,notify_error=? where id=?').bind(Number(stats.sent)>0,Number(stats.failed)?`${Number(stats.failed)}/${Number(stats.total)} 个渠道发送失败`:null,alertId).run()
+}
+
+function workerAlert(row){
+  return{id:Number(row.alert_id||row.id),appId:row.app_id,metric:row.metric,level:row.level,value:row.value,message:row.message,createdAt:Number(row.alert_created_at||row.created_at),...parse(row.context_json,{})}
+}
+
+function alertError(error){return String(error?.message||error).slice(0,1000)}
+
 async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['alerts','delete from alerts where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
 async function exportCsv(env,kind,url){const filter=kind==='issues'?issueFilters(url):kind==='replays'?replayFilters(url):filters(url),select=kind==='replays'?'select app_id,session_id,max(user_id) user_id,max(user_name) user_name,max(user_phone) user_phone,min(created_at) first_seen,max(created_at) last_seen,max(url) url,max(release_name) release_name,max(end_reason) end_reason,count(*) event_count from replays':`select * from ${kind}`,group=kind==='replays'?' group by app_id,session_id':'',order=kind==='issues'?'last_seen':kind==='replays'?'last_seen':'ts',rows=(await env.DB.prepare(`${select} ${filter.where}${group} order by ${order} desc limit 10000`).bind(...filter.values).all()).results,keys=rows.length?Object.keys(rows[0]):[],cell=v=>`"${String(v??'').replaceAll('"','""')}"`,csv=rows.length?'\ufeff'+[keys.map(cell).join(','),...rows.map(r=>keys.map(k=>cell(r[k])).join(','))].join('\r\n'):'';return new Response(csv,{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':`attachment; filename="web-collection-${kind}.csv"`}})}
 

@@ -12,6 +12,7 @@ import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
 import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
+import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
 import { deleteDashboard, deleteFunnel, getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions, getTrace, listDashboards, listFunnelEventNames, listFunnels, listLogs, listTraces, runFunnel, saveDashboard, saveFunnel } from './services/analytics-service.js'
 
 /** 服务监听端口 */
@@ -39,7 +40,7 @@ const types = {
 
 const app = express()
 app.disable('x-powered-by')
-app.use(express.json({ limit: '20mb' }))
+app.use(express.json({ limit: '20mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8') } }))
 app.use(corsMiddleware)
 
 // 健康检查，给部署平台和监控系统使用。
@@ -156,6 +157,39 @@ app.put('/api/settings', async (req, res, next) => {
 app.get('/api/alerts', async (req, res, next) => {
   try { res.json(await listAlerts(req.query)) } catch (err) { next(err) }
 })
+app.get('/api/alert-channels', async (req, res, next) => {
+  try { res.json(await listAlertChannels(req.query)) } catch (err) { next(err) }
+})
+app.post('/api/alert-channels', async (req, res, next) => {
+  try { res.json(await saveAlertChannel(null, req.body || {})) } catch (err) { next(err) }
+})
+app.put('/api/alert-channels/:id', async (req, res, next) => {
+  try { res.json(await saveAlertChannel(Number(req.params.id), req.body || {})) } catch (err) { next(err) }
+})
+app.delete('/api/alert-channels/:id', async (req, res, next) => {
+  try { res.json(await deleteAlertChannel(Number(req.params.id))) } catch (err) { next(err) }
+})
+app.post('/api/alert-channels/:id/test', async (req, res, next) => {
+  try { res.json(await testAlertChannel(Number(req.params.id))) } catch (err) { next(err) }
+})
+app.get('/api/alert-deliveries', async (req, res, next) => {
+  try { res.json(await listAlertDeliveries(req.query)) } catch (err) { next(err) }
+})
+app.post('/api/alert-deliveries/:id/retry', async (req, res, next) => {
+  try { res.json(await retryAlertDelivery(Number(req.params.id))) } catch (err) { next(err) }
+})
+app.post('/api/internal/alerts/deliver', async (req, res, next) => {
+  try {
+    const base = process.env.ALERT_PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`
+    const result = await consumeAlertDelivery({
+      body: req.rawBody || JSON.stringify(req.body || {}),
+      signature: req.get('upstash-signature'),
+      url: new URL(req.originalUrl, base).toString(),
+      retried: Number(req.get('upstash-retried') || 0)
+    })
+    res.set(result.headers || {}).status(result.status).json(result.body)
+  } catch (err) { next(err) }
+})
 app.post('/api/applications/:appId/collect-key', async (req, res, next) => {
   try { res.json(await rotateCollectKey(req.params.appId)) } catch (err) { next(err) }
 })
@@ -213,6 +247,8 @@ app.listen(port, () => {
 })
 const cleanupTimer = setInterval(() => cleanupExpiredData().catch(error => console.error('data cleanup failed', error)), Number(process.env.CLEANUP_INTERVAL_MS || 3600000))
 cleanupTimer.unref()
+const alertRetryTimer = setInterval(() => retryPendingDeliveries().catch(error => console.error('alert retry failed', error)), 60000)
+alertRetryTimer.unref()
 
 // 公开采集接口的 token 校验；未配置 publicToken 时默认放行。
 function checkPublicToken(req, res) {
@@ -227,7 +263,7 @@ function checkPublicToken(req, res) {
 function corsMiddleware(req, res, next) {
   res.set({
     'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
-    'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type,x-app-key,traceparent'
   })
   if (req.method === 'OPTIONS') return res.status(204).end()

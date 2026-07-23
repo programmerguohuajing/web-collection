@@ -34,6 +34,11 @@ pnpm --filter @web-collection/api start
 | `PG_POOL_SIZE` | `10` | 连接池大小 |
 | `MAX_EVENTS` | `50000` | events 表最大保留行数 |
 | `FEISHU_WEBHOOK_URL` | 空 | 飞书自定义机器人 Webhook，用于错误与性能告警 |
+| `ALERT_SECRET_MASTER_KEY` | 空 | 渠道密钥 AES-GCM 加密主密钥 |
+| `ALERT_PUBLIC_BASE_URL` / `PUBLIC_BASE_URL` | 空 | QStash 回调的 API 公开地址 |
+| `QSTASH_TOKEN` | 空 | QStash 发布令牌；为空时后台直接发送 |
+| `QSTASH_CURRENT_SIGNING_KEY` | 空 | QStash 当前签名校验密钥 |
+| `QSTASH_NEXT_SIGNING_KEY` | 空 | QStash下一签名校验密钥 |
 | `CLEANUP_INTERVAL_MS` | `3600000` | 数据保留策略自动清理周期 |
 | `WEB_DIST` | `apps/web/dist` | Web 控制台静态目录 |
 | `SDK_DIST` | `packages/sdk/dist` | SDK 静态目录 |
@@ -50,6 +55,8 @@ pnpm --filter @web-collection/api start
 | `releases` | 应用版本及状态 |
 | `platform_settings` | 数据保留与告警阈值配置 |
 | `alert_history` | 告警通知审计记录 |
+| `alert_channels` | 告警渠道、路由与加密配置 |
+| `alert_deliveries` | 每个渠道的投递状态、重试和错误记录 |
 
 ## 采集接口
 

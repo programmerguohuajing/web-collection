@@ -199,9 +199,15 @@ export async function getReplay(replayKey) {
   return promise
 }
 
-export async function loadGovernance({ alertPage = 1, alertPageSize = 10, appPage = 1, appPageSize = 10 } = {}) {
-  const [applications, settings, alerts] = await Promise.all([api(`/api/applications?page=${appPage}&pageSize=${appPageSize}`), api('/api/settings'), api(`/api/alerts?page=${alertPage}&pageSize=${alertPageSize}`)])
-  return { applications, settings, alerts }
+export async function loadGovernance({ alertPage = 1, alertPageSize = 10, appPage = 1, appPageSize = 10, channelPage = 1, channelPageSize = 10 } = {}) {
+  const [applications, applicationOptions, settings, alerts, channels] = await Promise.all([
+    api(`/api/applications?page=${appPage}&pageSize=${appPageSize}`),
+    api('/api/applications'),
+    api('/api/settings'),
+    api(`/api/alerts?page=${alertPage}&pageSize=${alertPageSize}`),
+    api(`/api/alert-channels?page=${channelPage}&pageSize=${channelPageSize}`)
+  ])
+  return { applications, applicationOptions, settings, alerts, channels }
 }
 
 export async function saveApplication(app) {
@@ -245,6 +251,16 @@ export async function downloadReport(kind) {
   link.remove()
   setTimeout(() => URL.revokeObjectURL(href), 0)
 }
+
+export async function saveAlertChannel(channel) {
+  return api(channel.id ? `/api/alert-channels/${channel.id}` : '/api/alert-channels', {
+    method: channel.id ? 'PUT' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(channel)
+  })
+}
+export async function deleteAlertChannel(id) { return api(`/api/alert-channels/${id}`, { method: 'DELETE' }) }
+export async function testAlertChannel(id) { return api(`/api/alert-channels/${id}/test`, { method: 'POST' }) }
+export async function loadAlertDeliveries(alertId, page = 1, pageSize = 20) { return api(`/api/alert-deliveries?alertId=${alertId}&page=${page}&pageSize=${pageSize}`) }
+export async function retryAlertDelivery(id) { return api(`/api/alert-deliveries/${id}/retry`, { method: 'POST' }) }
 
 export async function api(path, options = {}) {
   const res = await fetch(`${apiBase}${path}`, options)
