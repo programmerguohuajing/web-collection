@@ -11,6 +11,26 @@ export function readableText(...values) {
   return firstReadable(values) || '-'
 }
 
+export function behaviorDetailLabel(event = {}) {
+  const props = event.props || {}
+  if (event.type === 'track') return readableText(event.name)
+  if (event.type !== 'behavior') return '-'
+
+  if (event.name === 'click' || event.name === 'exposure') {
+    return readableText(props.elementLabel, props.label, props.text, props.ariaLabel, props.alt, props.title, props.name, props.id)
+  }
+  if (event.name === 'page_leave') return props.stayTime == null ? '-' : `停留 ${formatDuration(props.stayTime)}`
+  if (event.name === 'scroll') {
+    const depth = formatPercent(props.depth)
+    const maxDepth = formatPercent(props.maxDepth)
+    return depth === '-' && maxDepth === '-' ? '-' : `当前 ${depth} · 最深 ${maxDepth}`
+  }
+  if (['route', 'replaceState', 'pushState', 'hashchange', 'popstate'].includes(event.name)) {
+    return props.from || props.to ? `${props.from || '-'} → ${props.to || '-'}` : '-'
+  }
+  return '-'
+}
+
 export function formatErrorLocation(event = {}) {
   const { source, line, column } = event.props || {}
   if (source && line) return `${source}:${line}:${column || 0}`
@@ -29,6 +49,11 @@ export function scoreWebVitals(perf = {}) {
     score += perf[name] <= good ? weight : perf[name] <= poor ? weight / 2 : 0
   }
   return measured ? { score: Math.round(score), grade: score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 50 ? 'C' : score >= 25 ? 'D' : 'F', measured } : null
+}
+
+function formatPercent(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? `${Math.round(number)}%` : '-'
 }
 
 function firstReadable(values) {
