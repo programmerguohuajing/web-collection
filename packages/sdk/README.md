@@ -20,6 +20,11 @@ const eys = createEys({
 eys.setUser({ id: '10001', name: '张三', phone: '13800000000' })
 ```
 
+业务首屏数据渲染完成后主动标记“页面数据就绪”：
+```js
+eys.markPageReady()
+```
+
 关闭模块：
 ```js
 createEys({

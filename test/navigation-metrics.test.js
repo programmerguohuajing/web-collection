@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { navigationMetrics } from '../packages/sdk/src/performance/index.js'
+import { onReady } from '../packages/sdk/src/utils/performance.js'
 
 const metrics = navigationMetrics({
   domainLookupStart: 10,
@@ -29,5 +30,19 @@ assert.deepEqual(metrics, {
   redirect: 5,
   redirect_count: 2
 })
+
+const originalDocument = globalThis.document
+const originalAddEventListener = globalThis.addEventListener
+let loadHandler
+let readyCalled = false
+globalThis.document = { readyState: 'loading' }
+globalThis.addEventListener = (type, handler) => { if (type === 'load') loadHandler = handler }
+onReady(() => { readyCalled = true })
+loadHandler()
+assert.equal(readyCalled, false)
+await new Promise(resolve => setTimeout(resolve))
+assert.equal(readyCalled, true)
+globalThis.document = originalDocument
+globalThis.addEventListener = originalAddEventListener
 
 console.log('navigation metrics tests passed')

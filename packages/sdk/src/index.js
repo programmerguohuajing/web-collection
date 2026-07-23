@@ -122,16 +122,21 @@ export function createEys(options = {}) {
   let replayStartTimer = 0
   const stopConsole = cfg.console ? setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels }) : () => {}
 
+  setupErrorMonitor({ error, clipSize: 500 })
+  const finalizePerformance = setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId })
   const timer = setInterval(flushAll, cfg.flushInterval)
   addEventListener('pagehide', () => {
+    finalizePerformance()
     currentSegmentEndReason = 'page_unload'
     stopCurrentReplay()
     flushAll(true)
   })
-  document.addEventListener('visibilitychange', () => document.hidden && flushAll(true))
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) return
+    finalizePerformance()
+    flushAll(true)
+  })
 
-  setupErrorMonitor({ error, clipSize: 500 })
-  setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId })
   observeWhiteScreen()
   requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
   if (cfg.behavior) setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') } })
@@ -369,6 +374,7 @@ export function createEys(options = {}) {
   function destroy() {
     clearInterval(timer)
     clearTimeout(replayStartTimer)
+    finalizePerformance()
     stopConsole()
     stopReplayRecording()
     flushAll(true)

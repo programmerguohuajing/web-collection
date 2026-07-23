@@ -38,32 +38,24 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
 
   // Web Vitals 核心指标
   observe('paint', e => metric(e.name === 'first-contentful-paint' ? 'fcp' : 'fp', e.startTime))
-  observe('largest-contentful-paint', e => {
-    const props = { element: e.element?.tagName }
-    metric('lcp', e.startTime, props)
-    metric('first_screen', e.startTime, props)
-  })
+  let lcpEntry
+  observe('largest-contentful-paint', e => { lcpEntry = e })
   observe('first-input', e => metric('fid', e.processingStart - e.startTime, { name: e.name }))
-  observe('event', e => metric('inp', e.duration, { name: e.name }))
+  let inp = 0
+  observe('event', e => { if (e.interactionId && e.duration > inp) inp = e.duration })
   let blockingTime = 0
   observe('longtask', e => { blockingTime += Math.max(0, e.duration - 50); metric('longtask', e.duration, { name: e.name }); metric('tbt', blockingTime) })
-  observeCls(metric)
+  const getCls = observeCls()
   // 资源加载监控，过滤掉自身采集接口的请求
-  let resources = 0
-  let cacheHits = 0
-  let resourceFailures = 0
   observe('resource', e => {
     if (String(e.name).includes(endpoint)) return
-    resources++
-    if (e.transferSize === 0 && e.decodedBodySize > 0) cacheHits++
-    metric('cache_hit_rate', cacheHits / resources * 100)
-    metric('resource_failure_rate', resourceFailures / (resources + resourceFailures) * 100)
+    metric('cache_hit_rate', e.transferSize === 0 && e.decodedBodySize > 0 ? 100 : 0)
+    metric('resource_failure_rate', 0)
     metric('resource', e.duration, { name: e.name, initiatorType: e.initiatorType, transferSize: e.transferSize, ttfb: e.responseStart })
   })
   addEventListener('error', event => {
     if (!event.target?.src && !event.target?.href) return
-    resourceFailures++
-    metric('resource_failure_rate', resourceFailures / (resources + resourceFailures) * 100)
+    metric('resource_failure_rate', 100)
   }, true)
 
   if (requests) {
@@ -71,6 +63,19 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
     setupXhrMonitor({ endpoint, metric, tracing, traceOrigins, pageTraceId })
     setupWebSocketMonitor({ metric, error })
     setupSseMonitor({ metric, error })
+  }
+
+  let finalized = false
+  return () => {
+    if (finalized) return
+    finalized = true
+    if (lcpEntry) {
+      const props = { element: lcpEntry.element?.tagName }
+      metric('lcp', lcpEntry.startTime, props)
+      metric('first_screen', lcpEntry.startTime, props)
+    }
+    if (inp) metric('inp', inp)
+    metric('cls', Number(getCls().toFixed(4)))
   }
 }
 
@@ -97,7 +102,7 @@ export function navigationMetrics(nav) {
  *
  * @param {Function} metric - SDK 主实例的 metric 方法
  */
-function observeCls(metric) {
+function observeCls() {
   let cls = 0
   let sessionValue = 0
   let first = 0
@@ -111,9 +116,7 @@ function observeCls(metric) {
       first = e.startTime
     }
     last = e.startTime
-    if (sessionValue > cls) {
-      cls = sessionValue
-      metric('cls', Number(cls.toFixed(4)))
-    }
+    if (sessionValue > cls) cls = sessionValue
   })
+  return () => cls
 }

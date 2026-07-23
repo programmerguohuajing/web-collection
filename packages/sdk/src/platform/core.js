@@ -3,6 +3,7 @@ const DEVICE_KEY = '__web_collection_device_id__'
 
 export function createPlatformEys(options = {}, adapter) {
   if (!adapter?.request) throw new Error('Web Collection: platform request adapter is required')
+  const startedAt = Date.now()
 
   const cfg = {
     endpoint: '/api/collect',
@@ -16,6 +17,7 @@ export function createPlatformEys(options = {}, adapter) {
     maxQueue: 200,
     maxRetries: 3,
     sampleRate: 1,
+    collectKey: '',
     ...options
   }
   if (Math.random() > cfg.sampleRate) return noopClient()
@@ -43,6 +45,7 @@ export function createPlatformEys(options = {}, adapter) {
     behavior,
     pageView,
     pageLeave,
+    markPageReady: () => metric('data_ready', Date.now() - startedAt),
     setUser,
     flush,
     destroy,
@@ -139,7 +142,7 @@ export function createPlatformEys(options = {}, adapter) {
           const response = await adapter.request({
             url: cfg.endpoint,
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: { 'content-type': 'application/json', ...(cfg.collectKey ? { 'x-app-key': cfg.collectKey } : {}) },
             data: { events: batch }
           })
           const status = response?.statusCode ?? response?.status ?? 200
@@ -291,5 +294,5 @@ function id() {
 
 function noopClient() {
   const noop = () => {}
-  return { track: noop, error: noop, metric: noop, behavior: noop, pageView: noop, pageLeave: noop, setUser: noop, flush: noop, destroy: noop, wrapRequest: request => request, wrapFetch: fetch => fetch, instrumentApp: value => value, instrumentPage: value => value }
+  return { track: noop, error: noop, metric: noop, behavior: noop, pageView: noop, pageLeave: noop, markPageReady: noop, setUser: noop, flush: noop, destroy: noop, wrapRequest: request => request, wrapFetch: fetch => fetch, instrumentApp: value => value, instrumentPage: value => value }
 }

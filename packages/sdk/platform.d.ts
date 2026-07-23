@@ -31,6 +31,7 @@ export interface PlatformEysOptions {
   maxQueue?: number
   maxRetries?: number
   sampleRate?: number
+  collectKey?: string
 }
 
 export interface PlatformEysClient {
@@ -40,6 +41,7 @@ export interface PlatformEysClient {
   behavior(name: string, props?: Record<string, unknown>): void
   pageView(path: string, props?: Record<string, unknown>): void
   pageLeave(path: string, stayTime: number, props?: Record<string, unknown>): void
+  markPageReady(): void
   setUser(user: EysUser): void
   flush(force?: boolean): Promise<void> | void
   destroy(): void
