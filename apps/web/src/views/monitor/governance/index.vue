@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { downloadReport, loadGovernance, loadReleases, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease } from '../../../dashboard.js'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deleteApplication, deleteRelease, downloadReport, loadGovernance, loadReleases, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease } from '../../../dashboard.js'
 
 const loading = ref(false)
 const applications = ref([])
@@ -41,6 +41,13 @@ async function submitApp() {
   ElMessage.success('应用配置已保存')
   await load()
 }
+async function removeApp(row) {
+  const confirmed = await ElMessageBox.confirm(`确定删除应用“${row.name}”吗？版本配置会一并删除，已采集数据仍会保留；SDK 继续上报时应用会重新出现。`, '删除应用', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  await deleteApplication(row.app_id)
+  ElMessage.success('应用已删除')
+  await load()
+}
 function lines(value) { return String(value || '').split(/[,\n]/).map(item => item.trim()).filter(Boolean) }
 async function resetKey(row) { newCollectKey.value = (await rotateCollectKey(row.app_id)).collectKey }
 
@@ -57,10 +64,24 @@ async function openReleases(row) {
 }
 
 async function submitRelease() {
-  await saveRelease(activeAppId.value, releaseForm.release, releaseForm.status)
+  const release = releaseForm.release.trim()
+  if (!release) return ElMessage.warning('请输入版本号')
+  try {
+    await saveRelease(activeAppId.value, release, releaseForm.status)
+    releases.value = await loadReleases(activeAppId.value)
+    releaseForm.release = ''
+    ElMessage.success('版本已保存')
+    await load()
+  } catch (error) {
+    ElMessage.error(error.message || '版本保存失败')
+  }
+}
+async function removeRelease(row) {
+  const confirmed = await ElMessageBox.confirm(`确定删除版本“${row.release_name}”吗？SDK 继续上报该版本时会重新出现。`, '删除版本', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  await deleteRelease(activeAppId.value, row.release_name)
   releases.value = await loadReleases(activeAppId.value)
-  releaseForm.release = ''
-  ElMessage.success('版本已保存')
+  ElMessage.success('版本已删除')
   await load()
 }
 
@@ -85,7 +106,7 @@ onMounted(load)
         <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ Math.round(row.replay_sample_rate * 100) }}%</template></el-table-column>
         <el-table-column prop="release_count" label="版本数" width="90" />
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="220"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button></template></el-table-column>
+        <el-table-column label="操作" width="270"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
       </el-table>
     </el-card>
 
@@ -142,7 +163,7 @@ onMounted(load)
     </el-form>
     <template #footer><el-button @click="appDialog=false">取消</el-button><el-button type="primary" @click="submitApp">保存</el-button></template>
   </el-dialog>
-  <el-dialog v-model="newCollectKey" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input class="section" :model-value="newCollectKey" readonly /></el-dialog>
+  <el-dialog v-model="newCollectKey" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input :model-value="newCollectKey" readonly style="margin-top:12px" /></el-dialog>
 
   <el-dialog v-model="releaseDialog" :title="`${activeAppId} 版本管理`" width="620px">
     <el-form inline @submit.prevent="submitRelease">
@@ -154,6 +175,7 @@ onMounted(load)
       <el-table-column prop="release_name" label="版本" min-width="180" />
       <el-table-column prop="status" label="状态" width="120" />
       <el-table-column label="首次上报时间" width="190"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
+      <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" @click="removeRelease(row)">删除</el-button></template></el-table-column>
     </el-table>
   </el-dialog>
 </template>

@@ -66,6 +66,14 @@ export async function saveApplication(input) {
   return { appId }
 }
 
+export async function deleteApplication(appId) {
+  await run('delete from applications where app_id=?', [appId])
+  applicationCache.delete(appId)
+  rulesCache.delete(appId)
+  for (const key of knownVersions) if (key.startsWith(`${appId}\n`)) knownVersions.delete(key)
+  return { ok: true }
+}
+
 export async function rotateCollectKey(appId) {
   await ensureApplication(appId)
   const key = `eys_${randomBytes(24).toString('base64url')}`
@@ -104,6 +112,12 @@ export async function saveRelease(appId, input) {
   await ensureApplication(appId, release)
   await run('update releases set status = ? where app_id = ? and release_name = ?', [String(input.status || 'active').slice(0, 32), appId, release])
   return { appId, release }
+}
+
+export async function deleteRelease(appId, release) {
+  await run('delete from releases where app_id=? and release_name=?', [appId, release])
+  knownVersions.delete(`${appId}\n${release}`)
+  return { ok: true }
 }
 
 export async function getSettings() {

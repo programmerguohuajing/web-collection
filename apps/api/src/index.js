@@ -11,8 +11,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
-import { authorizeCollect, cleanupExpiredData, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
-import { deleteFunnel, getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions, getTrace, listDashboards, listFunnelEventNames, listFunnels, listLogs, listTraces, runFunnel, saveDashboard, saveFunnel } from './services/analytics-service.js'
+import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
+import { deleteDashboard, deleteFunnel, getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions, getTrace, listDashboards, listFunnelEventNames, listFunnels, listLogs, listTraces, runFunnel, saveDashboard, saveFunnel } from './services/analytics-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -135,11 +135,17 @@ app.get('/api/applications', async (req, res, next) => {
 app.put('/api/applications/:appId', async (req, res, next) => {
   try { res.json(await saveApplication({ ...req.body, appId: req.params.appId })) } catch (err) { next(err) }
 })
+app.delete('/api/applications/:appId', async (req, res, next) => {
+  try { res.json(await deleteApplication(req.params.appId)) } catch (err) { next(err) }
+})
 app.get('/api/applications/:appId/releases', async (req, res, next) => {
   try { res.json(await listReleases(req.params.appId)) } catch (err) { next(err) }
 })
 app.put('/api/applications/:appId/releases/:release', async (req, res, next) => {
   try { res.json(await saveRelease(req.params.appId, { ...req.body, release: req.params.release })) } catch (err) { next(err) }
+})
+app.delete('/api/applications/:appId/releases/:release', async (req, res, next) => {
+  try { res.json(await deleteRelease(req.params.appId, req.params.release)) } catch (err) { next(err) }
 })
 app.get('/api/settings', async (req, res, next) => {
   try { res.json(await getSettings()) } catch (err) { next(err) }
@@ -168,6 +174,7 @@ app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await 
 app.get('/api/funnels/:id/run', async (req, res, next) => { try { res.json(await runFunnel(req.params.id, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/dashboards', async (req, res, next) => { try { res.json(await listDashboards()) } catch (err) { next(err) } })
 app.post('/api/dashboards', async (req, res, next) => { try { res.json(await saveDashboard(req.body || {})) } catch (err) { next(err) } })
+app.delete('/api/dashboards/:id', async (req, res, next) => { try { res.json(await deleteDashboard(req.params.id)) } catch (err) { next(err) } })
 app.post('/api/maintenance/cleanup', async (req, res, next) => {
   try { res.json(await cleanupExpiredData()) } catch (err) { next(err) }
 })

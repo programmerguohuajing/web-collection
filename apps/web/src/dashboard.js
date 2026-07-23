@@ -180,6 +180,7 @@ export async function saveApplication(app) {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(app)
   })
 }
+export async function deleteApplication(appId) { return api(`/api/applications/${encodeURIComponent(appId)}`, { method: 'DELETE' }) }
 export async function rotateCollectKey(appId) { return api(`/api/applications/${encodeURIComponent(appId)}/collect-key`, { method: 'POST' }) }
 
 export async function loadReleases(appId) {
@@ -191,6 +192,7 @@ export async function saveRelease(appId, release, status) {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status })
   })
 }
+export async function deleteRelease(appId, release) { return api(`/api/applications/${encodeURIComponent(appId)}/releases/${encodeURIComponent(release)}`, { method: 'DELETE' }) }
 
 export async function saveGovernanceSettings(settings) {
   return api('/api/settings', {
