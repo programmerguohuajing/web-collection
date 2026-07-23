@@ -69,6 +69,11 @@ export async function getReleaseComparison(filters = {}) {
 
 export async function listFunnels() { return all('select * from funnel_definitions order by updated_at desc') }
 
+export async function listFunnelEventNames(filters = {}) {
+  const { where, params } = whereFor(filters, ["type in ('behavior','track')", "name is not null", "name<>''"])
+  return all(`select name, count(*)::integer count from events ${where} group by name order by count desc, name limit 100`, params)
+}
+
 export async function saveFunnel(input) {
   const name = String(input.name || '').trim().slice(0, 128)
   const steps = Array.isArray(input.steps) ? input.steps.map(String).map(item => item.trim().slice(0, 160)).filter(Boolean).slice(0, 10) : []
@@ -80,6 +85,11 @@ export async function saveFunnel(input) {
   }
   const rows = await all('insert into funnel_definitions (name, app_id, steps_json, created_at, updated_at) values (?, ?, ?::jsonb, ?, ?) returning id', [name, input.appId || null, JSON.stringify(steps), now, now])
   return { id: Number(rows[0].id) }
+}
+
+export async function deleteFunnel(id) {
+  await run('delete from funnel_definitions where id=?', [id])
+  return { ok: true }
 }
 
 export async function runFunnel(id, filters = {}) {
