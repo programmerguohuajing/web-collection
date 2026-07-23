@@ -36,7 +36,7 @@ watch(() => route.query, load)
       <el-table-column prop="release" label="版本" width="110" />
       <el-table-column prop="userId" label="用户" width="130" />
       <el-table-column prop="sessionId" label="会话" min-width="180" show-overflow-tooltip />
-      <el-table-column prop="traceId" label="Trace" min-width="180" show-overflow-tooltip />
+      <el-table-column label="Trace" min-width="180" show-overflow-tooltip><template #default="{ row }"><router-link v-if="row.traceId" :to="`/traces?keyword=${encodeURIComponent(row.traceId)}`">{{ row.traceId }}</router-link><span v-else>-</span></template></el-table-column>
     </el-table>
     <el-pagination class="pager" v-model:current-page="query.page" v-model:page-size="query.pageSize" :total="total" layout="total, sizes, prev, pager, next" @change="load" />
   </el-card>

@@ -20,5 +20,5 @@ export function observe(type, handler) {
  */
 export function onReady(fn) {
   if (document.readyState === 'complete') fn()
-  else addEventListener('load', fn, { once: true })
+  else addEventListener('load', () => setTimeout(fn), { once: true })
 }

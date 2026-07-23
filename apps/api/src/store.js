@@ -104,8 +104,8 @@ export async function listEventsPage(filters = {}) {
  */
 export async function getSummary(filters = {}) {
   await initPromise
-  const [events, issuesById, replays] = await Promise.all([listEvents(5000, filters), readIssues(filters), listReplays(filters)])
-  return buildSummary(events, issuesById, replays)
+  const [events, perfEvents, issuesById, replays] = await Promise.all([listEvents(5000, filters), listEvents(maxEvents, { ...filters, type: 'perf' }), readIssues(filters), listReplays(filters)])
+  return buildSummary(events, issuesById, replays, perfEvents)
 }
 
 /**
