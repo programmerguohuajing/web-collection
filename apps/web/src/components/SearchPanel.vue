@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { errorEventPager, eventPager, filters, issuePager, queryFromFilters, refresh, replayPager } from '../dashboard.js'
+import { filters, queryFromFilters, refreshAll, resetPages } from '../dashboard.js'
 
 const props = defineProps({
   fields: { type: Array, default: () => [] }
@@ -26,12 +26,11 @@ const fieldMap = {
 async function search() {
   searching.value = true
   try {
-    eventPager.value.page = 1
-    errorEventPager.value.page = 1
-    issuePager.value.page = 1
-    replayPager.value.page = 1
-    await router.replace(`${route.path}?${queryFromFilters({}, queryFields.value)}`)
-    await refresh()
+    resetPages()
+    const query = Object.fromEntries(new URLSearchParams(queryFromFilters({}, queryFields.value)))
+    const target = router.resolve({ path: route.path, query })
+    if (target.fullPath === route.fullPath) await refreshAll()
+    else await router.replace({ path: route.path, query })
   } finally {
     searching.value = false
   }

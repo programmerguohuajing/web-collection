@@ -26,6 +26,8 @@ test('sourcemap resolves errors and replay events are stored by session', async 
   const issue = (await store.getSummary({ appId })).issues[0]
   assert.equal(issue.original.source, 'src/App.vue')
   assert.deepEqual((await store.getReplay(sessionId)).map(event => event.type), [4, 2])
+  assert.equal((await store.listReplaysPage({ appId })).items[0].sessionId, sessionId)
+  assert.equal((await store.listReplaysPage({ appId: `${appId}-other` })).total, 0)
 
   const { run } = await import('../apps/api/src/db.js')
   await run('delete from alert_history where app_id = ?', [appId])

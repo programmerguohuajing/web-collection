@@ -237,6 +237,7 @@ async function recordReplay(event) {
   if (!event.sessionId || !events.length) return
   const sessionId = safeName(event.sessionId)
   await insertReplayEventRow({
+    appId: event.appId,
     sessionId,
     userId: event.userId,
     userName: event.userName,

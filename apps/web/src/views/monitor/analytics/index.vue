@@ -2,11 +2,12 @@
 import { ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, queryFromFilters } from '../../../dashboard.js'
+import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 import SearchPanel from '../../../components/SearchPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
+const filterQueryNames = ['appId', 'release', 'startTime', 'endTime', 'path', 'userId', 'userName', 'userPhone', 'keyword', 'type', 'status']
 const tab = ref('sessions')
 const loading = ref(false)
 const sessions = ref([])
@@ -25,6 +26,7 @@ const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors
 let timer = 0
 
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
+const filterKey = computed(() => JSON.stringify(filterQueryNames.map(name => route.query[name] || '')))
 
 async function load() {
   loading.value = true
@@ -60,10 +62,15 @@ async function removeDashboard() {
 }
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 async function openSession(row) { activeSession.value = row; sessionEvents.value = await api(`/api/analytics/sessions/${encodeURIComponent(row.session_id)}`) }
+async function changeTab(name) {
+  if (route.query.tab === name) return
+  await router.replace({ path: route.path, query: { ...route.query, tab: name } })
+}
 
-onMounted(() => { load(); timer = window.setInterval(async () => { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) }, 30000) })
+onMounted(() => { timer = window.setInterval(async () => { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) }, 30000) })
 onBeforeUnmount(() => clearInterval(timer))
-watch(() => route.query, query => { if (query.tab) tab.value = query.tab; load() }, { immediate: true })
+watch(() => route.query.tab, value => { if (value) tab.value = value }, { immediate: true })
+watch([filterKey, refreshVersion], load, { immediate: true })
 </script>
 
 <template>
@@ -74,7 +81,7 @@ watch(() => route.query, query => { if (query.tab) tab.value = query.tab; load()
     <el-card><span>近 5 分钟事件</span><strong>{{ live.events || 0 }}</strong></el-card>
     <el-card><span>历史会话样本</span><strong>{{ sessions.length }}</strong></el-card>
   </div>
-  <el-tabs v-model="tab" v-loading="loading" class="panel section analytics-tabs">
+  <el-tabs v-model="tab" v-loading="loading" class="panel section analytics-tabs" @tab-change="changeTab">
     <el-tab-pane label="用户会话" name="sessions">
       <el-table :data="sessions" border @row-click="openSession">
         <el-table-column prop="user_name" label="用户" width="130"><template #default="{ row }">{{ row.user_name || row.user_id || row.device_id }}</template></el-table-column>

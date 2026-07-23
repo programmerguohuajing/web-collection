@@ -23,9 +23,9 @@ export async function listReplaySessions(limit = 20, filters = {}, offset = 0) {
     `select id::text as "replayId",
             session_id as "sessionId",
             1 as count,
-            coalesce(user_id, (select user_id from replay_events x where x.session_id = replay_events.session_id and x.user_id is not null order by x.created_at desc limit 1)) as "userId",
-            coalesce(user_name, (select user_name from replay_events x where x.session_id = replay_events.session_id and x.user_name is not null order by x.created_at desc limit 1)) as "userName",
-            coalesce(user_phone, (select user_phone from replay_events x where x.session_id = replay_events.session_id and x.user_phone is not null order by x.created_at desc limit 1)) as "userPhone",
+            coalesce(user_id, (select user_id from replay_events x where x.app_id = replay_events.app_id and x.session_id = replay_events.session_id and x.user_id is not null order by x.created_at desc limit 1)) as "userId",
+            coalesce(user_name, (select user_name from replay_events x where x.app_id = replay_events.app_id and x.session_id = replay_events.session_id and x.user_name is not null order by x.created_at desc limit 1)) as "userName",
+            coalesce(user_phone, (select user_phone from replay_events x where x.app_id = replay_events.app_id and x.session_id = replay_events.session_id and x.user_phone is not null order by x.created_at desc limit 1)) as "userPhone",
             created_at as "firstSeen",
             created_at as "lastSeen",
             url,
@@ -77,16 +77,17 @@ export async function listReplayEventRows(idOrSessionId) {
 }
 
 /** 插入一条回放事件详情记录 */
-export async function insertReplayEventRow({ sessionId, userId, userName, userPhone, createdAt, url, release, endReason, eventsJson }) {
+export async function insertReplayEventRow({ appId, sessionId, userId, userName, userPhone, createdAt, url, release, endReason, eventsJson }) {
   await run(
-    'insert into replay_events (session_id, user_id, user_name, user_phone, created_at, url, release, end_reason, events_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)',
-    [sessionId, userId || null, userName || null, userPhone || null, createdAt, url, release, endReason || null, eventsJson]
+    'insert into replay_events (app_id, session_id, user_id, user_name, user_phone, created_at, url, release, end_reason, events_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)',
+    [appId || 'default', sessionId, userId || null, userName || null, userPhone || null, createdAt, url, release, endReason || null, eventsJson]
   )
 }
 
 function replayWhere(filters = {}) {
   const parts = []
   const params = []
+  addEq(parts, params, 'app_id', filters.appId)
   addRange(parts, params, 'created_at', filters.startTime, filters.endTime)
   addEq(parts, params, 'release', filters.release)
   addEq(parts, params, 'user_id', filters.userId)

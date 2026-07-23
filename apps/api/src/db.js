@@ -133,6 +133,7 @@ export async function ensureSchema() {
   // ==================== replay_events 表 ====================
   await run(`create table if not exists replay_events (
     id bigserial primary key,
+    app_id varchar(64) not null default 'default',
     session_id varchar(128) not null,
     segment_id integer not null default 1,
     user_id varchar(128),
@@ -146,6 +147,7 @@ export async function ensureSchema() {
   )`)
 
   // 为已有的 replay_events 表补充 segment_id 列（兼容旧数据）
+  await run(`alter table replay_events add column if not exists app_id varchar(64) not null default 'default'`)
   await run(`alter table replay_events add column if not exists segment_id integer not null default 1`)
   await run(`alter table replay_events add column if not exists user_id varchar(128)`)
   await run(`alter table replay_events add column if not exists user_name varchar(128)`)
@@ -249,6 +251,7 @@ export async function ensureSchema() {
   await run(`create index if not exists idx_events_trace on events(trace_id, ts)`)
   await run(`create index if not exists idx_events_session on events(session_id, ts)`)
   await run(`create index if not exists idx_replay_events_created_at on replay_events(created_at)`)
+  await run(`create index if not exists idx_replay_events_app_created_at on replay_events(app_id, created_at)`)
   await run(`create index if not exists idx_alert_history_created_at on alert_history(created_at)`)
 }
 

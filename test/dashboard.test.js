@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
-import { getReplay, loadGovernance, rankBehavior } from '../apps/web/src/dashboard.js'
+import { eventPager, filters, getReplay, loadGovernance, rankBehavior, resetPages, setFiltersFromRoute } from '../apps/web/src/dashboard.js'
 
 assert.deepEqual(rankBehavior({ route: 2, pushState: 3, popstate: 4, click: 1 }), [['路由切换', 9], ['点击', 1]])
+
+setFiltersFromRoute({ appId: 'ts-app-uni', status: 'open' })
+setFiltersFromRoute({ keyword: 'trace-1' }, true)
+assert.equal(filters.value.appId, 'ts-app-uni')
+assert.equal(filters.value.keyword, 'trace-1')
+assert.equal(filters.value.status, '')
+
+eventPager.value.page = 3
+resetPages()
+assert.equal(eventPager.value.page, 1)
 
 const requests = []
 globalThis.fetch = async url => {
