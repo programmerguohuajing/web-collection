@@ -232,6 +232,38 @@ export async function ensureSchema() {
     notify_error text,
     created_at bigint not null
   )`)
+  await run(`alter table alert_history add column if not exists context_json jsonb`)
+  await run(`create table if not exists alert_channels (
+    id bigserial primary key,
+    name varchar(128) not null,
+    type varchar(32) not null,
+    enabled boolean not null default true,
+    config_json jsonb not null default '{}'::jsonb,
+    secret_ciphertext text,
+    app_ids_json jsonb not null default '[]'::jsonb,
+    levels_json jsonb not null default '[]'::jsonb,
+    metrics_json jsonb not null default '[]'::jsonb,
+    last_test_status varchar(16),
+    last_test_error text,
+    last_test_at bigint,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists alert_deliveries (
+    id bigserial primary key,
+    alert_id bigint not null references alert_history(id) on delete cascade,
+    channel_id bigint references alert_channels(id) on delete set null,
+    channel_name varchar(128) not null,
+    channel_type varchar(32) not null,
+    status varchar(16) not null default 'pending',
+    attempts integer not null default 0,
+    queue_message_id varchar(256),
+    provider_message_id varchar(256),
+    last_error text,
+    sent_at bigint,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
   await run(`create table if not exists funnel_definitions (
     id bigserial primary key,
     name varchar(128) not null,
@@ -253,6 +285,8 @@ export async function ensureSchema() {
   await run(`create index if not exists idx_replay_events_created_at on replay_events(created_at)`)
   await run(`create index if not exists idx_replay_events_app_created_at on replay_events(app_id, created_at)`)
   await run(`create index if not exists idx_alert_history_created_at on alert_history(created_at)`)
+  await run(`create index if not exists idx_alert_deliveries_alert on alert_deliveries(alert_id, created_at)`)
+  await run(`create index if not exists idx_alert_deliveries_pending on alert_deliveries(status, updated_at)`)
 }
 
 /**

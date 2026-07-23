@@ -1,14 +1,17 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteApplication, deleteRelease, downloadReport, loadGovernance, loadReleases, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease } from '../../../dashboard.js'
+import { deleteAlertChannel, deleteApplication, deleteRelease, downloadReport, loadAlertDeliveries, loadGovernance, loadReleases, retryAlertDelivery, rotateCollectKey, runCleanup, saveAlertChannel, saveApplication, saveGovernanceSettings, saveRelease, testAlertChannel } from '../../../dashboard.js'
 
 const loading = ref(false)
 const exporting = ref('')
 const applications = ref([])
+const applicationOptions = ref([])
 const alerts = ref([])
+const channels = ref([])
 const appPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const alertPager = reactive({ page: 1, pageSize: 10, total: 0 })
+const channelPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const settings = reactive({ retention: {}, alerts: {} })
 const appDialog = ref(false)
 const releaseDialog = ref(false)
@@ -18,15 +21,33 @@ const releasePager = reactive({ page: 1, pageSize: 10, total: 0 })
 const releaseForm = reactive({ release: '', status: 'active' })
 const appForm = reactive({ appId: '', name: '', platform: 'web', owner: '', enabled: true, sampleRate: 1, replaySampleRate: 1, allowedOrigins: '', blockedTypes: '', blockedNames: '' })
 const newCollectKey = ref('')
+const channelDialog = ref(false)
+const channelSaving = ref(false)
+const channelTesting = ref(0)
+const deliveriesByAlert = reactive({})
+const deliveryLoading = reactive({})
+const channelForm = reactive(emptyChannel())
+const channelTypeOptions = [
+  ['email', '邮件'], ['sms', '短信'], ['feishu', '飞书'], ['wecom', '企业微信'], ['dingtalk', '钉钉'], ['webhook', '通用 Webhook']
+]
+const levelOptions = [['warning', '警告'], ['error', '错误'], ['critical', '严重']]
+const metricOptions = [['error', '错误'], ['log_error', 'Error 日志'], ['regression', '回归'], ['lcp', 'LCP'], ['inp', 'INP'], ['cls', 'CLS'], ['longtask', '长任务']]
 
 async function load() {
   loading.value = true
   try {
-    const data = await loadGovernance({ alertPage: alertPager.page, alertPageSize: alertPager.pageSize, appPage: appPager.page, appPageSize: appPager.pageSize })
+    const data = await loadGovernance({
+      alertPage: alertPager.page, alertPageSize: alertPager.pageSize,
+      appPage: appPager.page, appPageSize: appPager.pageSize,
+      channelPage: channelPager.page, channelPageSize: channelPager.pageSize
+    })
     applications.value = data.applications.items
+    applicationOptions.value = data.applicationOptions
     Object.assign(appPager, { page: data.applications.page, pageSize: data.applications.pageSize, total: data.applications.total })
     alerts.value = data.alerts.items
     Object.assign(alertPager, { page: data.alerts.page, pageSize: data.alerts.pageSize, total: data.alerts.total })
+    channels.value = data.channels.items
+    Object.assign(channelPager, { page: data.channels.page, pageSize: data.channels.pageSize, total: data.channels.total })
     Object.assign(settings.retention, data.settings.retention)
     Object.assign(settings.alerts, data.settings.alerts)
   } finally { loading.value = false }
@@ -119,6 +140,150 @@ async function exportReport(kind) {
   }
 }
 
+function emptyChannel() {
+  return {
+    id: null, name: '', type: 'feishu', enabled: true, endpoint: '', configured: false,
+    appIds: [], levels: [], metrics: [],
+    method: 'POST', authType: 'none', headersText: '{}', bodyTemplate: '',
+    recipients: '', subject: 'Web Collection 告警', templateId: '',
+    token: '', username: '', password: '', secretsText: '{}'
+  }
+}
+
+function editChannel(row = {}) {
+  const config = row.config || {}
+  Object.assign(channelForm, emptyChannel(), {
+    id: row.id || null,
+    name: row.name || '',
+    type: row.type || 'feishu',
+    enabled: row.enabled ?? true,
+    configured: Boolean(row.configured),
+    appIds: [...(row.appIds || [])],
+    levels: [...(row.levels || [])],
+    metrics: [...(row.metrics || [])],
+    method: config.method || 'POST',
+    authType: config.authType || 'none',
+    headersText: JSON.stringify(config.headers || {}, null, 2),
+    bodyTemplate: config.bodyTemplate || '',
+    recipients: config.recipients || '',
+    subject: config.subject || 'Web Collection 告警',
+    templateId: config.templateId || ''
+  })
+  channelDialog.value = true
+}
+
+async function submitChannel() {
+  if (!channelForm.name.trim()) return ElMessage.warning('请输入渠道名称')
+  if (!channelForm.endpoint.trim() && !channelForm.configured) return ElMessage.warning('请输入 HTTPS 渠道地址')
+  let headers, extraSecrets
+  try {
+    headers = JSON.parse(channelForm.headersText || '{}')
+    extraSecrets = JSON.parse(channelForm.secretsText || '{}')
+    if (channelForm.bodyTemplate) JSON.parse(channelForm.bodyTemplate)
+    if (!extraSecrets || Array.isArray(extraSecrets) || typeof extraSecrets !== 'object') throw new Error()
+  } catch {
+    return ElMessage.warning('请求头、请求体模板和附加密钥必须是有效 JSON')
+  }
+  channelSaving.value = true
+  try {
+    const secrets = { ...extraSecrets, ...Object.fromEntries(Object.entries({
+      url: channelForm.endpoint.trim(), token: channelForm.token.trim(),
+      username: channelForm.username.trim(), password: channelForm.password
+    }).filter(([, value]) => value)) }
+    await saveAlertChannel({
+      id: channelForm.id, name: channelForm.name, type: channelForm.type, enabled: channelForm.enabled,
+      appIds: channelForm.appIds, levels: channelForm.levels, metrics: channelForm.metrics,
+      config: {
+        method: channelForm.method, authType: channelForm.authType, headers,
+        bodyTemplate: channelForm.bodyTemplate, recipients: channelForm.recipients,
+        subject: channelForm.subject, templateId: channelForm.templateId
+      },
+      secrets
+    })
+    channelDialog.value = false
+    channelPager.page = 1
+    ElMessage.success('告警渠道已保存')
+    await load()
+  } catch (error) {
+    ElMessage.error(error.message || '告警渠道保存失败')
+  } finally {
+    channelSaving.value = false
+  }
+}
+
+async function toggleChannel(row) {
+  try {
+    await saveAlertChannel({ ...row, enabled: row.enabled, secrets: {} })
+    ElMessage.success(row.enabled ? '渠道已启用' : '渠道已停用')
+  } catch (error) {
+    row.enabled = !row.enabled
+    ElMessage.error(error.message || '渠道状态更新失败')
+  }
+}
+
+async function removeChannel(row) {
+  const confirmed = await ElMessageBox.confirm(`确定删除告警渠道“${row.name}”吗？未完成的投递会被取消。`, '删除渠道', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  await deleteAlertChannel(row.id)
+  if (channels.value.length === 1 && channelPager.page > 1) channelPager.page--
+  ElMessage.success('告警渠道已删除')
+  await load()
+}
+
+async function testChannel(row) {
+  channelTesting.value = row.id
+  try {
+    await testAlertChannel(row.id)
+    ElMessage.success('测试告警发送成功')
+    await load()
+  } catch (error) {
+    ElMessage.error(error.message || '测试发送失败')
+    await load()
+  } finally {
+    channelTesting.value = 0
+  }
+}
+
+async function loadDeliveryDetails(row, expandedRows) {
+  if (!expandedRows.some(item => item.id === row.id) || deliveriesByAlert[row.id]) return
+  deliveryLoading[row.id] = true
+  try { deliveriesByAlert[row.id] = await loadAlertDeliveries(row.id, 1, 100) } finally { deliveryLoading[row.id] = false }
+}
+
+async function retryDelivery(row) {
+  try {
+    await retryAlertDelivery(row.id)
+    delete deliveriesByAlert[row.alert_id]
+    const alert = alerts.value.find(item => Number(item.id) === Number(row.alert_id))
+    if (alert) await loadDeliveryDetails(alert, [alert])
+    ElMessage.success('已重新提交投递')
+    await load()
+  } catch (error) {
+    ElMessage.error(error.message || '重试失败')
+  }
+}
+
+function channelTypeLabel(value) { return Object.fromEntries(channelTypeOptions)[value] || value }
+function routeLabel(row) {
+  const apps = row.appIds?.length ? row.appIds.join('、') : '全部应用'
+  const levels = row.levels?.length ? row.levels.join('、') : '全部级别'
+  const metrics = row.metrics?.length ? row.metrics.join('、') : '全部指标'
+  return `${apps} / ${levels} / ${metrics}`
+}
+function alertDeliveryLabel(row) {
+  const total = Number(row.delivery_total || 0), sent = Number(row.delivery_sent || 0), failed = Number(row.delivery_failed || 0), pending = Number(row.delivery_pending || 0)
+  if (!total) return row.notified ? '已发送' : '无匹配渠道'
+  if (pending) return sent ? '部分发送' : '待发送'
+  if (sent === total) return '全部成功'
+  if (sent) return '部分成功'
+  if (failed) return '全部失败'
+  return '未发送'
+}
+function alertDeliveryType(row) {
+  const label = alertDeliveryLabel(row)
+  return label === '全部成功' || label === '已发送' ? 'success' : label === '全部失败' ? 'danger' : 'warning'
+}
+
 onMounted(load)
 </script>
 
@@ -166,18 +331,96 @@ onMounted(load)
     </el-card>
 
     <el-card shadow="never" class="section panel">
+      <template #header><div class="panel-head"><b>告警渠道</b><el-button type="primary" @click="editChannel()">新增渠道</el-button></div></template>
+      <el-table :data="channels" border>
+        <el-table-column prop="name" label="渠道名称" min-width="150" />
+        <el-table-column label="类型" width="120"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
+        <el-table-column label="路由范围" min-width="300" show-overflow-tooltip><template #default="{ row }">{{ routeLabel(row) }}</template></el-table-column>
+        <el-table-column label="密钥" width="90"><template #default="{ row }"><el-tag :type="row.configured ? 'success' : 'warning'">{{ row.configured ? '已配置' : '未配置' }}</el-tag></template></el-table-column>
+        <el-table-column label="最近测试" width="180">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.lastTestError" :content="row.lastTestError" placement="top">
+              <el-tag type="danger">失败</el-tag>
+            </el-tooltip>
+            <el-tag v-else-if="row.lastTestStatus === 'sent'" type="success">成功</el-tag>
+            <span v-else>-</span>
+            <small v-if="row.lastTestAt" style="margin-left:6px">{{ new Date(row.lastTestAt).toLocaleString() }}</small>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90"><template #default="{ row }"><el-switch v-model="row.enabled" @change="toggleChannel(row)" /></template></el-table-column>
+        <el-table-column label="操作" width="210">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="editChannel(row)">编辑</el-button>
+            <el-button link type="primary" :loading="channelTesting === row.id" @click="testChannel(row)">测试</el-button>
+            <el-button link type="danger" @click="removeChannel(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="channelPager.page" :page-size="channelPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="channelPager.total" @current-change="value => { channelPager.page = value; load() }" @size-change="value => { channelPager.page = 1; channelPager.pageSize = value; load() }" />
+    </el-card>
+
+    <el-card shadow="never" class="section panel">
       <template #header><div class="panel-head"><b>报表与告警记录</b><el-space><el-button :loading="exporting === 'events'" :disabled="Boolean(exporting)" @click="exportReport('events')">导出事件</el-button><el-button :loading="exporting === 'issues'" :disabled="Boolean(exporting)" @click="exportReport('issues')">导出错误</el-button><el-button :loading="exporting === 'replays'" :disabled="Boolean(exporting)" @click="exportReport('replays')">导出回放</el-button></el-space></div></template>
-      <el-table :data="alerts" border :tooltip-options="{ appendTo: 'body', teleported: true }">
+      <el-table :data="alerts" border :tooltip-options="{ appendTo: 'body', teleported: true }" @expand-change="loadDeliveryDetails">
+        <el-table-column type="expand" width="48">
+          <template #default="{ row }">
+            <div v-loading="deliveryLoading[row.id]" style="padding:12px 24px">
+              <el-table :data="deliveriesByAlert[row.id]?.items || []" border size="small">
+                <el-table-column prop="channel_name" label="渠道" min-width="140" />
+                <el-table-column label="类型" width="110"><template #default="{ row: item }">{{ channelTypeLabel(item.channel_type) }}</template></el-table-column>
+                <el-table-column prop="status" label="状态" width="100" />
+                <el-table-column prop="attempts" label="尝试次数" width="90" />
+                <el-table-column prop="last_error" label="失败原因" min-width="260" show-overflow-tooltip />
+                <el-table-column label="发送时间" width="180"><template #default="{ row: item }">{{ item.sent_at ? new Date(Number(item.sent_at)).toLocaleString() : '-' }}</template></el-table-column>
+                <el-table-column label="操作" width="80"><template #default="{ row: item }"><el-button v-if="['failed','dead'].includes(item.status)" link type="primary" @click="retryDelivery(item)">重试</el-button></template></el-table-column>
+              </el-table>
+              <el-empty v-if="!deliveryLoading[row.id] && !deliveriesByAlert[row.id]?.items?.length" description="该告警没有渠道投递记录" :image-size="60" />
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
         <el-table-column prop="app_id" label="应用" width="140" />
         <el-table-column prop="metric" label="指标" width="110" />
         <el-table-column prop="level" label="级别" width="90" />
         <el-table-column prop="message" label="告警内容" min-width="320" show-overflow-tooltip />
-        <el-table-column label="通知" width="100"><template #default="{ row }"><el-tag :type="row.notified ? 'success' : 'warning'">{{ row.notified ? '已发送' : '未发送' }}</el-tag></template></el-table-column>
+        <el-table-column label="通知" width="110"><template #default="{ row }"><el-tag :type="alertDeliveryType(row)">{{ alertDeliveryLabel(row) }}</el-tag></template></el-table-column>
       </el-table>
       <el-pagination class="pager" v-model:current-page="alertPager.page" v-model:page-size="alertPager.pageSize" :total="alertPager.total" layout="total, sizes, prev, pager, next" @change="load" />
     </el-card>
   </div>
+
+  <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑告警渠道' : '新增告警渠道'" width="760px">
+    <el-form :model="channelForm" label-width="120px">
+      <el-form-item label="渠道名称"><el-input v-model="channelForm.name" maxlength="128" /></el-form-item>
+      <el-form-item label="渠道类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="[value, label] in channelTypeOptions" :key="value" :label="label" :value="value" /></el-select></el-form-item>
+      <el-form-item label="HTTPS 地址">
+        <el-input v-model="channelForm.endpoint" type="password" show-password :placeholder="channelForm.configured ? '已配置；留空保持原值' : 'https://...'" />
+      </el-form-item>
+      <template v-if="['email','sms','webhook'].includes(channelForm.type)">
+        <el-form-item label="请求方法"><el-select v-model="channelForm.method"><el-option v-for="item in ['POST','PUT','PATCH']" :key="item" :label="item" :value="item" /></el-select></el-form-item>
+        <el-form-item label="认证方式"><el-select v-model="channelForm.authType"><el-option label="无" value="none" /><el-option label="Bearer Token" value="bearer" /><el-option label="Basic Auth" value="basic" /></el-select></el-form-item>
+        <el-form-item v-if="channelForm.authType === 'bearer'" label="Token"><el-input v-model="channelForm.token" type="password" show-password placeholder="留空保持原值" /></el-form-item>
+        <template v-if="channelForm.authType === 'basic'">
+          <el-form-item label="用户名"><el-input v-model="channelForm.username" placeholder="留空保持原值" /></el-form-item>
+          <el-form-item label="密码"><el-input v-model="channelForm.password" type="password" show-password placeholder="留空保持原值" /></el-form-item>
+        </template>
+        <el-form-item v-if="['email','sms'].includes(channelForm.type)" label="接收人"><el-input v-model="channelForm.recipients" placeholder="多个接收人按网关要求填写" /></el-form-item>
+        <el-form-item v-if="channelForm.type === 'email'" label="邮件主题"><el-input v-model="channelForm.subject" /></el-form-item>
+        <el-form-item v-if="channelForm.type === 'sms'" label="模板 ID"><el-input v-model="channelForm.templateId" /></el-form-item>
+        <el-form-item label="请求头 JSON"><el-input v-model="channelForm.headersText" type="textarea" :rows="3" placeholder='{"x-api-key":"{{secret.token}}"}' /></el-form-item>
+        <el-form-item label="请求体模板">
+          <el-input v-model="channelForm.bodyTemplate" type="textarea" :rows="6" placeholder='{"text":"{{message}}","appId":"{{appId}}"}' />
+          <small>支持 message、appId、level、metric、value、threshold、page、release、traceId、occurredAt、recipients、subject、templateId，以及 secret.token 等密钥变量。</small>
+        </el-form-item>
+      </template>
+      <el-form-item label="附加密钥 JSON"><el-input v-model="channelForm.secretsText" type="textarea" :rows="3" placeholder='{"apiKey":"仅写入，不回显"}' /><small>保存后不回显；编辑时填写的同名字段会覆盖旧值，其余密钥保持不变。</small></el-form-item>
+      <el-form-item label="应用范围"><el-select v-model="channelForm.appIds" multiple clearable collapse-tags style="width:100%" placeholder="留空表示全部应用"><el-option v-for="app in applicationOptions" :key="app.app_id" :label="`${app.name} (${app.app_id})`" :value="app.app_id" /></el-select></el-form-item>
+      <el-form-item label="告警级别"><el-select v-model="channelForm.levels" multiple clearable style="width:100%" placeholder="留空表示全部级别"><el-option v-for="[value, label] in levelOptions" :key="value" :label="label" :value="value" /></el-select></el-form-item>
+      <el-form-item label="告警指标"><el-select v-model="channelForm.metrics" multiple clearable collapse-tags style="width:100%" placeholder="留空表示全部指标"><el-option v-for="[value, label] in metricOptions" :key="value" :label="label" :value="value" /></el-select></el-form-item>
+      <el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item>
+    </el-form>
+    <template #footer><el-button @click="channelDialog=false">取消</el-button><el-button type="primary" :loading="channelSaving" @click="submitChannel">保存</el-button></template>
+  </el-dialog>
 
   <el-dialog v-model="appDialog" title="应用配置" width="520px">
     <el-form :model="appForm" label-width="110px">
