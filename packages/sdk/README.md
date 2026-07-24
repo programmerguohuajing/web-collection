@@ -66,6 +66,26 @@ const eys: EysClient = createEys(options)
 eys.track('submit_order', { orderId: 'SO202607100001' })
 ```
 
+采集治理与上下文：
+```js
+const eys = createEys({
+  environment: 'production',
+  consent: 'granted',
+  categorySampleRates: { behavior: 0.5, replay: 0.1 },
+  privacy: { redactKeys: ['orderToken'], requestAllowlist: ['https://api.example.com'] },
+  beforeSend(event) {
+    return event.context?.debug ? false : event
+  }
+})
+
+eys.setContext({ module: 'checkout' })
+eys.addBreadcrumb('checkout_started', { source: 'cart' })
+eys.setConsent('denied')
+eys.setEnabled(false)
+```
+
+`consent` 默认是 `granted`，拒绝后事件不会进入队列或发起请求。内置脱敏先于 `beforeSend` 执行，请勿在回调中恢复敏感数据。
+
 ## 手动埋点
 
 ```js
@@ -96,6 +116,20 @@ eys.track('submit_order', {
 | `popstate` | 浏览器前进后退 | `from`、`to` |
 | `hashchange` | hash 路由变化 | `from`、`to` |
 | `exposure` | 元素进入视口 50% 且停留约 1 秒 | 元素 `tag/id/className/text/data-track-*` |
+
+可选高噪声行为默认关闭：
+```js
+createEys({ formTracking: true, rageClick: true, deadClick: true, interactionTracking: true })
+```
+
+其中 `dead_click` 需要元素增加 `data-track-dead-click`，不会采集表单值或剪贴板内容。
+
+业务事务：
+```js
+const transaction = eys.startTransaction('checkout', { page: 'order' })
+transaction.setData({ step: 'pay' })
+transaction.finish({ status: 'success' })
+```
 
 曝光用法：
 ```html
@@ -211,7 +245,7 @@ source.addEventListener('message', event => {
 | 错误 | 触发时机 | 主要 props |
 | --- | --- | --- |
 | `Error` | JS 运行时错误 | `source`、`line`、`column` |
-| `ResourceError` | script/link/img 等资源加载失败 | `tag`、`html` |
+| `ResourceError` | script/link/img 等资源加载失败 | `tag`、`elementPath` |
 | `UnhandledRejection` | 未捕获 Promise 异常 | `name` |
 | `FetchError` | fetch 请求异常 | `source` |
 | `WebSocketError` | WebSocket 异常 | `source`、`readyState` |
@@ -264,11 +298,16 @@ eys.stopReplay()
 每条事件都会带上：
 | 字段 | 说明 |
 | --- | --- |
+| `sdkVersion` | SDK 版本 |
+| `environment` | 运行环境，如 production/test |
+| `source` | `auto`、`manual` 或 `platform` |
+| `context` | 已脱敏的全局/事件上下文 |
 | `appId` | 应用标识 |
 | `release` | 发布版本 |
 | `userId/userName/userPhone` | 用户信息 |
 | `sessionId` | 会话 ID |
 | `deviceId` | 设备 ID |
+| `traceId/spanId` | 请求与业务链路标识（可选） |
 | `url/path/title/referrer` | 页面信息 |
 | `userAgent` | 浏览器 UA |
 | `ts` | 事件时间戳 |
@@ -379,6 +418,8 @@ global.fetch = eys.wrapFetch(global.fetch)
 ```
 
 跨端客户端统一支持 `track`、`behavior`、`metric`、`error`、`pageView`、`pageLeave`、`setUser`、批量队列、失败重试和持久化。小程序与原生 App 没有浏览器 DOM，因此不提供 rrweb 录屏；页面轨迹、点击和业务操作应通过生命周期及 `track` 上报。
+
+平台端同样支持 `setConsent`、`setEnabled`、`setContext`、`addBreadcrumb` 和 `startTransaction`。使用 `instrumentApp` 会记录应用启动、前后台切换，并保留原有生命周期回调。
 
 
 

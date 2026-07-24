@@ -9,7 +9,8 @@ export function createMiniProgramAdapter(api = detectMiniProgramApi()) {
     setStorage: (key, data) => setStorage(api, key, data),
     getContext: () => miniContext(api, name),
     onError: listener => subscribe(api, 'onError', 'offError', listener),
-    onUnhandledRejection: listener => subscribe(api, 'onUnhandledRejection', 'offUnhandledRejection', listener)
+    onUnhandledRejection: listener => subscribe(api, 'onUnhandledRejection', 'offUnhandledRejection', listener),
+    onNetworkStatusChange: listener => subscribe(api, 'onNetworkStatusChange', 'offNetworkStatusChange', listener)
   }
 }
 
@@ -33,7 +34,9 @@ export function createReactNativeAdapter(runtime = {}) {
     setStorage: (key, value) => storage?.setItem(key, JSON.stringify(value)),
     getContext: runtime.getContext || (() => ({ path: runtime.routeName || '', userAgent: `ReactNative/${runtime.version || 'unknown'}` })),
     onError: runtime.onError,
-    onUnhandledRejection: runtime.onUnhandledRejection
+    onUnhandledRejection: runtime.onUnhandledRejection,
+    onNetworkStatusChange: runtime.onNetworkStatusChange,
+    onNavigationStateChange: runtime.onNavigationStateChange
   }
 }
 

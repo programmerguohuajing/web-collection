@@ -44,6 +44,10 @@ export async function ensureSchema() {
     title text,
     referrer text,
     user_agent text,
+    sdk_version varchar(32),
+    environment varchar(64),
+    source varchar(32),
+    context_json jsonb,
     browser varchar(32),
     os varchar(32),
     device varchar(16),
@@ -60,6 +64,10 @@ export async function ensureSchema() {
   await run(`alter table events add column if not exists user_phone varchar(32)`)
   await run(`alter table events add column if not exists trace_id varchar(64)`)
   await run(`alter table events add column if not exists span_id varchar(32)`)
+  await run(`alter table events add column if not exists sdk_version varchar(32)`)
+  await run(`alter table events add column if not exists environment varchar(64)`)
+  await run(`alter table events add column if not exists source varchar(32)`)
+  await run(`alter table events add column if not exists context_json jsonb`)
 
   // events 表注释
   await run(`comment on table events is '原始事件存储表，记录 SDK 上报的所有事件（页面访问、点击、错误、性能指标等）'`)
