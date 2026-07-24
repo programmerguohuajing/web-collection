@@ -9,10 +9,11 @@
  */
 export function setupPvMonitor({ push }) {
   let enterTime = Date.now()
-  push({ type: 'behavior', name: 'pv', props: { referrer: document.referrer } })
-
-  document.addEventListener('visibilitychange', () => {
+  const onVisibilityChange = () => {
     if (document.hidden) push({ type: 'behavior', name: 'page_leave', props: { stayTime: Date.now() - enterTime } })
     else enterTime = Date.now()
-  })
+  }
+  push({ type: 'behavior', name: 'pv', props: { referrer: document.referrer } })
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  return () => document.removeEventListener('visibilitychange', onVisibilityChange)
 }
