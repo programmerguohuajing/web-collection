@@ -1,4 +1,4 @@
-import type { EysUser } from './index.js'
+import type { CaptureCategory, ConsentStatus, EysPrivacyOptions, EysTransaction, EysUser } from './index.js'
 
 export interface PlatformContext {
   url?: string
@@ -6,6 +6,8 @@ export interface PlatformContext {
   title?: string
   referrer?: string
   userAgent?: string
+  environment?: string
+  network?: string
 }
 
 export interface PlatformAdapter {
@@ -17,6 +19,8 @@ export interface PlatformAdapter {
   getContext?(): PlatformContext
   onError?(listener: (error: unknown) => void): void | (() => void)
   onUnhandledRejection?(listener: (event: unknown) => void): void | (() => void)
+  onNetworkStatusChange?(listener: (event: unknown) => void): void | (() => void)
+  onNavigationStateChange?(listener: (event: unknown) => void): void | (() => void)
 }
 
 export interface PlatformEysOptions {
@@ -32,6 +36,12 @@ export interface PlatformEysOptions {
   maxRetries?: number
   sampleRate?: number
   collectKey?: string
+  enabled?: boolean
+  consent?: ConsentStatus
+  environment?: string
+  categorySampleRates?: Partial<Record<CaptureCategory, number>>
+  beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | false
+  privacy?: EysPrivacyOptions
 }
 
 export interface PlatformEysClient {
@@ -39,6 +49,11 @@ export interface PlatformEysClient {
   error(error: unknown, extra?: Record<string, unknown>): void
   metric(name: string, value: number, props?: Record<string, unknown>): void
   behavior(name: string, props?: Record<string, unknown>): void
+  setConsent(status: ConsentStatus): void
+  setEnabled(enabled: boolean): void
+  setContext(context: Record<string, unknown>): void
+  addBreadcrumb(name: string, data?: Record<string, unknown>): void
+  startTransaction(name: string, context?: Record<string, unknown>): EysTransaction
   pageView(path: string, props?: Record<string, unknown>): void
   pageLeave(path: string, stayTime: number, props?: Record<string, unknown>): void
   markPageReady(): void

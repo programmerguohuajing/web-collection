@@ -9,6 +9,19 @@ export interface EysUser {
   userPhone?: string
 }
 
+export type ConsentStatus = 'granted' | 'denied'
+export type CaptureCategory = 'error' | 'performance' | 'requests' | 'behavior' | 'exposure' | 'replay'
+export interface EysPrivacyOptions {
+  redactKeys?: string[]
+  blockSelectors?: string[]
+  maskSelectors?: string[]
+  requestAllowlist?: string[]
+}
+export interface EysTransaction {
+  setData(data: Record<string, unknown>): void
+  finish(result?: Record<string, unknown>): void
+}
+
 export interface EysOptions {
   endpoint?: string
   appId?: string
@@ -36,6 +49,16 @@ export interface EysOptions {
   replayOptions?: Record<string, unknown>
   whiteScreenSelector?: string
   whiteScreenTimeout?: number
+  enabled?: boolean
+  consent?: ConsentStatus
+  environment?: string
+  categorySampleRates?: Partial<Record<CaptureCategory, number>>
+  beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | false
+  privacy?: EysPrivacyOptions
+  formTracking?: boolean
+  rageClick?: boolean
+  deadClick?: boolean
+  interactionTracking?: boolean
 }
 
 export interface EysClient {
@@ -44,6 +67,11 @@ export interface EysClient {
   metric(name: string, value: number, props?: Record<string, unknown>): void
   log(level: 'log' | 'info' | 'warn' | 'error' | string, message: unknown, props?: Record<string, unknown>): void
   setUser(user: EysUser): void
+  setConsent(status: ConsentStatus): void
+  setEnabled(enabled: boolean): void
+  setContext(context: Record<string, unknown>): void
+  addBreadcrumb(name: string, data?: Record<string, unknown>): void
+  startTransaction(name: string, context?: Record<string, unknown>): EysTransaction
   markPageReady(): void
   flush(force?: boolean): Promise<void> | void
   destroy(): void

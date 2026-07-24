@@ -12,6 +12,7 @@ import { setupExposureMonitor } from './exposure/index.js'
 import { setupPerformanceMonitor } from './performance/index.js'
 import { addReplayEvent, setupReplayMonitor, takeReplaySnapshot } from './replay/index.js'
 import { imageReport } from './core/report.js'
+import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, sanitizeEvent } from './core/event.js'
 import { getId } from './utils/id.js'
 
 /** localStorage 中持久化待上报事件队列的键名 */
@@ -93,8 +94,19 @@ export function createEys(options = {}) {
     replayOptions: {},
     whiteScreenSelector: '#app > *',
     whiteScreenTimeout: 5000,
+    enabled: true,
+    consent: 'granted',
+    environment: 'production',
+    categorySampleRates: {},
+    beforeSend: null,
+    privacy: {},
+    formTracking: false,
+    rageClick: false,
+    deadClick: false,
+    interactionTracking: false,
     ...options
   }
+  cfg.privacy ||= {}
   // 采样未命中时直接返回一个空实现客户端。
   if (Math.random() > cfg.sampleRate) return noopClient()
 
@@ -105,6 +117,8 @@ export function createEys(options = {}) {
   const queue = loadQueue(cfg.maxQueue)
   const recent = []
   const breadcrumbs = []
+  const globalContext = {}
+  const stats = { enqueued: 0, dropped: 0, droppedByConsent: 0, droppedBySample: 0, sent: 0, failed: 0 }
   const originalFetch = window.fetch?.bind(window)
   const replayEvents = []
   const pageTraceId = randomHex(16)
@@ -120,10 +134,16 @@ export function createEys(options = {}) {
   let stopReplay = null
   let replayStopTimer = 0
   let replayStartTimer = 0
-  const stopConsole = cfg.console ? setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels }) : () => {}
-
-  setupErrorMonitor({ error, clipSize: 500 })
-  const finalizePerformance = setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId })
+  let whiteScreenTimer = 0
+  let stopConsole = () => {}
+  let stopBehavior = () => {}
+  let stopRoute = () => {}
+  let stopError = () => {}
+  let stopExposure = () => {}
+  let stopLifecycle = () => {}
+  let finalizePerformance = () => {}
+  let captureStarted = false
+  let performanceStarted = false
   const timer = setInterval(flushAll, cfg.flushInterval)
   addEventListener('pagehide', () => {
     finalizePerformance()
@@ -137,25 +157,52 @@ export function createEys(options = {}) {
     flushAll(true)
   })
 
-  observeWhiteScreen()
-  requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
-  if (cfg.behavior) setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') } })
-  else if (cfg.replay && cfg.replaySegmentByRoute) setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') })
-  if (cfg.exposure) setupExposureMonitor({ push })
-  if (cfg.replay) startReplay()
+  if (cfg.enabled && cfg.consent !== 'denied') startCapture()
 
-  return { track, error, metric, log, setUser, markPageReady: () => metric('data_ready', performance.now()), flush, destroy, startReplay, stopReplay: stopReplayRecording, flushReplay, addReplayEvent, takeReplaySnapshot, endReplaySegment }
+  return { track, error, metric, log, setUser, setConsent, setEnabled, setContext, addBreadcrumb, startTransaction, markPageReady: () => metric('data_ready', performance.now()), flush, destroy, startReplay, stopReplay: stopReplayRecording, flushReplay, addReplayEvent, takeReplaySnapshot, endReplaySegment }
+
+  function startCapture() {
+    if (captureStarted) return
+    captureStarted = true
+    stopConsole = cfg.console ? setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels }) : () => {}
+    stopError = setupErrorMonitor({ error, clipSize: 500 })
+    if (!performanceStarted) {
+      finalizePerformance = setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId, requestAllowlist: cfg.privacy.requestAllowlist })
+      performanceStarted = true
+    }
+    observeWhiteScreen()
+    requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
+    if (cfg.behavior) stopBehavior = setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking })
+    else if (cfg.replay && cfg.replaySegmentByRoute) stopRoute = setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') })
+    if (cfg.exposure) stopExposure = setupExposureMonitor({ push })
+    const onOnline = () => push({ type: 'behavior', name: 'network_change', props: { online: true } })
+    const onOffline = () => push({ type: 'behavior', name: 'network_change', props: { online: false } })
+    const onVisibility = () => push({ type: 'behavior', name: document.hidden ? 'app_background' : 'app_foreground' })
+    addEventListener('online', onOnline)
+    addEventListener('offline', onOffline)
+    document.addEventListener('visibilitychange', onVisibility)
+    push({ type: 'behavior', name: 'app_start' })
+    stopLifecycle = () => {
+      removeEventListener('online', onOnline)
+      removeEventListener('offline', onOffline)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+    if (cfg.replay) startReplay()
+  }
 
   function observeWhiteScreen() {
     const started = performance.now()
-    const timer = setInterval(() => {
+    clearInterval(whiteScreenTimer)
+    whiteScreenTimer = setInterval(() => {
       const element = document.querySelector(cfg.whiteScreenSelector)
       if (element?.getBoundingClientRect().width && element.getBoundingClientRect().height) {
-        clearInterval(timer)
+        clearInterval(whiteScreenTimer)
+        whiteScreenTimer = 0
         metric('white_screen', performance.now())
         metric('blank_screen_rate', 0)
       } else if (performance.now() - started >= cfg.whiteScreenTimeout) {
-        clearInterval(timer)
+        clearInterval(whiteScreenTimer)
+        whiteScreenTimer = 0
         metric('blank_screen_rate', 100)
       }
     }, 100)
@@ -190,7 +237,65 @@ export function createEys(options = {}) {
 
   /** 结构化日志；服务端会再次执行脱敏。 */
   function log(level, message, props = {}) {
-    push({ type: 'log', name: String(level || 'info'), message: redact(message), props: redactObject(props), traceId: pageTraceId })
+    push({ type: 'log', name: String(level || 'info'), message: redact(message), props: redactLogObject(props), traceId: pageTraceId })
+  }
+
+  function setConsent(status) {
+    cfg.consent = status === 'denied' ? 'denied' : 'granted'
+    if (cfg.consent === 'denied') {
+      stopCapture()
+      queue.length = 0
+      replayEvents.length = 0
+      saveQueue()
+    }
+    if (cfg.consent === 'granted' && cfg.enabled) startCapture()
+  }
+
+  function setEnabled(enabled) {
+    cfg.enabled = Boolean(enabled)
+    if (!cfg.enabled) {
+      stopCapture()
+      queue.length = 0
+      replayEvents.length = 0
+      saveQueue()
+    }
+    if (cfg.enabled && cfg.consent !== 'denied') startCapture()
+  }
+
+  function stopCapture() {
+    if (!captureStarted) return
+    stopBehavior()
+    stopRoute()
+    stopError()
+    stopExposure()
+    stopLifecycle()
+    stopConsole()
+    clearInterval(whiteScreenTimer)
+    whiteScreenTimer = 0
+    stopCurrentReplay()
+    captureStarted = false
+  }
+
+  function setContext(context = {}) {
+    Object.assign(globalContext, redactObject(context, cfg.privacy.redactKeys))
+  }
+
+  function addBreadcrumb(name, data = {}) {
+    remember({ type: 'track', name: String(name || 'breadcrumb'), message: JSON.stringify(redactObject(data, cfg.privacy.redactKeys)), ts: Date.now(), url: location.href })
+  }
+
+  function startTransaction(name, context = {}) {
+    const startedAt = performance.now()
+    let data = { ...context }
+    let finished = false
+    return {
+      setData(value = {}) { data = { ...data, ...value } },
+      finish(result = {}) {
+        if (finished) return
+        finished = true
+        metric('transaction', performance.now() - startedAt, { name, ...data, ...result })
+      }
+    }
   }
 
   function setUser(user = {}) {
@@ -211,10 +316,30 @@ export function createEys(options = {}) {
    * @param {boolean} [urgent=false] - 是否立即触发上报
    */
   function push(event, urgent = false) {
+    if (!cfg.enabled || cfg.consent === 'denied') {
+      stats.dropped++
+      stats.droppedByConsent++
+      return
+    }
     const item = withBase(event)
-    remember(item)
-    if (isDuplicate(item)) return
-    queue.push(item)
+    if (Math.random() > sampleRateFor(eventCategory(item), cfg.categorySampleRates, 1)) {
+      stats.dropped++
+      stats.droppedBySample++
+      return
+    }
+    let prepared = sanitizeEvent(item, cfg.privacy)
+    if (typeof cfg.beforeSend === 'function') {
+      try { prepared = cfg.beforeSend(prepared) } catch { prepared = false }
+    }
+    if (prepared && typeof prepared === 'object') prepared = sanitizeEvent(prepared, cfg.privacy)
+    if (!prepared || typeof prepared !== 'object') {
+      stats.dropped++
+      return
+    }
+    stats.enqueued++
+    remember(prepared)
+    if (isDuplicate(prepared)) return
+    queue.push(prepared)
     if (queue.length > cfg.maxQueue) queue.splice(0, queue.length - cfg.maxQueue)
     saveQueue()
     if (urgent || queue.length >= cfg.batchSize) flush(urgent)
@@ -223,6 +348,9 @@ export function createEys(options = {}) {
   /** 为事件附加基础信息（appId、sessionId、URL、UA、时间戳等） */
   function withBase(event) {
     return {
+      sdkVersion: SDK_VERSION,
+      environment: cfg.environment,
+      source: eventSource(event),
       appId: cfg.appId,
       release: cfg.release,
       userId: cfg.userId,
@@ -235,6 +363,7 @@ export function createEys(options = {}) {
       title: document.title,
       referrer: document.referrer,
       userAgent: navigator.userAgent,
+      context: { ...globalContext, ...(event.context || {}) },
       ts: Date.now(),
       retry: 0,
       breadcrumbs: event.type === 'error' ? breadcrumbs.slice(-20) : undefined,
@@ -265,7 +394,7 @@ export function createEys(options = {}) {
    * @param {boolean} [force=false] - 是否强制立即上报（页面卸载等场景）
    */
   async function flush(force = false) {
-    if (flushing || !queue.length) return
+    if (!cfg.enabled || cfg.consent === 'denied' || flushing || !queue.length) return
     flushing = true
     const batch = queue.slice(0, cfg.batchSize)
     const body = JSON.stringify({ events: batch })
@@ -284,7 +413,9 @@ export function createEys(options = {}) {
         batch.forEach(item => imageReport(item))
       }
       queue.splice(0, batch.length)
+      stats.sent += batch.length
     } catch {
+      stats.failed += batch.length
       batch.forEach(item => item.retry++)
       queue.splice(0, batch.length, ...batch.filter(item => item.retry <= cfg.maxRetries))
     } finally {
@@ -329,7 +460,9 @@ export function createEys(options = {}) {
   /** 启动会话回放录制 */
   function startReplay() {
     if (stopReplay) return
-    stopReplay = setupReplayMonitor({ emit: queueReplay, options: cfg.replayOptions })
+    const blockSelector = [...(cfg.privacy.blockSelectors || []), '.eys-block'].filter(Boolean).join(',')
+    const maskSelector = [...(cfg.privacy.maskSelectors || [])].filter(Boolean).join(',')
+    stopReplay = setupReplayMonitor({ emit: queueReplay, options: { ...cfg.replayOptions, blockSelector, maskSelector } })
     clearTimeout(replayStopTimer)
     if (cfg.replayMaxDuration > 0) {
       replayStopTimer = setTimeout(() => endReplaySegment('max_duration'), cfg.replayMaxDuration)
@@ -376,8 +509,9 @@ export function createEys(options = {}) {
     clearInterval(timer)
     clearTimeout(replayStartTimer)
     finalizePerformance()
-    stopConsole()
+    stopCapture()
     stopReplayRecording()
+    if (stats.dropped || stats.failed) push({ type: 'perf', metric: 'sdk_health', value: stats.enqueued, props: { ...stats }, source: 'auto' })
     flushAll(true)
   }
 
@@ -412,7 +546,7 @@ function loadQueue(maxQueue) {
 
 /** 采样未命中时返回的空实现客户端，所有方法均为 no-op */
 function noopClient() {
-  return { track() {}, error() {}, metric() {}, log() {}, setUser() {}, markPageReady() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
+  return { track() {}, error() {}, metric() {}, log() {}, setUser() {}, setConsent() {}, setEnabled() {}, setContext() {}, addBreadcrumb() {}, startTransaction() { return { setData() {}, finish() {} } }, markPageReady() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
 }
 
 function randomHex(bytes) {
@@ -425,7 +559,7 @@ function redact(value) {
   return String(value).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi, '$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g, '***$1').slice(0, 500)
 }
 
-function redactObject(value = {}) {
+function redactLogObject(value = {}) {
   return Object.fromEntries(Object.entries(value).slice(0, 50).map(([key, item]) => [key, redact(serialize(item))]))
 }
 

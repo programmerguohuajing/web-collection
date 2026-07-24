@@ -10,7 +10,7 @@ import { elementInfo } from '../utils/dom.js'
  * @param {Function} opts.push - SDK 主实例的事件推入方法
  */
 export function setupClickMonitor({ push }) {
-  addEventListener('click', event => {
+  const onClick = event => {
     const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement
     const target = source?.closest?.('[data-track],button,a,input,textarea,select,[role="button"],uni-button') || source
     if (!target) return
@@ -33,5 +33,7 @@ export function setupClickMonitor({ push }) {
         elementHref: props.href || ''
       }
     })
-  }, true)
+  }
+  addEventListener('click', onClick, true)
+  return () => removeEventListener('click', onClick, true)
 }

@@ -10,10 +10,11 @@
  */
 export function setupRouteMonitor({ push, onRoute }) {
   let last = location.href
-  wrapHistory('pushState')
-  wrapHistory('replaceState')
-  addEventListener('hashchange', event => route(event.oldURL, event.newURL, 'hashchange'))
-  addEventListener('popstate', () => route(last, location.href, 'popstate'))
+  const restores = [wrapHistory('pushState'), wrapHistory('replaceState')]
+  const onHashChange = event => route(event.oldURL, event.newURL, 'hashchange')
+  const onPopState = () => route(last, location.href, 'popstate')
+  addEventListener('hashchange', onHashChange)
+  addEventListener('popstate', onPopState)
 
   /**
    * 劫持 history 方法，在原始调用后触发路由变更事件。
@@ -27,6 +28,7 @@ export function setupRouteMonitor({ push, onRoute }) {
       route(from, location.href, method)
       return result
     }
+    return () => { history[method] = original }
   }
 
   /**
@@ -40,5 +42,10 @@ export function setupRouteMonitor({ push, onRoute }) {
     // 页面切换时结束当前回放段，开启新段
     if (typeof onRoute === 'function') onRoute(from, to, name)
     push({ type: 'behavior', name, props: { from, to } })
+  }
+  return () => {
+    restores.forEach(restore => restore())
+    removeEventListener('hashchange', onHashChange)
+    removeEventListener('popstate', onPopState)
   }
 }

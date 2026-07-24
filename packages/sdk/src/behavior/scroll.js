@@ -9,11 +9,13 @@
 export function setupScrollMonitor({ push }) {
   let maxDepth = 0
   let scrollTimer = 0
-  addEventListener('scroll', () => {
+  const onScroll = () => {
     const total = document.documentElement.scrollHeight - innerHeight
     const depth = total > 0 ? Math.round((scrollY / total) * 100) : 0
     maxDepth = Math.max(maxDepth, depth)
     clearTimeout(scrollTimer)
     scrollTimer = setTimeout(() => push({ type: 'behavior', name: 'scroll', props: { depth, maxDepth } }), 500)
-  }, { passive: true })
+  }
+  addEventListener('scroll', onScroll, { passive: true })
+  return () => { clearTimeout(scrollTimer); removeEventListener('scroll', onScroll, { passive: true }) }
 }

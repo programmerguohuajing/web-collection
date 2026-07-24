@@ -25,7 +25,7 @@ import { observe, onReady } from '../utils/performance.js'
  * @param {Function} opts.originalFetch - 原始 fetch 引用，用于请求监控
  * @param {boolean} opts.requests - 是否开启请求（Fetch + XHR）性能监控
  */
-export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch, requests, tracing, traceOrigins, pageTraceId }) {
+export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch, requests, tracing, traceOrigins, pageTraceId, requestAllowlist = [] }) {
   // 页面加载完成后采集 Navigation Timing 指标
   onReady(() => {
     const nav = performance.getEntriesByType('navigation')[0]
@@ -42,16 +42,17 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
   observe('largest-contentful-paint', e => { lcpEntry = e })
   observe('first-input', e => metric('fid', e.processingStart - e.startTime, { name: e.name }))
   let inp = 0
-  observe('event', e => { if (e.interactionId && e.duration > inp) inp = e.duration })
+  let inpEntry
+  observe('event', e => { if (e.interactionId && e.duration > inp) { inp = e.duration; inpEntry = e } })
   let blockingTime = 0
-  observe('longtask', e => { blockingTime += Math.max(0, e.duration - 50); metric('longtask', e.duration, { name: e.name }); metric('tbt', blockingTime) })
-  const getCls = observeCls()
+  observe('longtask', e => { blockingTime += Math.max(0, e.duration - 50); metric('longtask', e.duration, { name: e.name, attribution: e.attribution?.slice?.(0, 3).map(item => ({ name: item.name, containerType: item.containerType, containerName: item.containerName })) }); metric('tbt', blockingTime) })
+  const cls = observeCls()
   // 资源加载监控，过滤掉自身采集接口的请求
   observe('resource', e => {
     if (String(e.name).includes(endpoint)) return
     metric('cache_hit_rate', e.transferSize === 0 && e.decodedBodySize > 0 ? 100 : 0)
     metric('resource_failure_rate', 0)
-    metric('resource', e.duration, { name: e.name, initiatorType: e.initiatorType, transferSize: e.transferSize, ttfb: e.responseStart })
+    metric('resource', e.duration, { name: e.name, initiatorType: e.initiatorType, transferSize: e.transferSize, encodedBodySize: e.encodedBodySize, decodedBodySize: e.decodedBodySize, ttfb: e.responseStart })
   })
   addEventListener('error', event => {
     if (!event.target?.src && !event.target?.href) return
@@ -59,8 +60,8 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
   }, true)
 
   if (requests) {
-    setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId })
-    setupXhrMonitor({ endpoint, metric, tracing, traceOrigins, pageTraceId })
+    setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist })
+    setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist })
     setupWebSocketMonitor({ metric, error })
     setupSseMonitor({ metric, error })
   }
@@ -70,12 +71,12 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
     if (finalized) return
     finalized = true
     if (lcpEntry) {
-      const props = { element: lcpEntry.element?.tagName }
+      const props = { element: lcpEntry.element?.tagName, elementPath: elementPath(lcpEntry.element) }
       metric('lcp', lcpEntry.startTime, props)
       metric('first_screen', lcpEntry.startTime, props)
     }
-    if (inp) metric('inp', inp)
-    metric('cls', Number(getCls().toFixed(4)))
+    if (inp) metric('inp', inp, { name: inpEntry?.name, elementPath: elementPath(inpEntry?.target) })
+    metric('cls', Number(cls.value().toFixed(4)), { sources: cls.sources() })
   }
 }
 
@@ -107,6 +108,7 @@ function observeCls() {
   let sessionValue = 0
   let first = 0
   let last = 0
+  const sources = []
   observe('layout-shift', e => {
     if (e.hadRecentInput) return
     if (sessionValue && e.startTime - last < 1000 && e.startTime - first < 5000) {
@@ -117,6 +119,18 @@ function observeCls() {
     }
     last = e.startTime
     if (sessionValue > cls) cls = sessionValue
+    e.sources?.slice(0, 3).forEach(source => {
+      const path = elementPath(source.node)
+      if (path && !sources.includes(path)) sources.push(path)
+    })
   })
-  return () => cls
+  return { value: () => cls, sources: () => sources.slice(0, 10) }
+}
+
+function elementPath(element) {
+  if (!element) return ''
+  const tag = String(element.tagName || '').toLowerCase()
+  const id = element.id ? `#${element.id}` : ''
+  const classes = typeof element.className === 'string' ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(name => `.${name}`).join('') : ''
+  return `${tag}${id}${classes}`.slice(0, 240)
 }

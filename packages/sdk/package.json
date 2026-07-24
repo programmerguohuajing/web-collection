@@ -1,6 +1,6 @@
 {
   "name": "@web-collection/sdk",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "files": [
     "dist",
@@ -49,7 +49,7 @@
   },
   "scripts": {
     "build": "vite build && vite build --config vite.platform.config.js",
-    "test": "node test/platform.test.js && node test/performance.test.js && node test/console.test.js && node test/click.test.js && node test/error.test.js"
+    "test": "node --test test/event.test.js && node test/platform.test.js && node test/performance.test.js && node test/console.test.js && node test/click.test.js && node test/error.test.js"
   },
   "devDependencies": {
     "rrweb": "2.1.0",

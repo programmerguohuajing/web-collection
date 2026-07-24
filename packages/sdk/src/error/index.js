@@ -1,5 +1,3 @@
-import { clip } from '../utils/dom.js'
-
 /**
  * 初始化全局错误监控。
  *
@@ -10,22 +8,35 @@ import { clip } from '../utils/dom.js'
  *
  * @param {object} opts
  * @param {Function} opts.error - SDK 主实例的 error 方法，用于将错误事件推入上报队列
- * @param {number} [opts.clipSize=500] - 资源错误时截取 outerHTML 的最大长度
+ * @param {number} [opts.clipSize=500] - 保留参数以兼容旧配置，不再采集原始 outerHTML
  */
 export function setupErrorMonitor({ error, clipSize = 500 }) {
-  addEventListener('error', event => {
+  const onError = event => {
     const target = event.target
     // 资源加载失败：target 上存在 src 或 href 属性时判定为资源错误
     if (target?.src || target?.href) {
-      error(new Error(target.src || target.href), { name: 'ResourceError', tag: target.tagName, html: clip(target.outerHTML, clipSize) })
+      error(new Error(target.src || target.href), { name: 'ResourceError', tag: target.tagName, elementPath: safeElementPath(target) })
       return
     }
     // JS 运行时错误：附带文件名、行号、列号
     error(event.error || event.message, { source: event.filename, line: event.lineno, column: event.colno })
-  }, true)
+  }
 
   // 未处理的 Promise rejection
-  addEventListener('unhandledrejection', event => {
+  const onUnhandledRejection = event => {
     error(event.reason || 'Unhandled rejection', { name: 'UnhandledRejection' })
-  })
+  }
+  addEventListener('error', onError, true)
+  addEventListener('unhandledrejection', onUnhandledRejection)
+  return () => {
+    removeEventListener('error', onError, true)
+    removeEventListener('unhandledrejection', onUnhandledRejection)
+  }
+}
+
+function safeElementPath(element) {
+  const tag = String(element?.tagName || '').toLowerCase()
+  const id = element?.id ? `#${element.id}` : ''
+  const classes = typeof element?.className === 'string' ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(name => `.${name}`).join('') : ''
+  return `${tag}${id}${classes}`.slice(0, 240)
 }
