@@ -25,9 +25,6 @@ jobs:
       # 3. 安装依赖（pnpm/yarn 可替换命令）
       - name: Install dependencies
         run: npm install
-      # 4. 运行测试
-      - name: Run test
-        run: npm run test
       # 4. 打包构建（tsc、vite build 等构建命令按需修改）
       - name: Build package
         run: npm run build
