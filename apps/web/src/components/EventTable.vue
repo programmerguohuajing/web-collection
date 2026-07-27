@@ -15,6 +15,7 @@ const props = defineProps({
 })
 defineEmits(['page-change', 'size-change'])
 const behaviorTable = props.title?.includes('行为')
+const performanceTable = props.title?.includes('性能')
 
 function typeLabel(row) {
   if (row.type === 'behavior') return ({ click: '点击', pv: '页面访问', page_leave: '页面离开', route: '路由切换', replaceState: '路由切换', pushState: '路由切换', hashchange: '路由切换', popstate: '路由切换', scroll: '滚动', exposure: '曝光' })[row.name] || '行为'
@@ -84,6 +85,17 @@ function nameLabel(row) {
   }
   return labels[raw] || raw
 }
+
+function requestLabel(row, field) {
+  if (!['fetch', 'xhr'].includes(row.metric)) return '-'
+  const value = row.props?.[field]
+  return value == null || value === '' ? '-' : value
+}
+
+function statusType(status) {
+  const value = Number(status)
+  return value >= 500 ? 'danger' : value >= 400 ? 'warning' : value >= 200 ? 'success' : 'info'
+}
 </script>
 
 <template>
@@ -109,6 +121,18 @@ function nameLabel(row) {
           <template #default="{ row }">
             <span v-if="behaviorTable" class="table-ellipsis" :title="behaviorDetailLabel(row)">{{ behaviorDetailLabel(row) }}</span>
             <span v-else class="table-ellipsis" :title="nameLabel(row)">{{ nameLabel(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="performanceTable" label="请求地址" min-width="300">
+          <template #default="{ row }"><span class="table-ellipsis" :title="requestLabel(row, 'url')">{{ requestLabel(row, 'url') }}</span></template>
+        </el-table-column>
+        <el-table-column v-if="performanceTable" label="方法" width="90">
+          <template #default="{ row }">{{ requestLabel(row, 'method') }}</template>
+        </el-table-column>
+        <el-table-column v-if="performanceTable" label="状态码" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="requestLabel(row, 'status') !== '-'" size="small" effect="plain" :type="statusType(requestLabel(row, 'status'))">{{ requestLabel(row, 'status') }}</el-tag>
+            <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column v-if="props.title?.includes('错误')" label="源码位置" min-width="220">
