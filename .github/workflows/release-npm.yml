@@ -19,7 +19,6 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '16'
           # 关键：配置 npm 仓库地址，用于登录
           registry-url: 'https://registry.npmjs.org'
     # 安装 pnpm 官方action
