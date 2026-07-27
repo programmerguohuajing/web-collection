@@ -25,9 +25,6 @@ jobs:
     # 安装 pnpm 官方action
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: latest # 指定pnpm版本，可写latest
-
       # 3. 安装依赖（pnpm/yarn 可替换命令）
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
