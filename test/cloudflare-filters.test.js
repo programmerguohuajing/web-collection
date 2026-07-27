@@ -36,11 +36,34 @@ assert.deepEqual(await capabilityResponse.json(), { productAnalyticsV2: false })
 let writes = 0
 let pending
 const statement = { bind() { return this }, first: async () => ({ enabled: 1, sample_rate: 1, replay_sample_rate: 1, rules_json: '{"allowedOrigins":["*"]}' }), run: async () => { await new Promise(resolve => setTimeout(resolve, 20)); writes++; return { meta: {} } } }
-const response = await worker.fetch(new Request('https://example.com/api/collect', { method: 'POST', body: JSON.stringify({ type: 'behavior', name: 'pv' }) }), { DB: { prepare: () => ({ ...statement }) } }, { waitUntil: promise => { pending = promise } })
+const response = await worker.fetch(new Request('https://example.com/api/collect', { method: 'POST', body: JSON.stringify({ type: 'behavior', name: 'pv' }) }), { DB: { prepare: sql => ({ ...statement, bind(...values) { assert.equal((sql.match(/\?/g) || []).length, values.length); return this } }) } }, { waitUntil: promise => { pending = promise } })
 assert.equal(response.status, 200)
 assert.equal(writes, 0)
 await pending
 assert.equal(writes, 3)
+
+let recoveryPending
+let eventAttempts = 0
+const recoveryQueries = []
+const recoveryResponse = await worker.fetch(new Request('https://example.com/api/collect', { method: 'POST', body: JSON.stringify({ type: 'behavior', name: 'recovery' }) }), {
+  DB: {
+    prepare(sql) {
+      recoveryQueries.push(sql)
+      return {
+        bind(...values) { assert.equal((sql.match(/\?/g) || []).length, values.length); return this },
+        async first() { return { enabled: 1, sample_rate: 1, replay_sample_rate: 1, rules_json: '{"allowedOrigins":["*"]}' } },
+        async run() {
+          if (sql.startsWith('insert into events') && eventAttempts++ === 0) throw new Error('Exceeded maximum DB size')
+          return { meta: { changes: sql.startsWith('delete from replays') ? 100 : 1 } }
+        }
+      }
+    }
+  }
+}, { waitUntil: promise => { recoveryPending = promise } })
+assert.equal(recoveryResponse.status, 200)
+await recoveryPending
+assert.equal(eventAttempts, 2)
+assert.equal(recoveryQueries.filter(sql => sql.startsWith('delete from replays')).length, 1)
 
 let eventNamesSql = ''
 let eventNamesValues = []
