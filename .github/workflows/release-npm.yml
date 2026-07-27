@@ -1,0 +1,39 @@
+name: Release Publish to NPM
+
+# 触发规则：仅推送 v*.*.* 版本标签时运行
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉取仓库代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 配置 Node.js（根据项目包管理选版本）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # 关键：配置 npm 仓库地址，用于登录
+          registry-url: 'https://registry.npmjs.org'
+
+      # 3. 安装依赖（pnpm/yarn 可替换命令）
+      - name: Install dependencies
+        run: npm install
+      # 4. 运行测试
+      - name: Run test
+        run: npm run test
+      # 4. 打包构建（tsc、vite build 等构建命令按需修改）
+      - name: Build package
+        run: npm run build
+
+      # 5. 使用 NPM_TOKEN 登录并发布
+      - name: Publish to NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
