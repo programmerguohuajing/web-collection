@@ -48,21 +48,33 @@ async function collectGif(url, env) {
 async function record(env, event, application) {
   const now = Date.now()
   if (event.type === 'error' && event.props?.name) event.name = clip(event.props.name, 160)
-  await env.DB.prepare(`insert into applications (app_id,name,enabled,sample_rate,replay_sample_rate,created_at,updated_at) values (?,?,1,1,1,?,?) on conflict(app_id) do nothing`).bind(event.appId, event.appId, now, now).run()
-  await env.DB.prepare(`insert into releases (app_id,release_name,status,created_at) values (?,?, 'active', ?) on conflict(app_id,release_name) do nothing`).bind(event.appId, event.release, now).run()
+  await storageWrite(env, `insert into applications (app_id,name,enabled,sample_rate,replay_sample_rate,created_at,updated_at) values (?,?,1,1,1,?,?) on conflict(app_id) do nothing`, [event.appId, event.appId, now, now])
+  await storageWrite(env, `insert into releases (app_id,release_name,status,created_at) values (?,?, 'active', ?) on conflict(app_id,release_name) do nothing`, [event.appId, event.release, now])
   const app = application || await env.DB.prepare('select enabled,sample_rate,replay_sample_rate,rules_json from applications where app_id=?').bind(event.appId).first()
   if (app && (!app.enabled || Math.random() > Number(event.type === 'replay' ? app.replay_sample_rate : app.sample_rate))) return false
   const rules = parse(app?.rules_json, {})
   if (rules.blockedTypes?.includes(event.type) || rules.blockedNames?.includes(event.name) || (rules.allowedOrigins?.length && !rules.allowedOrigins.includes('*') && !rules.allowedOrigins.includes(origin(event.url)))) return false
   if (event.type === 'replay') {
-    if (event.sessionId && event.events?.length) await env.DB.prepare(`insert into replays (session_id,app_id,user_id,user_name,user_phone,created_at,url,release_name,end_reason,events_json) values (?,?,?,?,?,?,?,?,?,?)`).bind(event.sessionId,event.appId,event.userId,event.userName,event.userPhone,event.ts,event.url,event.release,event.segmentEndReason||null,JSON.stringify(event.events)).run()
+    if (event.sessionId && event.events?.length) await storageWrite(env, `insert into replays (session_id,app_id,user_id,user_name,user_phone,created_at,url,release_name,end_reason,events_json) values (?,?,?,?,?,?,?,?,?,?)`, [event.sessionId,event.appId,event.userId,event.userName,event.userPhone,event.ts,event.url,event.release,event.segmentEndReason||null,JSON.stringify(event.events)])
     return true
   }
   const id = crypto.randomUUID()
-  await env.DB.prepare(`insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(event.props||null),JSON.stringify(event.breadcrumbs||null)).run()
+  await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(event.props||null),JSON.stringify(event.breadcrumbs||null)])
   const issue = event.type === 'error' ? await upsertIssue(env, event) : null
   if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event, issue)
   return true
+}
+
+async function storageWrite(env, sql, values) {
+  const run = () => env.DB.prepare(sql).bind(...values).run()
+  try {
+    return await run()
+  } catch (error) {
+    if (!/maximum DB size|SQLITE_FULL|database or disk is full/i.test(String(error?.message || error))) throw error
+    const replayCleanup = await env.DB.prepare('delete from replays where id in (select id from replays order by created_at asc limit 100)').run()
+    if (!Number(replayCleanup.meta.changes)) await env.DB.prepare(`delete from events where id in (select id from events order by case when type='error' then 1 else 0 end,ts asc limit 1000)`).run()
+    return run()
+  }
 }
 
 async function upsertIssue(env, event) {
