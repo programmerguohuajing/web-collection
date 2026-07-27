@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { setupPerformanceMonitor } from '../src/performance/index.js'
+import { setupXhrMonitor } from '../src/performance/xhr.js'
 
 const originalDocument = globalThis.document
 const originalPerformanceObserver = globalThis.PerformanceObserver
@@ -36,8 +37,42 @@ assert.deepEqual(metrics.filter(([name]) => ['lcp', 'inp', 'cls'].includes(name)
 assert.deepEqual(metrics.filter(([name]) => name === 'cache_hit_rate').map(([, value]) => value), [100, 0])
 assert.deepEqual(metrics.filter(([name]) => name === 'resource_failure_rate').map(([, value]) => value), [0, 0, 100])
 
+class FakeXhr {
+  constructor() {
+    this.listeners = {}
+    this.status = 0
+  }
+  open() {}
+  send() {}
+  addEventListener(type, listener) { this.listeners[type] = listener }
+  getResponseHeader() { return null }
+  emit(type) { this.listeners[type]?.() }
+}
+
+const originalXhr = globalThis.XMLHttpRequest
+globalThis.XMLHttpRequest = FakeXhr
+const xhrMetrics = []
+const xhrErrors = []
+setupXhrMonitor({
+  endpoint: '/collect',
+  metric: (name, value, props) => xhrMetrics.push({ name, value, props }),
+  error: (error, props) => xhrErrors.push({ error, props }),
+  tracing: false,
+  traceOrigins: [],
+  pageTraceId: 'trace'
+})
+const forbiddenXhr = new XMLHttpRequest()
+forbiddenXhr.open('POST', 'https://qyee.cn.rongnav.com/v2/navi.json?cloud=0')
+forbiddenXhr.send()
+forbiddenXhr.status = 403
+forbiddenXhr.emit('loadend')
+assert.equal(xhrMetrics[0].props.status, 403)
+assert.equal(xhrErrors[0].error.message, 'HTTP 403')
+assert.deepEqual(xhrErrors[0].props, { name: 'XhrError', source: 'https://qyee.cn.rongnav.com/v2/navi.json?cloud=0', status: 403, errorType: 'http' })
+
 globalThis.document = originalDocument
 globalThis.PerformanceObserver = originalPerformanceObserver
 globalThis.addEventListener = originalAddEventListener
+globalThis.XMLHttpRequest = originalXhr
 
 console.log('performance monitor tests passed')

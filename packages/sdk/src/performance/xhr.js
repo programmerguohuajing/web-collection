@@ -32,9 +32,9 @@ export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins
       this.addEventListener('loadend', () => {
         if (!this.__eys.url.includes(endpoint) && allowedRequest(this.__eys.url, requestAllowlist)) {
           const status = this.status || 0
-          const errorType = this.__eys.failureType || (status === 0 ? 'network' : undefined)
+          const errorType = this.__eys.failureType || (status === 0 ? 'network' : status >= 400 ? 'http' : undefined)
           metric('xhr', performance.now() - this.__eys.start, { url: this.__eys.url, method: this.__eys.method, status, statusClass: status ? `${Math.floor(status / 100)}xx` : 'network_error', errorType, responseSize: Number(this.getResponseHeader?.('content-length') || 0) || undefined, __traceId: traced ? pageTraceId : undefined, __spanId: traced ? spanId : undefined })
-          if (errorType) error?.(new Error(`XHR ${errorType}`), { name: 'XhrError', source: this.__eys.url, status, errorType })
+          if (errorType) error?.(new Error(errorType === 'http' ? `HTTP ${status}` : `XHR ${errorType}`), { name: 'XhrError', source: this.__eys.url, status, errorType })
         }
       }, { once: true })
     }

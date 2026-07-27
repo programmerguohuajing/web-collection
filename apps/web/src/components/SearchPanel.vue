@@ -22,6 +22,7 @@ const fieldMap = {
   userId: { label: '用户 ID' },
   userName: { label: '用户名' },
   userPhone: { label: '手机号' },
+  keyword: { label: '接口关键字' },
   type: { label: '事件类型' },
   status: { label: '错误状态' }
 }
