@@ -13,21 +13,30 @@ jobs:
     steps:
       # 1. 拉取仓库代码
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 2. 配置 Node.js（根据项目包管理选版本）
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
+          node-version: '16'
           # 关键：配置 npm 仓库地址，用于登录
           registry-url: 'https://registry.npmjs.org'
+    # 安装 pnpm 官方action
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest # 指定pnpm版本，可写latest
 
       # 3. 安装依赖（pnpm/yarn 可替换命令）
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
+      # 4. 运行测试
+      - name: Run test
+        run: pnpm run test
       # 4. 打包构建（tsc、vite build 等构建命令按需修改）
       - name: Build package
-        run: npm run build
+        run: pnpm run build
 
       # 5. 使用 NPM_TOKEN 登录并发布
       - name: Publish to NPM
