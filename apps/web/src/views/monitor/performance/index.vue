@@ -6,7 +6,7 @@ import { perfEvents, perfPager, setPage, setPageSize, summary, tableLoading } fr
 </script>
 
 <template>
-  <SearchPanel :fields="['path']" />
+  <SearchPanel :fields="['path', 'keyword']" />
   <PerfPanel :perf="summary?.perf || {}" :counts="summary?.perfCounts || {}" />
   <section class="grid performance-grid">
     <EventTable title="慢接口" :rows="summary?.api || []" />
