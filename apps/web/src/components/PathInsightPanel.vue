@@ -1,7 +1,10 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
-import { api, filters } from '../dashboard.js'
+import { api } from '../dashboard.js'
+import { useFilterStore } from '../stores/filters.js'
 import AnalyticsChart from './AnalyticsChart.vue'
+
+const store = useFilterStore()
 
 const props = defineProps({
   insights: { type: Array, default: () => [] }
@@ -18,11 +21,11 @@ const selectedEdges = computed(() => selectedNode.value
   : result.value?.edges || [])
 
 function requestBody() {
-  const [selectedStart, selectedEnd] = filters.value.range || []
+  const [selectedStart, selectedEnd] = store.range || []
   return {
     ...form,
-    appId: filters.value.appId || form.appId || '',
-    release: filters.value.release || form.release || '',
+    appId: store.appId || form.appId || '',
+    release: store.release || form.release || '',
     startTime: selectedStart || form.startTime,
     endTime: selectedEnd || form.endTime
   }

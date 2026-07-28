@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { error, loading, refresh, setFiltersFromRoute } from '../dashboard.js'
+import { error, loading, refresh, resetPageFilters, applyRoutePrefill } from '../dashboard.js'
 
 const route = useRoute()
 const nav = [
@@ -18,13 +18,14 @@ const nav = [
 const title = computed(() => route.meta.title || '总览')
 
 onMounted(async () => {
-  setFiltersFromRoute(route.query)
+  resetPageFilters()
+  applyRoutePrefill(route.query)
   await refresh()
 })
 
-watch(() => route.query, query => setFiltersFromRoute(query))
 watch(() => route.path, async () => {
-  setFiltersFromRoute(route.query)
+  resetPageFilters()
+  applyRoutePrefill(route.query)
   await refresh()
 })
 </script>

@@ -51,6 +51,9 @@ importers:
       element-plus:
         specifier: ^2.11.8
         version: 2.14.2(vue@3.5.39(typescript@7.0.2))
+      pinia:
+        specifier: ^2.2.6
+        version: 2.3.1(typescript@7.0.2)(vue@3.5.39(typescript@7.0.2))
       rrweb-player:
         specifier: 2.1.0
         version: 2.1.0
@@ -1383,6 +1386,15 @@ packages:
     resolution: {integrity: sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==}
     engines: {node: '>=12'}
 
+  pinia@2.3.1:
+    resolution: {integrity: sha512-khUlZSwt9xXCaTbbxFYBKDc/bWAGWJjOgvxETwkTN7KRm66EeT1ZdZj6i2ceh9sP2Pzqsbc704r2yngBrxBVug==}
+    peerDependencies:
+      typescript: '>=4.4.4'
+      vue: ^2.7.0 || ^3.5.11
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   postcss@8.5.16:
     resolution: {integrity: sha512-vuwillviilfKZsg0VGj5R/YwwcHx4SLsIOI/7K6mQkWx+l5cUHTjj5g0AasTBcyXsbfTgrwsUNmVUb5xVwyPwg==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1590,6 +1602,17 @@ packages:
 
   vue-component-type-helpers@3.3.6:
     resolution: {integrity: sha512-FkljacAwJ9BUoSUdpFe3VDy0sGigNlTH9+2zcXUWmZOjN8swiCkl3t48wOJun0OsUd2cEIda1l04tsxMiKIIrQ==}
+
+  vue-demi@0.14.10:
+    resolution: {integrity: sha512-nMZBOwuzabUO0nLgIcc6rycZEebF6eeUfaiQx9+WSk8e29IbLvPU9feI6tqW4kTo3hvoYAJkMh8n8D0fuISphg==}
+    engines: {node: '>=12'}
+    hasBin: true
+    peerDependencies:
+      '@vue/composition-api': ^1.0.0-rc.1
+      vue: ^3.0.0-0 || ^2.6.0
+    peerDependenciesMeta:
+      '@vue/composition-api':
+        optional: true
 
   vue-router@4.6.4:
     resolution: {integrity: sha512-Hz9q5sa33Yhduglwz6g9skT8OBPii+4bFn88w6J+J4MfEo4KRRpmiNG/hHHkdbRFlLBOqxN8y8gf2Fb0MTUgVg==}
@@ -2652,6 +2675,16 @@ snapshots:
 
   picomatch@4.0.5: {}
 
+  pinia@2.3.1(typescript@7.0.2)(vue@3.5.39(typescript@7.0.2)):
+    dependencies:
+      '@vue/devtools-api': 6.6.4
+      vue: 3.5.39(typescript@7.0.2)
+      vue-demi: 0.14.10(vue@3.5.39(typescript@7.0.2))
+    optionalDependencies:
+      typescript: 7.0.2
+    transitivePeerDependencies:
+      - '@vue/composition-api'
+
   postcss@8.5.16:
     dependencies:
       nanoid: 3.3.15
@@ -2933,6 +2966,10 @@ snapshots:
       terser: 5.49.0
 
   vue-component-type-helpers@3.3.6: {}
+
+  vue-demi@0.14.10(vue@3.5.39(typescript@7.0.2)):
+    dependencies:
+      vue: 3.5.39(typescript@7.0.2)
 
   vue-router@4.6.4(vue@3.5.39(typescript@7.0.2)):
     dependencies:
