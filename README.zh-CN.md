@@ -270,6 +270,63 @@ eys.track('checkout_submit', {
 createEys({ behavior: false })
 ```
 
+### 高级行为采集（需显式开启）
+
+```js
+createEys({
+  formTracking: true,         // 表单提交事件
+  rageClick: true,            // 1 秒内同一元素点击 ≥ 3 次
+  deadClick: true,            // 标记 data-track-dead-click 的元素点击
+  interactionTracking: true,  // copy/paste/download 事件
+  inputTracking: true,        // 输入框聚焦/失焦/变化事件
+  selectTracking: true,       // <select> 选择变化事件
+  keyboardTracking: true,     // Enter/Escape 键盘事件
+  touchTracking: true         // 移动端 touch tap/swipe 手势
+})
+```
+
+### 环境指纹（默认开启）
+
+`environmentInfo: true` 会将屏幕、视口、语言、时区、平台、网络（连接类型/下行/RTT）、电池状态和特性支持标志附加到每条事件的 `context` 中。
+
+### 运行时版本信息
+
+```js
+// 自动读取 window.__WEB_COLLECTION_VERSION__ 等约定字段
+createEys({ runtimeInfo: true })
+
+// 或手动传入：
+createEys({ runtimeInfo: { buildId: 'abc123', buildTime: '2025-01-01', commit: 'def456', branch: 'main' } })
+```
+
+### 内存监控（Chrome）
+
+```js
+createEys({ memoryInterval: 60000 })
+```
+
+页面隐藏和周期性上报 Chrome 的 `performance.memory` 数据（JS 堆内存使用情况）。
+
+### Bundle 大小监控
+
+```js
+createEys({ bundleMonitoring: true })
+```
+
+页面隐藏时上报 JS/CSS 资源聚合大小。
+
+### 请求/响应 Body 采样
+
+```js
+createEys({ requestBodySampling: 0.1 }) // 10% 成功请求 + 全部错误请求
+```
+
+对 fetch/XHR 请求附加截断的请求/响应 body（最多 2KB）。二进制响应自动跳过。内容仍经过脱敏流程。
+
+### Server-Timing 采集
+
+自动解析响应的 `Server-Timing` header，附加到 fetch/xhr metric 事件的 `serverTiming` 数组中。
+
 ### 错误监控
 
 自动采集 JS 错误、未处理 Promise 异常、图片/CSS/JS 资源加载失败。Vue 插件模式会额外接入 `app.config.errorHandler`。

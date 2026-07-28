@@ -13,7 +13,7 @@ export function eventCategory(event) {
   if (event.type === 'error') return 'error'
   if (event.type === 'replay') return 'replay'
   if (event.type === 'behavior') return event.name === 'exposure' ? 'exposure' : 'behavior'
-  if (event.type === 'perf') return ['fetch', 'xhr', 'websocket', 'sse'].includes(event.metric) ? 'requests' : 'performance'
+  if (event.type === 'perf') return ['fetch', 'xhr', 'websocket', 'sse', 'fetch_body', 'xhr_body'].includes(event.metric) ? 'requests' : 'performance'
   return undefined
 }
 

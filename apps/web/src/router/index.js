@@ -19,7 +19,11 @@ export const router = createRouter({
         { path: 'traces', component: () => import('../views/monitor/traces/index.vue'), meta: { title: '链路追踪' } },
         { path: 'analytics', component: () => import('../views/monitor/analytics/index.vue'), meta: { title: '产品分析' } },
         { path: 'sourcemaps', component: () => import('../views/monitor/sourcemaps/index.vue'), meta: { title: 'SourceMap' } },
-        { path: 'governance', component: () => import('../views/monitor/governance/index.vue'), meta: { title: '采集治理' } }
+        { path: 'governance', component: () => import('../views/monitor/governance/index.vue'), meta: { title: '采集治理' } },
+      { path: 'alerts', component: () => import('../pages/AlertsPage.vue'), meta: { title: '告警中心' } },
+      { path: 'live', component: () => import('../pages/LivePage.vue'), meta: { title: '实时监控' } },
+      { path: 'sessions', component: () => import('../pages/SessionsPage.vue'), meta: { title: '用户会话' } },
+      { path: 'releases', component: () => import('../pages/ReleasesPage.vue'), meta: { title: '发布管理' } }
       ]
     }
   ]

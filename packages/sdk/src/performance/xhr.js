@@ -8,7 +8,7 @@
  * @param {string} opts.endpoint - 采集接口地址，用于过滤
  * @param {Function} opts.metric - 性能指标上报方法
  */
-export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [] }) {
+export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming }) {
   const xhrOpen = XMLHttpRequest.prototype.open
   const xhrSend = XMLHttpRequest.prototype.send
 

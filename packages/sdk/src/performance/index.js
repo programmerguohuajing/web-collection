@@ -2,6 +2,7 @@ import { setupFetchMonitor } from './fetch.js'
 import { setupSseMonitor } from './sse.js'
 import { setupWebSocketMonitor } from './websocket.js'
 import { setupXhrMonitor } from './xhr.js'
+import { setupTtiMonitor } from './tti.js'
 import { observe, onReady } from '../utils/performance.js'
 
 /**
@@ -60,13 +61,15 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
   }, true)
 
   if (requests) {
-    setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist })
-    setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist })
+    const serverTiming = setupServerTimingMonitor({ metric })
+    setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist, serverTiming })
+    setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist, serverTiming })
     setupWebSocketMonitor({ metric, error })
     setupSseMonitor({ metric, error })
   }
 
   let finalized = false
+  const finalizeTti = setupTtiMonitor({ metric })
   return () => {
     if (finalized) return
     finalized = true
@@ -77,6 +80,7 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
     }
     if (inp) metric('inp', inp, { name: inpEntry?.name, elementPath: elementPath(inpEntry?.target) })
     metric('cls', Number(cls.value().toFixed(4)), { sources: cls.sources() })
+    finalizeTti()
   }
 }
 
