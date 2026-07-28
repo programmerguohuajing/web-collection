@@ -1,37 +1,44 @@
+> English documentation. [中文文档](./README.zh-CN.md)
+
 # Web Collection
 
-Web Collection 是 pnpm monorepo 版前端监控系统，包含 Vue3 + Element Plus 控制台、Node API 服务和浏览器 SDK。
+[![GitHub stars](https://img.shields.io/github/stars/programmerguohuajing/web-collection?style=social)](https://github.com/programmerguohuajing/web-collection)
+[![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
+[![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
+[![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview)
 
-使用控制台定位错误、性能、回放、链路和埋点问题，请参阅 [用户手册](docs/user-manual.md)。
+Web Collection is a pnpm monorepo frontend monitoring system, consisting of a Vue3 + Element Plus web console, a Node API service, and a browser SDK.
 
-## 目录
+Use the console to locate errors, performance, replays, traces and custom-tracking issues. See the [User Manual](docs/user-manual.md).
 
-- `apps/web`: 前端监控控制台
-- `apps/api`: Node 后端服务
-- `packages/sdk`: 浏览器监控 SDK
-- `packages/sdk/src/error`: JS、Promise、资源错误采集
-- `packages/sdk/src/performance`: 性能采集，包含 `fetch.js`、`xhr.js`、`websocket.js`、`sse.js`
-- `packages/sdk/src/behavior`: PV、点击、路由、停留、滚动行为采集
-- `packages/sdk/src/exposure`: 元素曝光采集
-- `packages/sdk/src/replay`: rrweb 会话回放采集
+## Table of Contents
 
-## 快速开始
+- `apps/web`: frontend monitoring console
+- `apps/api`: Node backend service
+- `packages/sdk`: browser monitoring SDK
+- `packages/sdk/src/error`: JS, Promise and resource error collection
+- `packages/sdk/src/performance`: performance collection, including `fetch.js`, `xhr.js`, `websocket.js`, `sse.js`
+- `packages/sdk/src/behavior`: PV, click, route, dwell time and scroll behavior collection
+- `packages/sdk/src/exposure`: element exposure collection
+- `packages/sdk/src/replay`: rrweb session replay collection
 
-### 环境要求
+## Quick Start
+
+### Requirements
 
 - Node.js >= 18
 - pnpm >= 10
 - PostgreSQL >= 12
 
-### 1. 安装依赖
+### 1. Install dependencies
 
 ```bash
 pnpm install
 ```
 
-### 2. 配置环境变量
+### 2. Configure environment variables
 
-在项目根目录创建 `.env` 文件，或通过系统环境变量配置：
+Create a `.env` file in the project root, or configure via system environment variables:
 
 ```bash
 PORT=8787
@@ -47,7 +54,7 @@ QSTASH_CURRENT_SIGNING_KEY=
 QSTASH_NEXT_SIGNING_KEY=
 ```
 
-也可以拆分 PostgreSQL 配置：
+You can also split the PostgreSQL config:
 
 ```bash
 PGHOST=localhost
@@ -57,74 +64,74 @@ PGPASSWORD=postgres
 DB_NAME=web_collection
 ```
 
-Windows PowerShell 示例：
+Windows PowerShell example:
 
 ```powershell
 $env:ADMIN_API_KEY="change-me"
 $env:DATABASE_URL="postgresql://postgres:postgres@localhost:5432/web_collection"
 ```
 
-### 3. 初始化数据库
+### 3. Initialize the database
 
 ```bash
 pnpm --filter @web-collection/api db:init
 ```
 
-会创建事件、错误、回放、SourceMap、应用版本、采集策略和告警审计所需的数据表。
+This creates the tables needed for events, errors, replays, SourceMaps, app versions, collection policies and alert auditing.
 
-### 4. 开发模式
+### 4. Development mode
 
-开发模式需要同时运行 API 服务和前端控制台。
+Development mode requires running both the API service and the frontend console.
 
-终端 1：启动 API 服务，默认端口 `8787`。
+Terminal 1: Start the API service (default port `8787`):
 
 ```bash
 pnpm dev
 ```
 
-终端 2：启动前端控制台，默认端口 `5173`。
+Terminal 2: Start the frontend console (default port `5173`):
 
 ```bash
 pnpm dev:web
 ```
 
-访问 `http://127.0.0.1:5173` 或 `http://你的局域网IP:5173`，输入 `ADMIN_API_KEY` 后查看数据。Vite 默认监听 `0.0.0.0`，因此局域网内其他设备也可以访问。
+Open `http://127.0.0.1:5173` or `http://your-lan-ip:5173`, enter the `ADMIN_API_KEY` and view the data. Vite listens on `0.0.0.0` by default, so other devices on the LAN can also access it.
 
-### 5. 生产模式
+### 5. Production mode
 
-先构建前端控制台和 SDK：
+First build the frontend console and the SDK:
 
 ```bash
 pnpm build
 ```
 
-构建产物：
+Build artifacts:
 
-- 前端控制台：`apps/web/dist`
-- SDK：`packages/sdk/dist`
-- 统一产物目录：`dist/`
+- Frontend console: `apps/web/dist`
+- SDK: `packages/sdk/dist`
+- Unified artifact directory: `dist/`
 
-API 服务会托管 Web 控制台和 SDK：
+The API service hosts both the web console and the SDK:
 
-- 控制台：`http://127.0.0.1:8787/`
-- IIFE SDK：`http://127.0.0.1:8787/sdk/web-collection-sdk.iife.js`
-- ES Module SDK：`http://127.0.0.1:8787/sdk/web-collection-sdk.es.js`
-- 兼容入口：`http://127.0.0.1:8787/web-collection-sdk.iife.js`
-- 兼容入口：`http://127.0.0.1:8787/web-collection-sdk.es.js`
+- Console: `http://127.0.0.1:8787/`
+- IIFE SDK: `http://127.0.0.1:8787/sdk/web-collection-sdk.iife.js`
+- ES Module SDK: `http://127.0.0.1:8787/sdk/web-collection-sdk.es.js`
+- Compatibility entry: `http://127.0.0.1:8787/web-collection-sdk.iife.js`
+- Compatibility entry: `http://127.0.0.1:8787/web-collection-sdk.es.js`
 
-启动生产服务：
+Start the production service:
 
 ```bash
 pnpm --filter @web-collection/api start
 ```
 
-等价于：
+Equivalent to:
 
 ```bash
 pm2 start ecosystem.config.cjs --only web-collection-api --env production
 ```
 
-常用 PM2 命令：
+Common PM2 commands:
 
 ```bash
 pm2 status
@@ -133,11 +140,11 @@ pm2 restart web-collection-api --update-env
 pm2 stop web-collection-api
 ```
 
-### GitHub Actions 自托管 Runner 部署
+### GitHub Actions self-hosted Runner deployment
 
-仓库内的 `.github/workflows/deploy.yml` 会在 `main` 分支更新后构建、测试并部署到带有 `web-collection` 标签的 Linux 自托管 Runner。
+The in-repo `.github/workflows/deploy.yml` builds, tests and deploys to a Linux self-hosted Runner tagged `web-collection` whenever the `main` branch is updated.
 
-Runner 主机需预装 Node.js、PM2、curl，并准备部署目录：
+The runner host must have Node.js, PM2 and curl pre-installed, and a deployment directory prepared:
 
 ```bash
 sudo mkdir -p /opt/web-collection/{shared,releases}
@@ -146,31 +153,31 @@ cp .env /opt/web-collection/shared/.env
 npm install -g pm2
 ```
 
-在 GitHub 仓库的 `Settings > Actions > Runners` 注册 Runner，并添加 `web-collection` 标签。可选仓库变量：
+Register the Runner in `Settings > Actions > Runners` of the GitHub repo and add the `web-collection` tag. Optional repo variables:
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `DEPLOY_ROOT` | `/opt/web-collection` | 稳定部署目录 |
-| `HEALTH_URL` | `http://127.0.0.1:8787/health` | 发布后的健康检查地址 |
+| `DEPLOY_ROOT` | `/opt/web-collection` | Stable deployment directory |
+| `HEALTH_URL` | `http://127.0.0.1:8787/health` | Health check URL after release |
 
-工作流保留最近 5 个版本；新版本启动或健康检查失败时自动切回上一个版本。
+The workflow keeps the last 5 releases; if a new release fails to start or health check, it automatically rolls back to the previous one.
 
-### SourceMap 自动上传
+### SourceMap auto-upload
 
-在业务构建完成后执行：
+After your application build completes, run:
 
 ```bash
 pnpm sourcemaps:upload -- --dir apps/web/dist --app-id web --release 1.0.0 \
   --endpoint https://monitor.example.com --key "$WEB_COLLECTION_ADMIN_KEY"
 ```
 
-控制台的“采集治理”页面可以管理应用、版本、事件/回放采样率、数据保留周期、告警阈值、邮件、短信、飞书、企业微信、钉钉、Webhook 渠道及 CSV 报表导出。生产试点步骤见 [docs/production-pilot.md](docs/production-pilot.md)。
+The console's "Collection Governance" page manages applications, versions, event/replay sample rates, data retention period, alert thresholds, email, SMS, Feishu, WeCom (Enterprise WeChat), DingTalk, Webhook channels and CSV report export. See [docs/production-pilot.md](docs/production-pilot.md) for the production pilot steps.
 
-### 多渠道告警
+### Multi-channel alerts
 
-渠道密钥在数据库中使用 AES-GCM 加密，`ALERT_SECRET_MASTER_KEY` 只允许通过服务端环境变量或 Worker Secret 配置。启用 QStash 后，告警投递会异步执行并重试 5 次；未配置 QStash 时自动回退为后台直接发送。
+Channel secrets are AES-GCM encrypted in the database; `ALERT_SECRET_MASTER_KEY` may only be configured via a server-side environment variable or Worker Secret. When QStash is enabled, alert delivery runs asynchronously and retries up to 5 times; without QStash it automatically falls back to direct background delivery.
 
-Cloudflare 部署需要先执行迁移并配置密钥：
+Cloudflare deployment requires running the migration and configuring secrets first:
 
 ```bash
 pnpm exec wrangler d1 migrations apply web-collection --remote
@@ -181,17 +188,17 @@ pnpm exec wrangler secret put QSTASH_CURRENT_SIGNING_KEY
 pnpm exec wrangler secret put QSTASH_NEXT_SIGNING_KEY
 ```
 
-`ALERT_PUBLIC_BASE_URL` 填写控制台公开地址，例如 `https://monitor.example.com`。旧的 `FEISHU_WEBHOOK_URL` 在没有配置新渠道时继续作为兼容回退。
+`ALERT_PUBLIC_BASE_URL` is the public console address, e.g. `https://monitor.example.com`. The old `FEISHU_WEBHOOK_URL` continues to work as a compatible fallback when the new channels are not configured.
 
-### 产品分析 V2
+### Product Analytics V2
 
-Node/PostgreSQL 部署支持事件趋势、用户/会话去重、事件属性过滤与拆分、同会话漏斗、交互式用户路径、保存分析及仪表盘引用。用户统计优先使用 `userId`，缺失时回退 `deviceId`。
+The Node/PostgreSQL deployment supports event trends, user/session de-duplication, event property filtering and breakdown, same-session funnels, interactive user paths, saved analyses and dashboard references. User statistics prefer `userId`, falling back to `deviceId` when missing.
 
-Cloudflare Worker 保留原有产品分析能力，控制台会通过 `/api/capabilities` 自动隐藏 V2 入口。
+The Cloudflare Worker retains the original product analytics capability; the console automatically hides the V2 entry via `/api/capabilities`.
 
-## SDK 接入
+## SDK Integration
 
-### NPM 接入
+### NPM Integration
 
 ```js
 import { createEys } from '@web-collection/sdk'
@@ -201,14 +208,16 @@ const eys = createEys({
   appId: 'web',
   release: '1.0.0',
   userId: 'u_10001',
-  userName: '张三',
+  userName: 'Zhang San',
   userPhone: '13800138000'
 })
 
-eys.setUser({ id: 'u_10002', name: '李四', phone: '13900139000' })
+eys.setUser({ id: 'u_10002', name: 'Li Si', phone: '13900139000' })
 ```
 
-### Script 接入
+The SDK is published on npm: [@web-collection/sdk](https://www.npmjs.com/package/@web-collection/sdk). See the [SDK documentation](packages/sdk/README.md) for the full API reference (also available in [中文](packages/sdk/README.zh-CN.md)).
+
+### Script Integration
 
 ```html
 <script src="https://your-domain.com/sdk/web-collection-sdk.iife.js"></script>
@@ -221,7 +230,7 @@ eys.setUser({ id: 'u_10002', name: '李四', phone: '13900139000' })
 </script>
 ```
 
-### Vue3 插件接入
+### Vue3 Plugin Integration
 
 ```js
 import { createApp } from 'vue'
@@ -235,15 +244,15 @@ createApp(App).use(WebCollection, {
 }).mount('#app')
 ```
 
-## 能力说明
+## Capabilities
 
-### 行为埋点
+### Behavior Tracking
 
-自动采集 PV、点击、路由变化、页面停留和滚动深度。
+Automatically collects PV, clicks, route changes, page dwell time and scroll depth.
 
 ```html
 <button data-track data-track-name="buy_click" data-track-sku="A001">
-  购买
+  Buy
 </button>
 ```
 
@@ -254,15 +263,15 @@ eys.track('checkout_submit', {
 })
 ```
 
-关闭行为采集：
+Disable behavior collection:
 
 ```js
 createEys({ behavior: false })
 ```
 
-### 错误监控
+### Error Monitoring
 
-自动采集 JS 错误、未处理 Promise 异常、图片/CSS/JS 资源加载失败。Vue 插件模式会额外接入 `app.config.errorHandler`。
+Automatically collects JS errors, unhandled Promise exceptions, and image/CSS/JS resource load failures. The Vue plugin mode additionally hooks into `app.config.errorHandler`.
 
 ```js
 try {
@@ -275,11 +284,11 @@ try {
 }
 ```
 
-错误事件会带最近的行为面包屑，方便在后台回归用户操作路径。
+Error events carry the latest behavior breadcrumbs, making it easy to replay the user's action path in the backend.
 
-### 性能监控
+### Performance Monitoring
 
-自动采集 FCP、LCP、FID、INP、CLS、TTFB、longtask、resource。
+Automatically collects FCP, LCP, FID, INP, CLS, TTFB, longtask and resource.
 
 ```js
 const start = performance.now()
@@ -291,7 +300,7 @@ eys.metric('report_render', performance.now() - start, {
 
 ### Fetch / XHR / WebSocket / SSE
 
-SDK 会劫持浏览器原生 `fetch`、`XMLHttpRequest`、`WebSocket`、`EventSource`，采集接口耗时、状态码、成功状态、连接耗时和连接持续时间。上报接口本身会自动过滤，避免循环上报。
+The SDK hijacks the browser-native `fetch`, `XMLHttpRequest`, `WebSocket` and `EventSource` to collect interface duration, status code, success status, connection setup time and connection duration. The reporting endpoint itself is automatically filtered to avoid loop reporting.
 
 ```js
 await fetch('/api/orders')
@@ -304,15 +313,15 @@ const ws = new WebSocket('wss://example.com/socket')
 const source = new EventSource('/api/stream')
 ```
 
-关闭请求采集：
+Disable request collection:
 
 ```js
 createEys({ requests: false })
 ```
 
-### 曝光采集
+### Exposure Collection
 
-元素进入视口 50% 且停留约 1 秒后上报一次曝光。
+An element is reported as an exposure once it enters the viewport at 50% and stays for about 1 second.
 
 ```html
 <section data-track-exposure data-track-name="home_banner" data-track-banner-id="B001">
@@ -320,18 +329,18 @@ createEys({ requests: false })
 </section>
 ```
 
-关闭曝光采集：
+Disable exposure collection:
 
 ```js
 createEys({ exposure: false })
 ```
 
-### rrweb 回放
+### rrweb Replay
 
-默认开启 rrweb 会话录制，表单输入会脱敏。每次 SPA 路由切换会停止当前录制，进入新页面后重新开始录制；单个页面默认最多录制 60 秒，避免长时间停留产生过大的回放数据。
+rrweb session recording is enabled by default; form inputs are redacted. On each SPA route change the current recording is stopped and a new one starts after entering the new page; a single page records for up to 60 seconds by default to avoid generating large replay data from long stays.
 
 ```html
-<div class="eys-block">不会被录制的敏感区域</div>
+<div class="eys-block">Sensitive area that will not be recorded</div>
 <input class="eys-ignore" />
 ```
 
@@ -344,7 +353,7 @@ eys.takeReplaySnapshot()
 eys.stopReplay()
 ```
 
-自定义 rrweb 参数：
+Custom rrweb options:
 
 ```js
 createEys({
@@ -358,7 +367,7 @@ createEys({
 })
 ```
 
-关闭回放：
+Disable replay:
 
 ```js
 createEys({ replay: false })
@@ -366,7 +375,7 @@ createEys({ replay: false })
 
 ## SourceMap
 
-后台控制台可上传 SourceMap，也可调用接口：
+The backend console can upload SourceMaps, or you can call the API:
 
 ```bash
 curl -X POST http://127.0.0.1:8787/api/sourcemaps \
@@ -375,9 +384,9 @@ curl -X POST http://127.0.0.1:8787/api/sourcemaps \
   -d '{"release":"1.0.0","file":"app.js","map":{}}'
 ```
 
-错误堆栈里的 `app.js:line:column` 会按相同 `release + file` 自动反解到源码位置。
+The `app.js:line:column` in the error stack is automatically resolved back to the source location by the same `release + file`.
 
-## 完整配置
+## Full Configuration
 
 ```js
 createEys({
@@ -405,14 +414,14 @@ createEys({
   replayMaxDuration: 60000,
   replayBatchSize: 50,
   replayOptions: {},
-  // 首页首个有效内容节点，用于计算白屏时间和白屏率
+  // The first valid content node of the homepage, used to compute white-screen time and white-screen rate
   whiteScreenSelector: '#app > *',
-  // 超过该时间仍未出现有效内容，则记为白屏
+  // If no valid content appears within this time, it is recorded as a white screen
   whiteScreenTimeout: 5000
 })
 ```
 
-首页关键数据渲染完成后，可主动标记“页面数据就绪”时间：
+After the homepage's key data has finished rendering, you can proactively mark the "page data ready" time:
 
 ```js
 const eys = createEys({
@@ -424,16 +433,17 @@ await loadHomeData()
 eys.markPageReady()
 ```
 
-## 脚本一览
+## Script Reference
 
-| 命令 | 说明 |
+| Command | Description |
 | --- | --- |
-| `pnpm install` | 安装全部依赖 |
-| `pnpm dev` | 启动 API 开发服务，端口 `8787` |
-| `pnpm dev:web` | 启动前端控制台开发服务，端口 `5173` |
-| `pnpm build` | 构建前端控制台和 SDK，并汇总产物到根目录 `dist/` |
-| `pnpm start` | 生产模式启动 API，同时托管前端静态文件 |
-| `pnpm test` | 运行测试 |
-| `pnpm --filter @web-collection/api db:init` | 初始化 PostgreSQL 表结构 |
-| `pnpm --filter @web-collection/sdk build` | 单独构建 SDK |
-| `pnpm --filter @web-collection/web build` | 单独构建前端控制台 |
+| `pnpm install` | Install all dependencies |
+| `pnpm dev` | Start the API dev service on port `8787` |
+| `pnpm dev:web` | Start the frontend console dev service on port `5173` |
+| `pnpm build` | Build the frontend console and SDK, and aggregate artifacts into the root `dist/` |
+| `pnpm start` | Start the API in production mode, also hosting the frontend static files |
+| `pnpm test` | Run tests |
+| `pnpm --filter @web-collection/api db:init` | Initialize the PostgreSQL table structure |
+| `pnpm --filter @web-collection/sdk build` | Build the SDK only |
+| `pnpm --filter @web-collection/web build` | Build the frontend console only |
+
