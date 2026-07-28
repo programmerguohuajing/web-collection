@@ -2,6 +2,7 @@
   "name": "@web-collection/sdk",
   "version": "0.1.8",
   "type": "module",
+  "license": "MIT",
   "files": [
     "dist",
     "index.d.ts",
