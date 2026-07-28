@@ -198,17 +198,44 @@ watch(selectedDashboardId, loadDashboardResults)
       <el-table v-else :data="paths" border><el-table-column prop="path" label="路径" min-width="500" /><el-table-column prop="count" label="会话数" width="120" /></el-table>
     </el-tab-pane>
     <el-tab-pane label="漏斗分析" name="funnels">
-      <el-form inline @submit.prevent="saveFunnel"><el-form-item label="名称"><el-input v-model="funnelForm.name" /></el-form-item><el-form-item label="应用"><el-input v-model="funnelForm.appId" /></el-form-item><el-button type="primary" @click="saveFunnel">保存漏斗</el-button></el-form>
-      <div v-for="(step, index) in funnelForm.steps" :key="index" class="funnel-step">
-        <b>步骤 {{ index + 1 }}</b>
-        <el-select v-model="step.eventName" filterable placeholder="选择事件"><el-option v-for="item in funnelEventNames" :key="item.name" :label="`${item.name}（${item.count}）`" :value="item.name" /></el-select>
-        <el-input v-if="capabilities.productAnalyticsV2" v-model="step.filterField" placeholder="可选属性，如 plan" />
-        <el-select v-if="capabilities.productAnalyticsV2" v-model="step.filterOperator"><el-option label="等于" value="eq" /><el-option label="属于集合" value="in" /><el-option label="已设置" value="exists" /></el-select>
-        <el-input v-if="capabilities.productAnalyticsV2 && step.filterOperator !== 'exists'" v-model="step.filterValue" placeholder="过滤值" />
-        <el-button v-if="funnelForm.steps.length > 2" link type="danger" @click="funnelForm.steps.splice(index,1)">删除</el-button>
-      </div>
-      <el-button link type="primary" :disabled="funnelForm.steps.length >= 10" @click="funnelForm.steps.push(emptyFunnelStep())">+ 添加步骤</el-button>
-      <el-space wrap class="section"><span>可选步骤（{{ funnelEventNames.length }}）：</span><el-tag v-for="item in funnelEventNames" :key="item.name" type="info">{{ item.name }}（{{ item.count }}）</el-tag></el-space>
+      <el-card class="funnel-builder" shadow="never">
+        <template #header>
+          <div class="funnel-builder-head">
+            <div>
+              <h2>新建漏斗</h2>
+              <p>按用户会话中的发生顺序，配置至少两个转化步骤</p>
+            </div>
+            <el-button type="primary" @click="saveFunnel">保存漏斗</el-button>
+          </div>
+        </template>
+        <el-form class="funnel-meta" label-position="top" @submit.prevent="saveFunnel">
+          <el-form-item label="漏斗名称"><el-input v-model="funnelForm.name" placeholder="例如：注册转化" /></el-form-item>
+          <el-form-item label="应用 ID"><el-input v-model="funnelForm.appId" placeholder="全部应用（可选）" /></el-form-item>
+        </el-form>
+        <div class="funnel-section-head">
+          <div><b>转化步骤</b><span>已配置 {{ funnelForm.steps.filter(step => step.eventName).length }}/{{ funnelForm.steps.length }} 步</span></div>
+          <span>最多 10 步</span>
+        </div>
+        <div class="funnel-steps">
+          <div v-for="(step, index) in funnelForm.steps" :key="index" class="funnel-step">
+            <div class="funnel-step-index"><span>{{ index + 1 }}</span><small>步骤</small></div>
+            <div class="funnel-step-fields">
+              <el-select v-model="step.eventName" class="funnel-event-select" filterable placeholder="选择事件"><el-option v-for="item in funnelEventNames" :key="item.name" :label="`${item.name}（${item.count}）`" :value="item.name" /></el-select>
+              <div v-if="capabilities.productAnalyticsV2" class="funnel-filter-fields">
+                <el-input v-model="step.filterField" placeholder="可选属性，如 plan" />
+                <el-select v-model="step.filterOperator"><el-option label="等于" value="eq" /><el-option label="属于集合" value="in" /><el-option label="已设置" value="exists" /></el-select>
+                <el-input v-if="step.filterOperator !== 'exists'" v-model="step.filterValue" placeholder="过滤值" />
+              </div>
+            </div>
+            <el-button v-if="funnelForm.steps.length > 2" link type="danger" @click="funnelForm.steps.splice(index,1)">删除</el-button>
+          </div>
+        </div>
+        <el-button class="funnel-add-step" plain :disabled="funnelForm.steps.length >= 10" @click="funnelForm.steps.push(emptyFunnelStep())">+ 添加步骤</el-button>
+        <div class="funnel-candidates">
+          <div class="funnel-candidates-head"><b>可选事件</b><span>{{ funnelEventNames.length }} 个</span></div>
+          <div class="funnel-candidate-list"><el-tag v-for="item in funnelEventNames" :key="item.name" type="info" effect="plain">{{ item.name }}（{{ item.count }}）</el-tag></div>
+        </div>
+      </el-card>
       <el-table :data="funnels" border empty-text="暂无漏斗，请填写名称和至少两个步骤后保存"><el-table-column prop="name" label="名称" /><el-table-column prop="app_id" label="应用" /><el-table-column label="步骤"><template #default="{ row }">{{ row.steps_json?.map(stepName).join(' → ') }}</template></el-table-column><el-table-column label="操作" width="140"><template #default="{ row }"><el-button link type="primary" @click="run(row)">分析</el-button><el-button link type="danger" @click="removeFunnel(row)">删除</el-button></template></el-table-column></el-table>
       <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="funnelPager.page" :page-size="funnelPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="funnelPager.total" @current-change="value => { funnelPager.page = value; loadFunnels() }" @size-change="value => { funnelPager.page = 1; funnelPager.pageSize = value; loadFunnels() }" />
       <template v-if="funnelResult">
@@ -251,7 +278,58 @@ watch(selectedDashboardId, loadDashboardResults)
 </template>
 
 <style scoped>
-.funnel-step { display: grid; grid-template-columns: 70px 1.2fr 1fr 130px 1fr 55px; gap: 8px; align-items: center; margin-bottom: 8px; }
+.funnel-builder { margin-bottom: 18px; }
+.funnel-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.funnel-builder-head h2 { margin: 0; color: #172033; font-size: 16px; }
+.funnel-builder-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.funnel-meta { display: grid; grid-template-columns: repeat(2, minmax(220px, 320px)); gap: 16px; }
+.funnel-meta :deep(.el-form-item) { margin-bottom: 14px; }
+.funnel-section-head,
+.funnel-candidates-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.funnel-section-head { padding-top: 14px; border-top: 1px solid var(--line); }
+.funnel-section-head div { display: flex; align-items: center; gap: 10px; }
+.funnel-section-head span,
+.funnel-candidates-head span { color: var(--muted); font-size: 12px; }
+.funnel-steps { display: grid; gap: 10px; margin-top: 12px; }
+.funnel-step {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 50px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.funnel-step:hover { border-color: #b8cef0; }
+.funnel-step-index { display: grid; justify-items: center; gap: 2px; }
+.funnel-step-index span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #eaf2ff;
+  color: var(--el-color-primary);
+  font-weight: 700;
+}
+.funnel-step-index small { color: var(--muted); font-size: 11px; }
+.funnel-step-fields { display: grid; gap: 8px; min-width: 0; }
+.funnel-event-select { width: 100%; }
+.funnel-filter-fields { display: grid; grid-template-columns: minmax(160px, 1fr) 130px minmax(160px, 1fr); gap: 8px; }
+.funnel-add-step { width: 100%; margin-top: 10px; border-style: dashed; }
+.funnel-candidates { margin-top: 16px; padding: 12px 14px; border-radius: 8px; background: #f7f9fc; }
+.funnel-candidate-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .dashboard-insight { margin-top: 14px; }
-@media (max-width: 900px) { .funnel-step { grid-template-columns: 70px 1fr; } }
+@media (max-width: 900px) {
+  .funnel-meta { grid-template-columns: 1fr; gap: 0; }
+  .funnel-step { grid-template-columns: 46px minmax(0, 1fr) 50px; }
+  .funnel-filter-fields { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .funnel-builder-head { align-items: flex-start; }
+  .funnel-builder-head p { max-width: 210px; }
+  .funnel-step { grid-template-columns: 38px minmax(0, 1fr); padding: 10px 8px; }
+  .funnel-step > .el-button { grid-column: 2; justify-self: end; }
+}
 </style>
