@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "scripts": {
     "dev": "node src/index.js",
     "start": "pm2 start ../../ecosystem.config.cjs --only web-collection-api --env production",

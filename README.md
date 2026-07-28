@@ -6,6 +6,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
 [![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
 [![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 Web Collection is a pnpm monorepo frontend monitoring system, consisting of a Vue3 + Element Plus web console, a Node API service, and a browser SDK.
 
