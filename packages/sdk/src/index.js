@@ -5,15 +5,28 @@
  */
 
 import { setupBehaviorMonitor } from './behavior/index.js'
+import { setupClickMonitor } from './behavior/click.js'
+import { setupInputMonitor } from './behavior/input.js'
+import { setupKeyboardMonitor } from './behavior/keyboard.js'
+import { setupTouchMonitor } from './behavior/touch.js'
 import { setupConsoleMonitor } from './behavior/console.js'
 import { setupRouteMonitor } from './behavior/route.js'
 import { setupErrorMonitor } from './error/index.js'
+import { setupWorkerMonitor } from './error/worker.js'
 import { setupExposureMonitor } from './exposure/index.js'
 import { setupPerformanceMonitor } from './performance/index.js'
+import { setupTtiMonitor } from './performance/tti.js'
+import { setupMemoryMonitor } from './performance/memory.js'
+import { setupBodySampler } from './performance/body-sampler.js'
+import { setupServerTimingMonitor } from './performance/server-timing.js'
+import { setupBundleMonitor } from './performance/bundle.js'
 import { addReplayEvent, setupReplayMonitor, takeReplaySnapshot } from './replay/index.js'
+import { setupServiceWorkerMonitor } from './runtime/sw.js'
 import { imageReport } from './core/report.js'
 import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, sanitizeEvent } from './core/event.js'
 import { getId } from './utils/id.js'
+import { setupEnvironmentMonitor } from './utils/environment.js'
+import { setupRuntimeMonitor } from './utils/runtime.js'
 
 /** localStorage 中持久化待上报事件队列的键名 */
 const STORE_KEY = '__web_collection_queue__'
@@ -46,6 +59,17 @@ const STORE_KEY = '__web_collection_queue__'
  * @param {object} [options.replayOptions={}] - rrweb 回放模块的附加配置
  * @param {string} [options.whiteScreenSelector='#app > *'] - 首页有效内容选择器
  * @param {number} [options.whiteScreenTimeout=5000] - 白屏判定阈值（ms）
+ * @param {boolean} [options.inputTracking=false] - 是否采集输入框聚焦/失焦/输入变化
+ * @param {boolean} [options.environmentInfo=true] - 是否采集设备环境指纹
+ * @param {boolean|object} [options.runtimeInfo=false] - 是否采集运行时版本信息
+ * @param {number} [options.memoryInterval=60000] - 内存监控采样间隔（ms），0 表示不周期性采样
+ * @param {number} [options.requestBodySampling=0] - 请求/响应 body 采样率（0~1），0 表示不采集
+ * @param {boolean} [options.bundleMonitoring=false] - 是否采集 Bundle 大小监控
+ * @param {boolean} [options.keyboardTracking=false] - 是否采集键盘操作
+ * @param {string[]} [options.keyboardTrackingKeys=['Enter','Escape']] - 键盘追踪的按键列表
+ * @param {boolean} [options.touchTracking=false] - 是否采集 Touch 手势
+ * @param {boolean} [options.workerMonitoring=false] - 是否监控 Web Worker 错误
+ * @param {boolean} [options.serviceWorkerMonitoring=false] - 是否监控 Service Worker 状态
  * @returns {object} SDK 客户端实例，包含 track/error/metric/flush/destroy 等方法
  */
 export function createEys(options = {}) {
@@ -104,6 +128,18 @@ export function createEys(options = {}) {
     rageClick: false,
     deadClick: false,
     interactionTracking: false,
+    selectTracking: false,
+    inputTracking: false,
+    environmentInfo: true,
+    runtimeInfo: false,
+    memoryInterval: 60000,
+    requestBodySampling: 0,
+    bundleMonitoring: false,
+    keyboardTracking: false,
+    keyboardTrackingKeys: ['Enter', 'Escape'],
+    touchTracking: false,
+    workerMonitoring: false,
+    serviceWorkerMonitoring: false,
     ...options
   }
   cfg.privacy ||= {}
@@ -142,6 +178,15 @@ export function createEys(options = {}) {
   let stopExposure = () => {}
   let stopLifecycle = () => {}
   let finalizePerformance = () => {}
+  let stopEnvironment = () => {}
+  let stopRuntime = () => {}
+  let stopMemory = () => {}
+  let stopBodySampler = () => {}
+  let stopKeyboard = () => {}
+  let stopTouch = () => {}
+  let stopWorker = () => {}
+  let stopServiceWorker = () => {}
+  let stopBundle = () => {}
   let captureStarted = false
   let performanceStarted = false
   const timer = setInterval(flushAll, cfg.flushInterval)
@@ -164,15 +209,20 @@ export function createEys(options = {}) {
   function startCapture() {
     if (captureStarted) return
     captureStarted = true
+    // 环境与运行时信息（最先采集，供后续模块使用）
+    stopEnvironment = setupEnvironmentMonitor({ context: globalContext, enabled: cfg.environmentInfo })
+    stopRuntime = setupRuntimeMonitor({ context: globalContext, config: cfg.runtimeInfo })
     stopConsole = cfg.console ? setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels }) : () => {}
     stopError = setupErrorMonitor({ error, clipSize: 500 })
     if (!performanceStarted) {
       finalizePerformance = setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId, requestAllowlist: cfg.privacy.requestAllowlist })
       performanceStarted = true
     }
+    stopMemory = setupMemoryMonitor({ metric, interval: cfg.memoryInterval })
+    stopBodySampler = setupBodySampler({ metric, sampleRate: cfg.requestBodySampling })
     observeWhiteScreen()
     requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
-    if (cfg.behavior) stopBehavior = setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking })
+    if (cfg.behavior) stopBehavior = setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking })
     else if (cfg.replay && cfg.replaySegmentByRoute) stopRoute = setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') })
     if (cfg.exposure) stopExposure = setupExposureMonitor({ push })
     const onOnline = () => push({ type: 'behavior', name: 'network_change', props: { online: true } })
@@ -188,6 +238,11 @@ export function createEys(options = {}) {
       document.removeEventListener('visibilitychange', onVisibility)
     }
     if (cfg.replay) startReplay()
+    if (cfg.keyboardTracking) stopKeyboard = setupKeyboardMonitor({ push, keys: cfg.keyboardTrackingKeys })
+    if (cfg.touchTracking) stopTouch = setupTouchMonitor({ push })
+    if (cfg.workerMonitoring) stopWorker = setupWorkerMonitor({ error })
+    if (cfg.serviceWorkerMonitoring) stopServiceWorker = setupServiceWorkerMonitor({ metric, error })
+    if (cfg.bundleMonitoring) stopBundle = setupBundleMonitor({ metric })
   }
 
   function observeWhiteScreen() {
@@ -264,12 +319,21 @@ export function createEys(options = {}) {
 
   function stopCapture() {
     if (!captureStarted) return
+    stopEnvironment()
+    stopRuntime()
     stopBehavior()
     stopRoute()
     stopError()
     stopExposure()
     stopLifecycle()
     stopConsole()
+    stopMemory()
+    stopBodySampler()
+    stopKeyboard()
+    stopTouch()
+    stopWorker()
+    stopServiceWorker()
+    stopBundle()
     clearInterval(whiteScreenTimer)
     whiteScreenTimer = 0
     stopCurrentReplay()

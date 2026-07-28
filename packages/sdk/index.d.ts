@@ -1,4 +1,10 @@
 export type EventType = 'track' | 'perf' | 'performance' | 'behavior' | 'error' | 'replay' | 'log' | 'trace'
+export type BehaviorEventName =
+  | 'pv' | 'page_leave' | 'click' | 'scroll' | 'route_change' | 'hashchange' | 'popstate' | 'pushState' | 'replaceState'
+  | 'form_submit' | 'rage_click' | 'dead_click' | 'copy' | 'paste' | 'download'
+  | 'input_focus' | 'input_blur' | 'input_change'
+  | 'select_change' | 'keyboard' | 'touch_tap' | 'touch_swipe'
+  | 'app_start' | 'app_foreground' | 'app_background' | 'network_change'
 
 export interface EysUser {
   id?: string
@@ -59,6 +65,23 @@ export interface EysOptions {
   rageClick?: boolean
   deadClick?: boolean
   interactionTracking?: boolean
+  selectTracking?: boolean
+  inputTracking?: boolean
+  environmentInfo?: boolean
+  runtimeInfo?: boolean | {
+    buildId?: string
+    buildTime?: string
+    commit?: string
+    branch?: string
+  }
+  memoryInterval?: number
+  requestBodySampling?: number
+  bundleMonitoring?: boolean
+  keyboardTracking?: boolean
+  keyboardTrackingKeys?: string[]
+  touchTracking?: boolean
+  workerMonitoring?: boolean
+  serviceWorkerMonitoring?: boolean
 }
 
 export interface EysClient {

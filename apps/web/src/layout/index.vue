@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
-  Histogram, House, Monitor, Operation, Stopwatch, Warning
+  Histogram, House, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
 import { api, error, loading, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
@@ -14,6 +14,8 @@ const applications = ref([])
 const groups = [
   { label: '', items: [{ title: '总览', path: '/overview', icon: House }] },
   { label: '监控', items: [
+    { title: '告警中心', path: '/alerts', icon: Bell },
+    { title: '实时监控', path: '/live', icon: Monitor },
     { title: '错误监控', path: '/errors', icon: Warning },
     { title: '性能监控', path: '/performance', icon: Stopwatch },
     { title: '会话回放', path: '/replays', icon: Film }
@@ -26,6 +28,10 @@ const groups = [
     { title: '漏斗分析', path: '/analytics?tab=funnels', match: 'funnels', icon: Histogram },
     { title: '用户路径', path: '/analytics?tab=paths', match: 'paths', icon: Aim },
     { title: '行为分析', path: '/behavior', icon: DataAnalysis }
+  ] },
+  { label: '洞察', items: [
+    { title: '用户会话', path: '/sessions', icon: User },
+    { title: '发布管理', path: '/releases', icon: Operation }
   ] },
   { label: '配置', items: [
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
