@@ -18,10 +18,14 @@ Use the console to locate errors, performance, replays, traces and custom-tracki
 - `apps/api`: Node backend service
 - `packages/sdk`: browser monitoring SDK
 - `packages/sdk/src/error`: JS, Promise and resource error collection
-- `packages/sdk/src/performance`: performance collection, including `fetch.js`, `xhr.js`, `websocket.js`, `sse.js`
-- `packages/sdk/src/behavior`: PV, click, route, dwell time and scroll behavior collection
+- `packages/sdk/src/performance`: performance collection, including `fetch.js`, `xhr.js`, `websocket.js`, `sse.js`, `tti.js`, `memory.js`, `bundle.js`, `body-sampler.js`, `server-timing.js`
+- `packages/sdk/src/behavior`: PV, click, input, keyboard, touch, route, scroll, form, rage-click, dead-click, copy/paste/download
 - `packages/sdk/src/exposure`: element exposure collection
 - `packages/sdk/src/replay`: rrweb session replay collection
+- `packages/sdk/src/error`: JS, Promise, resource, and Web Worker error collection
+- `packages/sdk/src/runtime`: Service Worker state monitoring
+- `packages/sdk/src/utils/environment.js`: device & environment fingerprint
+- `packages/sdk/src/utils/runtime.js`: build-time runtime info
 
 ## Quick Start
 
@@ -270,6 +274,63 @@ Disable behavior collection:
 createEys({ behavior: false })
 ```
 
+### Advanced Behavior Tracking (opt-in)
+
+```js
+createEys({
+  formTracking: true,       // form submit events
+  rageClick: true,          // 3+ clicks on same element within 1s
+  deadClick: true,          // click on elements with data-track-dead-click
+  interactionTracking: true, // copy, paste, download events
+  inputTracking: true,      // input focus/blur/change events
+  selectTracking: true,     // <select> change events
+  keyboardTracking: true,   // Enter/Escape key events
+  touchTracking: true       // touch tap/swipe on mobile
+})
+```
+
+### Environment Fingerprint (enabled by default)
+
+`environmentInfo: true` attaches screen, viewport, language, timezone, platform, network (connection type, effective type, downlink, RTT), battery status and feature support flags to every event's `context`.
+
+### Runtime Info
+
+```js
+// Auto-detect window.__WEB_COLLECTION_VERSION__ etc.
+createEys({ runtimeInfo: true })
+
+// Or pass manually:
+createEys({ runtimeInfo: { buildId: 'abc123', buildTime: '2025-01-01', commit: 'def456', branch: 'main' } })
+```
+
+### Memory Monitoring (Chrome)
+
+```js
+createEys({ memoryMonitoring: true, memoryInterval: 60000 })
+```
+
+Reports `performance.memory` (usedJSHeapSize, totalJSHeapSize, jsHeapSizeLimit) on page hide and periodically.
+
+### Bundle Size Monitoring
+
+```js
+createEys({ bundleMonitoring: true })
+```
+
+Reports aggregated JS/CSS bundle sizes (decodedBodySize) on page hide.
+
+### Request/Response Body Sampling
+
+```js
+createEys({ requestBodySampling: 0.1 }) // 10% of successful requests + all errors
+```
+
+Appends truncated request/response bodies to fetch/xhr metric events. Binary responses are skipped. Content is still redacted by the privacy pipeline.
+
+### Server-Timing Collection
+
+Automatically parses `Server-Timing` response headers and appends them to fetch/xhr metric events as `serverTiming` arrays.
+
 ### Error Monitoring
 
 Automatically collects JS errors, unhandled Promise exceptions, and image/CSS/JS resource load failures. The Vue plugin mode additionally hooks into `app.config.errorHandler`.
@@ -374,6 +435,43 @@ Disable replay:
 createEys({ replay: false })
 ```
 
+### Web Worker Error Monitoring
+
+```js
+createEys({ workerMonitoring: true })
+```
+
+Captures runtime errors and message errors from Web Workers.
+
+### Service Worker Monitoring
+
+```js
+createEys({ serviceWorkerMonitoring: true })
+```
+
+Reports `service_worker_registered`, `service_worker_updated`, and `service_worker_error` events.
+
+## Console Pages
+
+The web console includes the following pages:
+
+| Page | Description |
+| --- | --- |
+| **Overview** | Error count, affected users, P95 load time, active sessions, health score, trend chart, activity feed |
+| **Errors** | Issue list with status workflow (open → acknowledged → resolved), error event details, source map resolution |
+| **Performance** | Web Vitals cards (FCP/LCP/FID/INP/CLS/TBT), slow API, slow resources, performance event stream |
+| **Behavior** | Behavior ranking panel, behavior/tracking event detail table |
+| **Replays** | rrweb-player replay panel, session list |
+| **Logs** | Structured log table with level filtering, trace link |
+| **Traces** | Trace list with span detail drawer |
+| **Analytics** | Event trends, user sessions, user paths, funnel analysis, custom dashboards |
+| **Alerts** | Alert rule list, trigger records, processing status, notification channels, alert trend chart |
+| **Live** | Real-time event stream via WebSocket with polling fallback |
+| **Sessions** | User session list with drawer timeline showing full event history per session |
+| **Releases** | Version list, version comparison (errors, affected users, LCP), rollback recommendations |
+| **SourceMap** | SourceMap upload and management |
+| **Governance** | Application management, release management, alert channels, collection key rotation, data retention, CSV export |
+
 ## SourceMap
 
 The backend console can upload SourceMaps, or you can call the API:
@@ -418,7 +516,31 @@ createEys({
   // The first valid content node of the homepage, used to compute white-screen time and white-screen rate
   whiteScreenSelector: '#app > *',
   // If no valid content appears within this time, it is recorded as a white screen
-  whiteScreenTimeout: 5000
+  whiteScreenTimeout: 5000,
+  // Advanced behavior options (all default false / opt-in)
+  formTracking: false,
+  rageClick: false,
+  deadClick: false,
+  interactionTracking: false,
+  inputTracking: false,
+  selectTracking: false,
+  keyboardTracking: false,
+  keyboardTrackingKeys: ['Enter', 'Escape'],
+  touchTracking: false,
+  // Environment fingerprint (default true)
+  environmentInfo: true,
+  // Runtime build info (default false)
+  runtimeInfo: false,
+  // Memory monitoring (Chrome only, default false)
+  memoryInterval: 60000,
+  // Request/response body sampling (0-1, default 0 = off)
+  requestBodySampling: 0,
+  // Bundle size monitoring (default false)
+  bundleMonitoring: false,
+  // Web Worker error monitoring (default false)
+  workerMonitoring: false,
+  // Service Worker state monitoring (default false)
+  serviceWorkerMonitoring: false
 })
 ```
 

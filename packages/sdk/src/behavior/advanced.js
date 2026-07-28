@@ -1,9 +1,9 @@
 import { elementInfo } from '../utils/dom.js'
 
-export function setupAdvancedBehaviorMonitor({ push, formTracking = false, rageClick = false, deadClick = false, interactionTracking = false }) {
+export function setupAdvancedBehaviorMonitor({ push, formTracking = false, rageClick = false, deadClick = false, interactionTracking = false, selectTracking = false }) {
   const disposers = []
   const clickHistory = new WeakMap()
-  if (!formTracking && !rageClick && !deadClick && !interactionTracking) return () => {}
+  if (!formTracking && !rageClick && !deadClick && !interactionTracking && !selectTracking) return () => {}
   if (formTracking) {
     const onSubmit = event => {
       const form = event.target
@@ -41,6 +41,27 @@ export function setupAdvancedBehaviorMonitor({ push, formTracking = false, rageC
     disposers.push(() => removeEventListener('copy', onCopy, true))
     disposers.push(() => removeEventListener('paste', onPaste, true))
     disposers.push(() => removeEventListener('click', onDownload, true))
+  }
+  if (selectTracking) {
+    const onChange = event => {
+      const target = event.target
+      if (!target || target.tagName !== 'SELECT') return
+      const options = target.options
+      const selectedIndex = target.selectedIndex
+      push({
+        type: 'behavior',
+        name: 'select_change',
+        props: {
+          ...elementInfo(target),
+          selectedValue: target.value || '',
+          selectedText: options[selectedIndex]?.text || '',
+          selectedIndex,
+          totalOptions: options.length
+        }
+      })
+    }
+    addEventListener('change', onChange)
+    disposers.push(() => removeEventListener('change', onChange))
   }
   return () => disposers.forEach(dispose => dispose())
 }

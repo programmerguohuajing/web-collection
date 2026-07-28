@@ -9,7 +9,7 @@
  * @param {Function} opts.metric - 性能指标上报方法
  * @param {Function} opts.error - 错误上报方法
  */
-export function setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [] }) {
+export function setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming }) {
   if (!originalFetch) return
 
   window.fetch = async (input, init = {}) => {
@@ -22,7 +22,10 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error, trac
       const res = await originalFetch(input, requestInit)
       if (!url.includes(endpoint) && allowedRequest(url, requestAllowlist)) {
         const timing = performance.getEntriesByName(new URL(url, location.href).href).at(-1)
-        metric('fetch', performance.now() - start, { url, method: init.method || input?.method || 'GET', status: res.status, statusClass: `${Math.floor(res.status / 100)}xx`, ok: res.ok, responseSize: Number(res.headers?.get?.('content-length') || 0) || undefined, dns: timing ? timing.domainLookupEnd - timing.domainLookupStart : undefined, tcp: timing ? timing.connectEnd - timing.connectStart : undefined, ttfb: timing?.responseStart, __traceId: traced ? pageTraceId : undefined, __spanId: traced ? spanId : undefined })
+        const fetchProps = { url, method: init.method || input?.method || 'GET', status: res.status, statusClass: `${Math.floor(res.status / 100)}xx`, ok: res.ok, responseSize: Number(res.headers?.get?.('content-length') || 0) || undefined, dns: timing ? timing.domainLookupEnd - timing.domainLookupStart : undefined, tcp: timing ? timing.connectEnd - timing.connectStart : undefined, ttfb: timing?.responseStart, __traceId: traced ? pageTraceId : undefined, __spanId: traced ? spanId : undefined }
+        const serverTimingHeader = res.headers?.get?.('server-timing')
+        if (serverTiming && serverTimingHeader) fetchProps.serverTiming = serverTiming.parse(serverTimingHeader)
+        metric('fetch', performance.now() - start, fetchProps)
         if (!res.ok) error(new Error(`HTTP ${res.status}`), { name: 'FetchError', source: url, status: res.status, errorType: 'http' })
       }
       return res
