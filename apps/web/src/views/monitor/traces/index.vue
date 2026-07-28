@@ -1,11 +1,9 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 import SearchPanel from '../../../components/SearchPanel.vue'
 
 const traces = ref([])
-const route = useRoute()
 const spans = ref([])
 const active = ref(null)
 const loading = ref(false)
@@ -20,6 +18,10 @@ async function load() {
     Object.assign(pager, { page: data.page, pageSize: data.pageSize, total: data.total })
   } finally { loading.value = false }
 }
+function onSearch() {
+  pager.page = 1
+  load()
+}
 async function loadSpans() {
   const data = await api(`/api/traces/${encodeURIComponent(active.value.trace_id)}?page=${spanPager.page}&pageSize=${spanPager.pageSize}`)
   spans.value = data.items
@@ -32,11 +34,11 @@ async function open(row) {
   await loadSpans()
 }
 onMounted(load)
-watch([() => route.query, refreshVersion], () => { pager.page = 1; load() })
+watch(refreshVersion, () => { pager.page = 1; load() })
 </script>
 
 <template>
-  <SearchPanel :fields="['traceId', 'range', 'release', 'path']" />
+  <SearchPanel :fields="['traceId', 'range', 'release', 'path']" @search="onSearch" />
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><b>前端链路</b><el-button @click="load">刷新</el-button></div></template>
     <el-table v-loading="loading" :data="traces" border @row-click="open">

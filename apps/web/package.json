@@ -13,6 +13,7 @@
     "@vitejs/plugin-vue": "^5.2.4",
     "echarts": "6.1.0",
     "element-plus": "^2.11.8",
+    "pinia": "^2.2.6",
     "rrweb-player": "2.1.0",
     "vite": "^6.3.5",
     "vue": "^3.5.17",

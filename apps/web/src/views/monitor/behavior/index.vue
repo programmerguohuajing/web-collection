@@ -2,11 +2,11 @@
 import EventTable from '../../../components/EventTable.vue'
 import RankPanel from '../../../components/RankPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
-import { behavior, behaviorEvents, behaviorPager, setPage, setPageSize, tableLoading } from '../../../dashboard.js'
+import { behavior, behaviorEvents, behaviorPager, setPage, setPageSize, tableLoading, refreshAll } from '../../../dashboard.js'
 </script>
 
 <template>
-  <SearchPanel :fields="['path', 'userId']" />
+  <SearchPanel :fields="['path', 'userId', 'keyword']" @search="refreshAll" />
   <RankPanel class="section" title="行为排行" subtitle="behavior / track" :items="behavior" />
   <EventTable title="行为与埋点明细" :rows="behaviorEvents" :loading="tableLoading.behavior" :total="behaviorPager.total" :page="behaviorPager.page" :page-size="behaviorPager.pageSize" stream @page-change="setPage('behavior', $event)" @size-change="setPageSize('behavior', $event)" />
 </template>

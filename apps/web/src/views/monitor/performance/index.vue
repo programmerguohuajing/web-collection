@@ -2,11 +2,11 @@
 import EventTable from '../../../components/EventTable.vue'
 import PerfPanel from '../../../components/PerfPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
-import { perfEvents, perfPager, setPage, setPageSize, summary, tableLoading } from '../../../dashboard.js'
+import { perfEvents, perfPager, setPage, setPageSize, summary, tableLoading, refreshAll } from '../../../dashboard.js'
 </script>
 
 <template>
-  <SearchPanel :fields="['path', 'keyword']" />
+  <SearchPanel :fields="['path', 'keyword']" @search="refreshAll" />
   <PerfPanel :perf="summary?.perf || {}" :counts="summary?.perfCounts || {}" />
   <section class="grid performance-grid">
     <EventTable title="慢接口" :rows="summary?.api || []" />

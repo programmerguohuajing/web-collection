@@ -1,11 +1,9 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 import SearchPanel from '../../../components/SearchPanel.vue'
 
 const rows = ref([])
-const route = useRoute()
 const total = ref(0)
 const loading = ref(false)
 const query = reactive({ level: '', page: 1, pageSize: 20 })
@@ -25,12 +23,17 @@ function changeLevel() {
   load()
 }
 
+function onSearch() {
+  query.page = 1
+  load()
+}
+
 onMounted(load)
-watch([() => route.query, refreshVersion], load)
+watch(refreshVersion, load)
 </script>
 
 <template>
-  <SearchPanel :fields="['userId']" />
+  <SearchPanel :fields="['userId']" @search="onSearch" />
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><b>结构化日志</b><el-space><el-select v-model="query.level" clearable placeholder="全部级别" style="width:130px" @change="changeLevel"><el-option v-for="level in ['log','info','warn','error']" :key="level" :label="level" :value="level" /></el-select><el-button @click="load">刷新</el-button></el-space></div></template>
     <el-table v-loading="loading" :data="rows" border>
@@ -41,7 +44,7 @@ watch([() => route.query, refreshVersion], load)
       <el-table-column prop="release" label="版本" width="110" />
       <el-table-column prop="userId" label="用户" width="130" />
       <el-table-column prop="sessionId" label="会话" min-width="180" show-overflow-tooltip />
-      <el-table-column label="Trace" min-width="180" show-overflow-tooltip><template #default="{ row }"><router-link v-if="row.traceId" :to="`/traces?keyword=${encodeURIComponent(row.traceId)}`">{{ row.traceId }}</router-link><span v-else>-</span></template></el-table-column>
+      <el-table-column label="Trace" min-width="180" show-overflow-tooltip><template #default="{ row }"><router-link v-if="row.traceId" :to="`/traces?traceId=${encodeURIComponent(row.traceId)}`">{{ row.traceId }}</router-link><span v-else>-</span></template></el-table-column>
     </el-table>
     <el-pagination class="pager" v-model:current-page="query.page" v-model:page-size="query.pageSize" :total="total" layout="total, sizes, prev, pager, next" @change="load" />
   </el-card>

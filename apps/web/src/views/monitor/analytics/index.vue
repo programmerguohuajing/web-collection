@@ -10,7 +10,6 @@ import SearchPanel from '../../../components/SearchPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
-const filterQueryNames = ['appId', 'release', 'startTime', 'endTime', 'path', 'userId', 'userName', 'userPhone', 'keyword', 'type', 'status']
 const tab = ref('sessions')
 const loading = ref(false)
 const sessions = ref([])
@@ -37,7 +36,6 @@ let timer = 0
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
 const insightOptions = computed(() => insights.value.map(item => ({ label: item.name, value: `insight:${item.id}` })))
 const funnelOptions = computed(() => funnels.value.map(item => ({ label: item.name, value: `funnel:${item.id}` })))
-const filterKey = computed(() => JSON.stringify(filterQueryNames.map(name => route.query[name] || '')))
 
 function setPaged(target, pager, data) {
   target.value = data.items
@@ -156,20 +154,19 @@ async function openSession(row) {
   sessionEventPager.page = 1
   await loadSessionEvents()
 }
-async function changeTab(name) {
-  if (route.query.tab === name) return
-  await router.replace({ path: route.path, query: { ...route.query, tab: name } })
+function changeTab(name) {
+  tab.value = name
 }
 
 onMounted(() => { timer = window.setInterval(async () => { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) }, 30000) })
 onBeforeUnmount(() => clearInterval(timer))
 watch(() => route.query.tab, value => { if (value) tab.value = value }, { immediate: true })
-watch([filterKey, refreshVersion], () => { sessionPager.page = 1; load() }, { immediate: true })
+watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true })
 watch(selectedDashboardId, loadDashboardResults)
 </script>
 
 <template>
-  <SearchPanel :fields="['userId']" />
+  <SearchPanel :fields="['userId']" @search="() => { sessionPager.page = 1; load() }" />
   <div class="metrics section">
     <el-card><span>近 5 分钟会话</span><strong>{{ live.sessions || 0 }}</strong></el-card>
     <el-card><span>近 5 分钟用户</span><strong>{{ live.users || 0 }}</strong></el-card>

@@ -67,7 +67,7 @@ function sourceLabel(original) {
         </template>
       </el-table-column>
       <el-table-column label="Trace" min-width="180">
-        <template #default="{ row }"><router-link v-if="row.props?.traceId" :to="`/traces?keyword=${row.props.traceId}`">{{ row.props.traceId }}</router-link><span v-else>-</span></template>
+        <template #default="{ row }"><router-link v-if="row.props?.traceId" :to="`/traces?traceId=${row.props.traceId}`">{{ row.props.traceId }}</router-link><span v-else>-</span></template>
       </el-table-column>
       <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">

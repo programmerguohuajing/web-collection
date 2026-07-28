@@ -1,7 +1,10 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
-import { api, filters } from '../dashboard.js'
+import { api } from '../dashboard.js'
+import { useFilterStore } from '../stores/filters.js'
 import AnalyticsChart from './AnalyticsChart.vue'
+
+const store = useFilterStore()
 
 const props = defineProps({
   eventNames: { type: Array, default: () => [] },
@@ -17,11 +20,11 @@ const selectedId = ref(null)
 const chartType = ref('line')
 
 function requestBody() {
-  const [selectedStart, selectedEnd] = filters.value.range || []
+  const [selectedStart, selectedEnd] = store.range || []
   return {
     ...form,
-    appId: filters.value.appId || form.appId || '',
-    release: filters.value.release || form.release || '',
+    appId: store.appId || form.appId || '',
+    release: store.release || form.release || '',
     startTime: selectedStart || form.startTime,
     endTime: selectedEnd || form.endTime,
     filters: form.filters.filter(item => item.field && (item.operator === 'exists' || item.value !== '')).map(item => ({
@@ -33,7 +36,7 @@ function requestBody() {
 
 async function loadProperties() {
   properties.value = form.eventName
-    ? await api(`/api/analytics/event-properties?eventName=${encodeURIComponent(form.eventName)}${filters.value.appId ? `&appId=${encodeURIComponent(filters.value.appId)}` : ''}`)
+    ? await api(`/api/analytics/event-properties?eventName=${encodeURIComponent(form.eventName)}${store.appId ? `&appId=${encodeURIComponent(store.appId)}` : ''}`)
     : []
 }
 
