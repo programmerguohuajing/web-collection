@@ -9,7 +9,57 @@ const analyticsFields = {
 }
 const filterOperators = new Set(['eq', 'in', 'exists'])
 
-export async function listLogs(filters = {}) {
+export async function getHeatmap(filters = {}) {
+  const { where, params } = whereFor(filters, ["type='behavior'", "name in ('click','scroll')"])
+  const rows = await all(`select ts, name, props_json, path, url from events ${where} order by ts desc limit 50000`, params)
+  const clickPoints = []
+  const scrollData = []
+  const pageViews = new Map()
+  for (const row of rows) {
+    const props = row.props_json || {}
+    if (row.name === 'click') {
+      const x = Number(props.x)
+      const y = Number(props.y)
+      if (Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0) {
+        clickPoints.push({
+          x,
+          y,
+          viewportWidth: Number(props.viewportWidth) || 0,
+          viewportHeight: Number(props.viewportHeight) || 0,
+          elementType: props.elementType || '',
+          elementLabel: props.elementLabel || '',
+          ts: Number(row.ts),
+          path: row.path || '',
+          url: row.url || ''
+        })
+      }
+    }
+    if (row.name === 'scroll' && Number.isFinite(Number(props.depth))) {
+      scrollData.push({
+        depth: Number(props.depth),
+        maxDepth: Number(props.maxDepth) || 0,
+        ts: Number(row.ts),
+        path: row.path || ''
+      })
+      const key = row.path || row.url || ''
+      if (key) {
+        const existing = pageViews.get(key) || { path: key, count: 0, totalDepth: 0, maxDepth: 0, scrollEvents: 0 }
+        existing.count++
+        existing.totalDepth += Number(props.depth) || 0
+        existing.maxDepth = Math.max(existing.maxDepth, Number(props.maxDepth) || 0)
+        existing.scrollEvents++
+        pageViews.set(key, existing)
+      }
+    }
+  }
+  return {
+    clickPoints: clickPoints.slice(0, 10000),
+    scrollData: scrollData.slice(0, 10000),
+    scrollAggregate: [...pageViews.values()].sort((a, b) => b.count - a.count).slice(0, 50)
+  }
+}
+
+export function listLogs(filters = {}) {
   const { where, params } = whereFor({ ...filters, type: 'log' })
   const page = pageOf(filters)
   const [rows, totalRows] = await Promise.all([
@@ -93,6 +143,26 @@ export async function getReleaseComparison(filters = {}) {
     count(distinct coalesce(nullif(user_id,''), device_id))::integer users,
     round(avg(value) filter(where type='perf' and metric='lcp')::numeric, 2) lcp
     from events ${where} group by release_name order by max(ts) desc limit 20`, params)
+}
+
+export async function getReleaseDetailComparison(appId, fromRelease, toRelease) {
+  const baseWhere = (rels) => `app_id=? and release_name in (${rels.map(() => '?').join(',')})`
+  const [fromData, toData] = await Promise.all([
+    fromRelease ? all(`select count(*)::integer events, count(*) filter(where type='error')::integer errors, count(distinct coalesce(nullif(user_id,''), device_id))::integer users from events where app_id=? and release_name=?`, [appId, fromRelease]) : [{ events: 0, errors: 0, users: 0 }],
+    toRelease ? all(`select count(*)::integer events, count(*) filter(where type='error')::integer errors, count(distinct coalesce(nullif(user_id,''), device_id))::integer users, round(avg(value) filter(where type='perf' and metric='lcp')::numeric, 2) lcp from events where app_id=? and release_name=?`, [appId, toRelease]) : [{ events: 0, errors: 0, users: 0, lcp: null }]
+  ])
+  const fromRow = fromData[0] || { events: 0, errors: 0, users: 0 }
+  const toRow = toData[0] || { events: 0, errors: 0, users: 0, lcp: null }
+  const errorDelta = Number(toRow.errors || 0) - Number(fromRow.errors || 0)
+  return {
+    errors: { from: Number(fromRow.errors), to: Number(toRow.errors), delta: errorDelta },
+    affectedUsers: { from: Number(fromRow.users), to: Number(toRow.users), delta: Number(toRow.users) - Number(fromRow.users) },
+    perf: {
+      from: { lcp: null },
+      to: { lcp: toRow.lcp }
+    },
+    recommendation: errorDelta > 5 ? `${toRelease} 版本错误数比 ${fromRelease} 增加 ${errorDelta} 条，建议回滚或紧急修复。` : null
+  }
 }
 
 export async function listEventProperties(filters = {}) {
