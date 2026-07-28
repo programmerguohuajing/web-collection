@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
 import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
-import { deleteDashboard, deleteFunnel, deleteInsight, getLive, getPaths, getReleaseComparison, getSessionEvents, getSessions, getTrace, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, runFunnel, saveDashboard, saveFunnel, saveInsight } from './services/analytics-service.js'
+import { deleteDashboard, deleteFunnel, deleteInsight, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, runFunnel, saveDashboard, saveFunnel, saveInsight } from './services/analytics-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -202,8 +202,10 @@ app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await
 app.get('/api/analytics/sessions', async (req, res, next) => { try { res.json(await getSessions(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/analytics/heatmap', async (req, res, next) => { try { res.json(await getHeatmap(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/analytics/releases/compare', async (req, res, next) => {  try {    const { appId } = req.query    res.json(await getReleaseDetailComparison(appId, req.query.from, req.query.to))  } catch (err) { next(err) }})
 app.get('/api/analytics/event-names', async (req, res, next) => { try { res.json(await listFunnelEventNames(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/event-properties', async (req, res, next) => { try { res.json(await listEventProperties({ ...filters(req.query), eventName: req.query.eventName })) } catch (err) { next(err) } })
 app.post('/api/analytics/insights/query', async (req, res, next) => { try { res.json(await queryEventInsight(req.body || {})) } catch (err) { next(err) } })

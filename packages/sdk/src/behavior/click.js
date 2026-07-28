@@ -3,8 +3,8 @@ import { elementInfo } from '../utils/dom.js'
 /**
  * 初始化点击行为监控。
  * 在捕获阶段监听全局 click 事件，匹配可交互元素
- *（button、a、input 等及带 data-track 属性的元素），
- * 提取元素信息后推入上报队列。
+ * （button、a、input 等及带 data-track 属性的元素），
+ * 提取元素信息后推入上报队列。同时记录点击坐标用于热力图。
  *
  * @param {object} opts
  * @param {Function} opts.push - SDK 主实例的事件推入方法
@@ -30,7 +30,11 @@ export function setupClickMonitor({ push }) {
         elementId: props.id || '',
         elementText: props.text || '',
         elementRole: props.role || '',
-        elementHref: props.href || ''
+        elementHref: props.href || '',
+        x: Math.round(event.clientX),
+        y: Math.round(event.clientY),
+        viewportWidth: typeof innerWidth === 'number' ? innerWidth : 0,
+        viewportHeight: typeof innerHeight === 'number' ? innerHeight : 0
       }
     })
   }
