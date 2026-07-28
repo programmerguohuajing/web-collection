@@ -1,18 +1,17 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { filters, queryFromFilters, refreshAll, resetPages } from '../dashboard.js'
+import { filters, resetPages } from '../dashboard.js'
+import { useFilterStore } from '../stores/filters.js'
 
 const props = defineProps({
   fields: { type: Array, default: () => [] }
 })
+const emit = defineEmits(['search'])
 
-const route = useRoute()
-const router = useRouter()
+const store = useFilterStore()
 const searching = ref(false)
-const globalFields = ['range', 'appId', 'release', 'keyword']
+const globalFieldNames = ['appId', 'release', 'range']
 const visibleFields = computed(() => props.fields)
-const queryFields = computed(() => [...new Set([...globalFields, ...props.fields])])
 
 const fieldMap = {
   traceId: { label: 'Trace ID' },
@@ -27,22 +26,18 @@ const fieldMap = {
   status: { label: '错误状态' }
 }
 
-async function search() {
-  searching.value = true
-  try {
-    resetPages()
-    const query = Object.fromEntries(new URLSearchParams(queryFromFilters({}, queryFields.value)))
-    const target = router.resolve({ path: route.path, query })
-    if (target.fullPath === route.fullPath) await refreshAll()
-    else await router.replace({ path: route.path, query })
-  } finally {
-    searching.value = false
-  }
+function search() {
+  resetPages()
+  emit('search')
 }
 
-async function reset() {
-  for (const name of visibleFields.value) filters.value[name] = name === 'range' ? [] : ''
-  await search()
+function reset() {
+  for (const name of visibleFields.value) {
+    if (name === 'range') store.range = []
+    else if (name === 'release' || name === 'appId') store[name] = ''
+    else filters.value[name] = ''
+  }
+  search()
 }
 </script>
 
@@ -50,7 +45,7 @@ async function reset() {
   <el-card v-if="visibleFields.length" shadow="never" class="query-card">
     <el-form class="ruoyi-query" label-width="82px" @submit.prevent="search">
       <el-form-item v-for="name in visibleFields" :key="name" :label="fieldMap[name]?.label">
-        <el-date-picker v-if="name === 'range'" v-model="filters.range" type="datetimerange" value-format="x" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" />
+        <el-date-picker v-if="name === 'range'" v-model="store.range" type="datetimerange" value-format="x" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" />
         <el-select v-else-if="name === 'type'" v-model="filters.type" placeholder="请选择" clearable>
           <el-option label="错误" value="error" />
           <el-option label="性能" value="perf" />
@@ -62,6 +57,7 @@ async function reset() {
           <el-option label="Resolved" value="resolved" />
           <el-option label="Regression" value="regression" />
         </el-select>
+        <el-input v-else-if="name === 'release'" v-model="store.release" placeholder="全部版本" clearable />
         <el-input v-else v-model="filters[name]" :placeholder="`请输入${fieldMap[name]?.label || ''}`" clearable />
       </el-form-item>
       <el-form-item class="query-actions">

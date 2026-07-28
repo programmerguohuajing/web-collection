@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { useFilterStore } from './stores/filters.js'
 
 const apiBase = import.meta.env?.VITE_API_BASE || ''
 
@@ -21,10 +22,9 @@ export const issuePager = ref({ page: 1, pageSize: 10, total: 0 })
 export const replayPager = ref({ page: 1, pageSize: 10, total: 0 })
 const replayCache = new Map()
 
+// 页面级搜索条件（应用 / 版本 / 时间范围属于顶部全局条件，见 stores/filters.js）。
+// 这些字段在路由切换时会被重置（resetPageFilters），因此不会跨页面缓存。
 export const filterDefaults = {
-  range: [],
-  appId: '',
-  release: '',
   traceId: '',
   path: '',
   userId: '',
@@ -51,10 +51,17 @@ export function rankBehavior(source = {}) {
 }
 
 export function queryFromFilters(extra = {}, names = null) {
-  const f = filters.value
+  const store = useFilterStore()
+  const f = {
+    appId: store.appId,
+    release: store.release,
+    range: store.range,
+    ...filters.value,
+    ...extra
+  }
   const params = new URLSearchParams()
   const [startTime, endTime] = f.range || []
-  const values = { ...f, startTime, endTime, ...extra }
+  const values = { ...f, startTime, endTime }
   delete values.range
   const allowed = names ? new Set([...names.filter(name => name !== 'range'), 'startTime', 'endTime']) : null
   Object.entries(values).forEach(([name, value]) => {
@@ -64,29 +71,15 @@ export function queryFromFilters(extra = {}, names = null) {
   return params.toString()
 }
 
-export function setFiltersFromRoute(query = {}, preserve = false) {
-  const current = preserve
-    ? {
-        ...filterDefaults,
-        range: filters.value.range,
-        appId: filters.value.appId,
-        release: filters.value.release,
-        keyword: filters.value.keyword
-      }
-    : filterDefaults
-  filters.value = {
-    ...current,
-    range: query.startTime && query.endTime ? [Number(query.startTime), Number(query.endTime)] : current.range,
-    appId: query.appId ?? current.appId,
-    release: query.release ?? current.release,
-    traceId: query.traceId ?? current.traceId,
-    path: query.path ?? current.path,
-    userId: query.userId ?? current.userId,
-    userName: query.userName ?? current.userName,
-    userPhone: query.userPhone ?? current.userPhone,
-    keyword: query.keyword ?? current.keyword,
-    type: query.type ?? current.type,
-    status: query.status ?? current.status
+/** 路由切换时重置页面级搜索条件，确保关键字等不会跨页面缓存。 */
+export function resetPageFilters() {
+  filters.value = { ...filterDefaults }
+}
+
+/** 仅用于“点击跳转并在目标页预填搜索”的一次性深链（如从概览跳转到链路追踪检索 traceId）。不读取顶部全局条件字段。 */
+export function applyRoutePrefill(query = {}) {
+  for (const name of ['traceId', 'path', 'userId', 'userName', 'userPhone', 'keyword', 'type', 'status']) {
+    if (query[name] != null && query[name] !== '') filters.value[name] = query[name]
   }
 }
 
