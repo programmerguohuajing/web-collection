@@ -1,6 +1,8 @@
-# Web Collection SDK 指标说明
+> English documentation. [中文文档](./README.zh-CN.md)
 
-## 接入
+# Web Collection SDK
+
+## Getting Started
 
 ```js
 import { createEys } from '@web-collection/sdk'
@@ -10,22 +12,22 @@ const eys = createEys({
   appId: 'mall-web',
   release: '1.0.0',
   userId: '10001',
-  userName: '张三',
+  userName: 'Zhang San',
   userPhone: '13800000000'
 })
 ```
 
-登录后补用户信息：
+Set user info after login:
 ```js
-eys.setUser({ id: '10001', name: '张三', phone: '13800000000' })
+eys.setUser({ id: '10001', name: 'Zhang San', phone: '13800000000' })
 ```
 
-业务首屏数据渲染完成后主动标记“页面数据就绪”：
+Mark "page data ready" once the first-screen data has finished rendering:
 ```js
 eys.markPageReady()
 ```
 
-关闭模块：
+Disable modules:
 ```js
 createEys({
   behavior: false,
@@ -35,15 +37,15 @@ createEys({
 })
 ```
 
-开启 `console: true` 后，会采集 `console.log/info/warn/error`，并保留最近 20 条控制台面包屑（单条最多 500 字符），用于检索及还原报错上下文。该能力默认关闭，避免意外采集业务日志中的敏感数据；可用 `consoleLevels` 限定级别。
+Enabling `console: true` captures `console.log/info/warn/error` and keeps the latest 20 console breadcrumbs (up to 500 characters each), used for search and reconstructing error context. This is disabled by default to avoid accidentally capturing sensitive data in application logs; use `consoleLevels` to limit the captured levels.
 
-同时可主动记录结构化日志：
+You can also record structured logs proactively:
 
 ```js
-eys.log('info', '订单提交', { orderId: 'SO10001' })
+eys.log('info', 'order submitted', { orderId: 'SO10001' })
 ```
 
-请求链路默认开启，同源 Fetch/XHR 会携带标准 `traceparent`。跨域服务必须显式加入可信列表：
+Request tracing is enabled by default; same-origin Fetch/XHR requests carry the standard `traceparent`. Cross-origin services must be explicitly added to a trusted list:
 
 ```js
 createEys({
@@ -52,7 +54,7 @@ createEys({
 })
 ```
 
-TypeScript 项目可直接导入类型：
+TypeScript projects can import types directly:
 ```ts
 import { createEys, type EysClient, type EysOptions } from '@web-collection/sdk'
 
@@ -66,7 +68,7 @@ const eys: EysClient = createEys(options)
 eys.track('submit_order', { orderId: 'SO202607100001' })
 ```
 
-采集治理与上下文：
+Collection governance and context:
 ```js
 const eys = createEys({
   environment: 'production',
@@ -84,9 +86,9 @@ eys.setConsent('denied')
 eys.setEnabled(false)
 ```
 
-`consent` 默认是 `granted`，拒绝后事件不会进入队列或发起请求。内置脱敏先于 `beforeSend` 执行，请勿在回调中恢复敏感数据。
+`consent` defaults to `granted`; once denied, events are neither queued nor sent. Built-in redaction runs before `beforeSend`; do not restore sensitive data inside the callback.
 
-## 手动埋点
+## Manual Tracking
 
 ```js
 eys.track('submit_order', {
@@ -95,79 +97,79 @@ eys.track('submit_order', {
 })
 ```
 
-入库字段：
-| 字段 | 说明 |
+Stored fields:
+| Field | Description |
 | --- | --- |
 | `type` | `track` |
-| `name` | 自定义事件名 |
-| `props` | 自定义业务参数 |
+| `name` | Custom event name |
+| `props` | Custom business parameters |
 
-## 行为指标
+## Behavior Metrics
 
-默认由 `behavior: true` 开启。
-| 指标 | 触发时机 | 主要 props |
+Enabled by default via `behavior: true`.
+| Metric | Trigger | Main props |
 | --- | --- | --- |
-| `pv` | SDK 初始化后页面访问 | `referrer` |
-| `page_leave` | 页面隐藏时 | `stayTime` |
-| `click` | 点击 `data-track/button/a/input/textarea/select/[role=button]` | `elementLabel`、`elementType`、`elementId`、`elementText`、`elementHref` |
-| `scroll` | 页面滚动停止约 500ms 后 | `depth`、`maxDepth` |
-| `pushState` | SPA 调用 `history.pushState` | `from`、`to` |
-| `replaceState` | SPA 调用 `history.replaceState` | `from`、`to` |
-| `popstate` | 浏览器前进后退 | `from`、`to` |
-| `hashchange` | hash 路由变化 | `from`、`to` |
-| `exposure` | 元素进入视口 50% 且停留约 1 秒 | 元素 `tag/id/className/text/data-track-*` |
+| `pv` | Page view after SDK init | `referrer` |
+| `page_leave` | When the page is hidden | `stayTime` |
+| `click` | Click on `data-track/button/a/input/textarea/select/[role=button]` | `elementLabel`, `elementType`, `elementId`, `elementText`, `elementHref` |
+| `scroll` | About 500ms after scrolling stops | `depth`, `maxDepth` |
+| `pushState` | SPA calls `history.pushState` | `from`, `to` |
+| `replaceState` | SPA calls `history.replaceState` | `from`, `to` |
+| `popstate` | Browser forward/back navigation | `from`, `to` |
+| `hashchange` | Hash route change | `from`, `to` |
+| `exposure` | Element enters viewport at 50% and stays ~1s | element `tag/id/className/text/data-track-*` |
 
-可选高噪声行为默认关闭：
+Optional high-noise behaviors are disabled by default:
 ```js
 createEys({ formTracking: true, rageClick: true, deadClick: true, interactionTracking: true })
 ```
 
-其中 `dead_click` 需要元素增加 `data-track-dead-click`，不会采集表单值或剪贴板内容。
+`dead_click` requires adding `data-track-dead-click` to the element; form values and clipboard content are never captured.
 
-业务事务：
+Business transaction:
 ```js
 const transaction = eys.startTransaction('checkout', { page: 'order' })
 transaction.setData({ step: 'pay' })
 transaction.finish({ status: 'success' })
 ```
 
-曝光用法：
+Exposure usage:
 ```html
 <section data-track-exposure data-track-name="home_banner">
   ...
 </section>
 ```
 
-点击元素可加业务属性：
+Add business attributes to clickable elements:
 
 ```html
-<button data-track data-track-action="save">保存</button>
+<button data-track data-track-action="save">Save</button>
 ```
 
-## 性能指标
+## Performance Metrics
 
-默认自动采集。
-| 指标 | 含义 | value |
+Collected automatically by default.
+| Metric | Meaning | value |
 | --- | --- | --- |
-| `ttfb` | 首字节时间 | `navigation.responseStart` |
+| `ttfb` | Time to First Byte | `navigation.responseStart` |
 | `fp` | First Paint | `startTime` |
 | `fcp` | First Contentful Paint | `startTime` |
 | `lcp` | Largest Contentful Paint | `startTime` |
 | `fid` | First Input Delay | `processingStart - startTime` |
-| `inp` | 交互延迟 | `duration` |
-| `cls` | 累积布局偏移 | 会话窗口最大 CLS |
-| `longtask` | 长任务 | `duration` |
-| `resource` | 静态资源加载耗时 | `duration` |
+| `inp` | Interaction to Next Paint | `duration` |
+| `cls` | Cumulative Layout Shift | max CLS in the session window |
+| `longtask` | Long task | `duration` |
+| `resource` | Static resource load time | `duration` |
 
-`resource` props：
-| 字段 | 说明 |
+`resource` props:
+| Field | Description |
 | --- | --- |
-| `name` | 资源 URL |
-| `initiatorType` | 资源类型，如 `img/script/css/fetch` |
-| `transferSize` | 传输大小 |
-| `ttfb` | 资源响应开始时间 |
+| `name` | Resource URL |
+| `initiatorType` | Resource type, e.g. `img/script/css/fetch` |
+| `transferSize` | Transfer size |
+| `ttfb` | Resource response start time |
 
-自定义性能指标：
+Custom performance metric:
 ```js
 const start = performance.now()
 await renderReport()
@@ -176,25 +178,25 @@ eys.metric('report_render', performance.now() - start, {
 })
 ```
 
-## 请求指标
+## Request Metrics
 
-默认由 `requests: true` 开启，会采集 `fetch`、`XMLHttpRequest`、`WebSocket`、`EventSource`。
+Enabled by default via `requests: true`; captures `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`.
 ### Fetch
 
 ```js
 await fetch('/api/orders')
 ```
 
-| 字段 | 说明 |
+| Field | Description |
 | --- | --- |
 | `metric` | `fetch` |
-| `value` | 请求耗时 |
-| `props.url` | 请求地址 |
-| `props.method` | 请求方法 |
-| `props.status` | 状态码 |
-| `props.ok` | 是否 2xx |
+| `value` | Request duration |
+| `props.url` | Request URL |
+| `props.method` | HTTP method |
+| `props.status` | Status code |
+| `props.ok` | Whether 2xx |
 
-失败时会上报 `FetchError`。
+`FetchError` is reported on failure.
 ### XHR
 
 ```js
@@ -203,13 +205,13 @@ xhr.open('GET', '/api/profile')
 xhr.send()
 ```
 
-| 字段 | 说明 |
+| Field | Description |
 | --- | --- |
 | `metric` | `xhr` |
-| `value` | 请求耗时 |
-| `props.url` | 请求地址 |
-| `props.method` | 请求方法 |
-| `props.status` | 状态码 |
+| `value` | Request duration |
+| `props.url` | Request URL |
+| `props.method` | HTTP method |
+| `props.status` | Status code |
 
 ### WebSocket
 
@@ -218,12 +220,12 @@ const ws = new WebSocket('wss://example.com/socket')
 ws.send(JSON.stringify({ type: 'ping' }))
 ```
 
-| 阶段 | 说明 |
+| Phase | Description |
 | --- | --- |
-| `phase: open` | 建连耗时 |
-| `phase: close` | 连接持续时长、关闭码、消息数、字节数 |
+| `phase: open` | Connection setup time |
+| `phase: close` | Connection duration, close code, message count, byte count |
 
-失败时会上报 `WebSocketError`。
+`WebSocketError` is reported on failure.
 ### SSE
 
 ```js
@@ -233,25 +235,25 @@ source.addEventListener('message', event => {
 })
 ```
 
-| 阶段 | 说明 |
+| Phase | Description |
 | --- | --- |
-| `phase: open` | 建连耗时 |
-| `phase: close` | 连接持续时长、消息数、字节数 |
+| `phase: open` | Connection setup time |
+| `phase: close` | Connection duration, message count, byte count |
 
-失败时会上报 `SseError`。
-## 错误指标
+`SseError` is reported on failure.
+## Error Metrics
 
-默认自动采集。
-| 错误 | 触发时机 | 主要 props |
+Collected automatically by default.
+| Error | Trigger | Main props |
 | --- | --- | --- |
-| `Error` | JS 运行时错误 | `source`、`line`、`column` |
-| `ResourceError` | script/link/img 等资源加载失败 | `tag`、`elementPath` |
-| `UnhandledRejection` | 未捕获 Promise 异常 | `name` |
-| `FetchError` | fetch 请求异常 | `source` |
-| `WebSocketError` | WebSocket 异常 | `source`、`readyState` |
-| `SseError` | EventSource 异常 | `source`、`readyState` |
+| `Error` | JS runtime error | `source`, `line`, `column` |
+| `ResourceError` | script/link/img resource load failure | `tag`, `elementPath` |
+| `UnhandledRejection` | Uncaught Promise exception | `name` |
+| `FetchError` | fetch request exception | `source` |
+| `WebSocketError` | WebSocket exception | `source`, `readyState` |
+| `SseError` | EventSource exception | `source`, `readyState` |
 
-手动上报错误：
+Report errors manually:
 ```js
 try {
   await submit()
@@ -260,9 +262,9 @@ try {
 }
 ```
 
-## 会话回放
+## Session Replay
 
-默认由 `replay: true` 开启，基于 rrweb。
+Enabled by default via `replay: true`, based on rrweb.
 ```js
 const eys = createEys({
   replay: true,
@@ -272,20 +274,20 @@ const eys = createEys({
 })
 ```
 
-| 配置 | 说明 |
+| Config | Description |
 | --- | --- |
-| `replaySegmentByRoute` | 路由切换时结束当前录制并开始新录制 |
-| `replayMaxDuration` | 单段最长录制时间 |
-| `replayBatchSize` | 回放事件批量上报大小 |
-| `replayOptions` | 透传 rrweb `record()` 参数 |
+| `replaySegmentByRoute` | End the current recording and start a new one on route change |
+| `replayMaxDuration` | Maximum recording duration per segment |
+| `replayBatchSize` | Replay event batch upload size |
+| `replayOptions` | Pass-through to rrweb `record()` options |
 
-敏感区域：
+Sensitive areas:
 ```html
-<div class="eys-block">不录制这个区域</div>
+<div class="eys-block">This area will not be recorded</div>
 <input class="eys-ignore" />
 ```
 
-手动控制：
+Manual control:
 ```js
 eys.startReplay()
 eys.addReplayEvent('checkout_step', { step: 'pay' })
@@ -293,46 +295,46 @@ eys.takeReplaySnapshot()
 eys.stopReplay()
 ```
 
-## 通用字段
+## Common Fields
 
-每条事件都会带上：
-| 字段 | 说明 |
+Every event carries:
+| Field | Description |
 | --- | --- |
-| `sdkVersion` | SDK 版本 |
-| `environment` | 运行环境，如 production/test |
-| `source` | `auto`、`manual` 或 `platform` |
-| `context` | 已脱敏的全局/事件上下文 |
-| `appId` | 应用标识 |
-| `release` | 发布版本 |
-| `userId/userName/userPhone` | 用户信息 |
-| `sessionId` | 会话 ID |
-| `deviceId` | 设备 ID |
-| `traceId/spanId` | 请求与业务链路标识（可选） |
-| `url/path/title/referrer` | 页面信息 |
-| `userAgent` | 浏览器 UA |
-| `ts` | 事件时间戳 |
+| `sdkVersion` | SDK version |
+| `environment` | Runtime environment, e.g. production/test |
+| `source` | `auto`, `manual` or `platform` |
+| `context` | Redacted global/event context |
+| `appId` | Application identifier |
+| `release` | Release version |
+| `userId/userName/userPhone` | User info |
+| `sessionId` | Session ID |
+| `deviceId` | Device ID |
+| `traceId/spanId` | Request and business trace identifiers (optional) |
+| `url/path/title/referrer` | Page info |
+| `userAgent` | Browser UA |
+| `ts` | Event timestamp |
 
-## 队列与上报
-| 配置 | 默认值 | 说明 |
+## Queue and Reporting
+| Config | Default | Description |
 | --- | --- | --- |
-| `batchSize` | `10` | 普通事件批量上报条数 |
-| `flushInterval` | `5000` | 定时上报间隔 |
-| `maxQueue` | `200` | 本地队列最大缓存 |
-| `maxRetries` | `3` | 失败重试次数 |
-| `sampleRate` | `1` | 采样率 |
+| `batchSize` | `10` | Batch size for normal event reporting |
+| `flushInterval` | `5000` | Interval for scheduled reporting |
+| `maxQueue` | `200` | Max local queue cache |
+| `maxRetries` | `3` | Retry count on failure |
+| `sampleRate` | `1` | Sample rate |
 
-手动刷新：
+Manual flush:
 ```js
 eys.flush()
 ```
 
-## 小程序与 App 接入
+## Mini Program and App Integration
 
-非 Web 运行时使用独立入口 `@web-collection/sdk/platform`，不会加载 DOM、rrweb、`window` 或 `localStorage`。同一构建产物也可通过 `miniapp`、`uni-app`、`taro`、`react-native` 子路径导入。
+For non-Web runtimes, use the standalone entry `@web-collection/sdk/platform`, which does not load DOM, rrweb, `window` or `localStorage`. The same build artifact can also be imported via the `miniapp`, `uni-app`, `taro` and `react-native` subpaths.
 
-### 微信、支付宝、抖音及其他小程序
+### WeChat, Alipay, Douyin and other Mini Programs
 
-SDK 会自动识别 `wx`、`my`、`tt`、`swan`、`qq`、`ks`、`jd`。在 `app.js` 中创建实例，并用 `instrumentApp`、`instrumentPage` 包装原有配置：
+The SDK automatically detects `wx`, `my`, `tt`, `swan`, `qq`, `ks` and `jd`. Create the instance in `app.js` and wrap the original config with `instrumentApp` and `instrumentPage`:
 
 ```js
 import { createMiniProgramEys } from '@web-collection/sdk/miniapp'
@@ -358,7 +360,7 @@ const request = eys.wrapRequest(wx.request.bind(wx))
 request({ url: 'https://api.example.com/orders' })
 ```
 
-支付宝小程序传入 `my`，抖音小程序传入 `tt`；其他兼容小程序可显式传入对应全局 API：
+Pass `my` for the Alipay mini program and `tt` for the Douyin mini program; for other compatible mini programs, explicitly pass the corresponding global API:
 
 ```js
 const eys = createMiniProgramEys(options, my)
@@ -377,7 +379,7 @@ export const eys = createUniAppEys({
 
 export const request = eys.wrapRequest(uni.request.bind(uni))
 
-// 在页面 onShow/onHide 中记录页面生命周期
+// Record page lifecycle in onShow/onHide
 eys.pageView('/pages/order/list')
 eys.pageLeave('/pages/order/list', 3200)
 ```
@@ -399,7 +401,7 @@ export const request = eys.wrapRequest(Taro.request.bind(Taro))
 
 ### React Native
 
-React Native 持久化队列需要传入项目已有的 AsyncStorage 实例，SDK 不强制增加存储依赖：
+The React Native persistence queue requires the project's existing AsyncStorage instance; the SDK does not force an additional storage dependency:
 
 ```ts
 import AsyncStorage from '@react-native-async-storage/async-storage'
@@ -417,9 +419,7 @@ export const eys = createReactNativeEys({
 global.fetch = eys.wrapFetch(global.fetch)
 ```
 
-跨端客户端统一支持 `track`、`behavior`、`metric`、`error`、`pageView`、`pageLeave`、`setUser`、批量队列、失败重试和持久化。小程序与原生 App 没有浏览器 DOM，因此不提供 rrweb 录屏；页面轨迹、点击和业务操作应通过生命周期及 `track` 上报。
+Cross-platform clients uniformly support `track`, `behavior`, `metric`, `error`, `pageView`, `pageLeave`, `setUser`, batch queue, retry on failure and persistence. Mini programs and native apps have no browser DOM, so rrweb screen recording is not provided; page traces, clicks and business operations should be reported via lifecycle hooks and `track`.
 
-平台端同样支持 `setConsent`、`setEnabled`、`setContext`、`addBreadcrumb` 和 `startTransaction`。使用 `instrumentApp` 会记录应用启动、前后台切换，并保留原有生命周期回调。
-
-
+The platform side also supports `setConsent`, `setEnabled`, `setContext`, `addBreadcrumb` and `startTransaction`. Using `instrumentApp` records app launch, foreground/background switches and preserves the original lifecycle callbacks.
 
