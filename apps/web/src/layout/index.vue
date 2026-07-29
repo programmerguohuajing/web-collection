@@ -54,11 +54,7 @@ onMounted(async () => {
 })
 // 路由切换时重置页面级搜索条件，使关键字等不会跨页面缓存；深链参数仅作一次性预填。
 watch(() => route.path, () => {
-  for (const key of Object.keys(filters)) {
-    if (key !== 'appId' && key !== 'release' && key !== 'range') {
-      filters[key] = ''
-    }
-  }
+  resetPageFilters()
   applyRoutePrefill(route.query)
 })
 </script>
