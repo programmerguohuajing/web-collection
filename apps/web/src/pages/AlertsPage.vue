@@ -120,7 +120,7 @@ onMounted(load)
       <el-table-column label="级别" width="90"><template #default="{ row }"><el-tag :type="levelType(row.level)" size="small">{{ row.level }}</el-tag></template></el-table-column>
       <el-table-column label="告警内容" min-width="280">
         <template #default="{ row }">
-          <el-tooltip :content="row.message" placement="top" append-to="body">
+          <el-tooltip :content="row.message" placement="top">
             <span class="cell-ellipsis">{{ row.message }}</span>
           </el-tooltip>
         </template>

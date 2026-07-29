@@ -45,7 +45,7 @@ function sourceLabel(original) {
     <el-table :data="issues" size="small" empty-text="暂无错误">
       <el-table-column label="错误信息" min-width="260">
         <template #default="{ row }">
-          <el-tooltip :content="row.message || '-'" placement="top" append-to="body"><span class="table-ellipsis">{{ row.message || '-' }}</span></el-tooltip>
+          <el-tooltip :content="row.message || '-'" placement="top"><span class="table-ellipsis">{{ row.message || '-' }}</span></el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="类型" width="120">
@@ -54,7 +54,7 @@ function sourceLabel(original) {
       <el-table-column prop="status" label="状态" width="110" />
       <el-table-column label="版本" width="130">
         <template #default="{ row }">
-          <el-tooltip :content="row.release || '-'" placement="top" append-to="body"><span class="table-ellipsis">{{ row.release || '-' }}</span></el-tooltip>
+          <el-tooltip :content="row.release || '-'" placement="top"><span class="table-ellipsis">{{ row.release || '-' }}</span></el-tooltip>
         </template>
       </el-table-column>
       <el-table-column prop="count" label="次数" width="90" />
@@ -63,7 +63,7 @@ function sourceLabel(original) {
       </el-table-column>
       <el-table-column label="源码位置" min-width="220">
         <template #default="{ row }">
-          <el-tooltip :content="sourceLabel(row.original)" placement="top" append-to="body"><span class="table-ellipsis">{{ sourceLabel(row.original) }}</span></el-tooltip>
+          <el-tooltip :content="sourceLabel(row.original)" placement="top"><span class="table-ellipsis">{{ sourceLabel(row.original) }}</span></el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="Trace" min-width="180">
