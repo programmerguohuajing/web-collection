@@ -345,7 +345,7 @@ onMounted(load)
       <el-table :data="channels" border>
         <el-table-column prop="name" label="渠道名称" min-width="150" />
         <el-table-column label="类型" width="120"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
-        <el-table-column label="路由范围" min-width="300"><template #default="{ row }"><el-tooltip :content="routeLabel(row)" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ routeLabel(row) }}</span></el-tooltip></template></el-table-column>
+        <el-table-column label="路由范围" min-width="300"><template #default="{ row }"><el-tooltip :content="routeLabel(row)" placement="top" append-to="body"><span class="table-ellipsis">{{ routeLabel(row) }}</span></el-tooltip></template></el-table-column>
         <el-table-column label="密钥" width="90"><template #default="{ row }"><el-tag :type="row.configured ? 'success' : 'warning'">{{ row.configured ? '已配置' : '未配置' }}</el-tag></template></el-table-column>
         <el-table-column label="最近测试" width="180">
           <template #default="{ row }">
@@ -382,7 +382,7 @@ onMounted(load)
                 <el-table-column prop="attempts" label="尝试次数" width="90" />
                 <el-table-column prop="last_error" label="失败原因" min-width="260">
                   <template #default="{ row: item }">
-                    <el-tooltip v-if="item.last_error" :content="item.last_error" placement="top" :append-to="() => document.body">
+                    <el-tooltip v-if="item.last_error" :content="item.last_error" placement="top" append-to="body">
                       <span class="table-ellipsis">{{ item.last_error }}</span>
                     </el-tooltip>
                     <span v-else>-</span>
@@ -401,7 +401,7 @@ onMounted(load)
         <el-table-column prop="level" label="级别" width="90" />
         <el-table-column prop="message" label="告警内容" min-width="320">
           <template #default="{ row }">
-            <el-tooltip :content="row.message" placement="top" :append-to="() => document.body">
+            <el-tooltip :content="row.message" placement="top" append-to="body">
               <span class="table-ellipsis">{{ row.message }}</span>
             </el-tooltip>
           </template>
