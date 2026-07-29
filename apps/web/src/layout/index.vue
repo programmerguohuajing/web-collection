@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
@@ -53,7 +53,8 @@ onMounted(async () => {
   ;[applications.value] = await Promise.all([api('/api/applications'), refresh()])
 })
 // 路由切换时重置页面级搜索条件，使关键字等不会跨页面缓存；深链参数仅作一次性预填。
-watch(() => route.path, () => {
+watch(() => route.path, async () => {
+  await nextTick()
   resetPageFilters()
   applyRoutePrefill(route.query)
 })
