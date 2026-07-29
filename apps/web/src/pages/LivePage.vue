@@ -10,7 +10,7 @@ const pager = reactive({ page: 1, pageSize: 10, total: 0 })
 const query = reactive({ userId: '', path: '', keyword: '' })
 let pollTimer = 0
 
-function pollLive() {
+async function pollLive() {
   initialLoading.value = true
   try {
     const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
