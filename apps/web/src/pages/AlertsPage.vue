@@ -56,6 +56,7 @@ async function dismiss(row) {
 async function viewDetail(row) {
   if (row.trace_id) router.push({ path: '/traces', query: { traceId: row.trace_id } })
   else if (row.url) router.push({ path: '/errors', query: { path: row.url } })
+  else ElMessage.info('该告警无关联的链路追踪或错误页面')
 }
 
 function metricLabel(metric) {
