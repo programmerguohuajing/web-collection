@@ -42,6 +42,15 @@ onMounted(load)
       <el-table-column prop="count" label="会话数" width="120" align="center">
         <template #default="{ row }">{{ row.count }}</template>
       </el-table-column>
+      <el-table-column label="用户" min-width="200" show-overflow-tooltip>
+        <template #default="{ row }">
+          <template v-if="row.users?.length">
+            <el-tag v-for="u in row.users.slice(0, 3)" :key="u.id" size="small" style="margin-right:4px;margin-bottom:2px">{{ u.name || u.id }}</el-tag>
+            <span v-if="row.users.length > 3" style="color:#999;font-size:12px">+{{ row.users.length - 3 }}</span>
+          </template>
+          <span v-else class="text-muted">-</span>
+        </template>
+      </el-table-column>
     </el-table>
   </el-card>
 </template>
