@@ -194,15 +194,13 @@ export async function getReplay(replayKey) {
   return promise
 }
 
-export async function loadGovernance({ alertPage = 1, alertPageSize = 10, appPage = 1, appPageSize = 10, channelPage = 1, channelPageSize = 10 } = {}) {
-  const [applications, applicationOptions, settings, alerts, channels] = await Promise.all([
+export async function loadGovernance({ appPage = 1, appPageSize = 10 } = {}) {
+  const [applications, applicationOptions, settings] = await Promise.all([
     api(`/api/applications?page=${appPage}&pageSize=${appPageSize}`),
     api('/api/applications'),
-    api('/api/settings'),
-    api(`/api/alerts?page=${alertPage}&pageSize=${alertPageSize}`),
-    api(`/api/alert-channels?page=${channelPage}&pageSize=${channelPageSize}`)
+    api('/api/settings')
   ])
-  return { applications, applicationOptions, settings, alerts, channels }
+  return { applications, applicationOptions, settings }
 }
 
 export async function saveApplication(app) {

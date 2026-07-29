@@ -9,7 +9,7 @@ const rows = ref([])
 async function load() {
   loading.value = true
   try {
-    const suffix = queryFromFilters({ ...query })
+    const suffix = queryFromFilters()
     const data = await api(`/api/analytics/paths?${suffix}`)
     rows.value = Array.isArray(data) ? data : []
   } finally { loading.value = false }
