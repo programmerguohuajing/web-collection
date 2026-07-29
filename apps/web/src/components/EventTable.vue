@@ -119,12 +119,12 @@ function statusType(status) {
         </el-table-column>
         <el-table-column :label="props.title?.includes('错误') ? '错误信息' : behaviorTable ? '详情' : '名称'" min-width="220">
           <template #default="{ row }">
-            <span v-if="behaviorTable" class="table-ellipsis" :title="behaviorDetailLabel(row)">{{ behaviorDetailLabel(row) }}</span>
-            <span v-else class="table-ellipsis" :title="nameLabel(row)">{{ nameLabel(row) }}</span>
+            <el-tooltip v-if="behaviorTable" :content="behaviorDetailLabel(row)" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ behaviorDetailLabel(row) }}</span></el-tooltip>
+            <el-tooltip v-else :content="nameLabel(row)" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ nameLabel(row) }}</span></el-tooltip>
           </template>
         </el-table-column>
         <el-table-column v-if="performanceTable" label="请求地址" min-width="300">
-          <template #default="{ row }"><span class="table-ellipsis" :title="requestLabel(row, 'url')">{{ requestLabel(row, 'url') }}</span></template>
+          <template #default="{ row }"><el-tooltip :content="requestLabel(row, 'url')" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ requestLabel(row, 'url') }}</span></el-tooltip></template>
         </el-table-column>
         <el-table-column v-if="performanceTable" label="方法" width="90">
           <template #default="{ row }">{{ requestLabel(row, 'method') }}</template>
@@ -136,21 +136,21 @@ function statusType(status) {
           </template>
         </el-table-column>
         <el-table-column v-if="props.title?.includes('错误')" label="源码位置" min-width="220">
-          <template #default="{ row }"><span class="table-ellipsis" :title="formatErrorLocation(row)">{{ formatErrorLocation(row) }}</span></template>
+          <template #default="{ row }"><el-tooltip :content="formatErrorLocation(row)" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ formatErrorLocation(row) }}</span></el-tooltip></template>
         </el-table-column>
         <el-table-column label="页面" min-width="240">
-          <template #default="{ row }"><span class="table-ellipsis" :title="row.path || row.url || '-'">{{ row.path || row.url || '-' }}</span></template>
+          <template #default="{ row }"><el-tooltip :content="row.path || row.url || '-'" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.path || row.url || '-' }}</span></el-tooltip></template>
         </el-table-column>
         <el-table-column v-if="props.showUser" label="用户" min-width="150">
-          <template #default="{ row }"><span class="table-ellipsis" :title="userLabel(row)">{{ userLabel(row) }}</span></template>
+          <template #default="{ row }"><el-tooltip :content="userLabel(row)" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ userLabel(row) }}</span></el-tooltip></template>
         </el-table-column>
         <el-table-column label="版本" width="120">
-          <template #default="{ row }"><span class="table-ellipsis" :title="row.release || '-'">{{ row.release || '-' }}</span></template>
+          <template #default="{ row }"><el-tooltip :content="row.release || '-'" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.release || '-' }}</span></el-tooltip></template>
         </el-table-column>
       </template>
       <template v-else>
         <el-table-column :label="title.includes('资源') ? '资源' : '接口'" min-width="260">
-          <template #default="{ row }"><span class="table-ellipsis" :title="row.name">{{ row.name }}</span></template>
+          <template #default="{ row }"><el-tooltip :content="row.name" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.name }}</span></el-tooltip></template>
         </el-table-column>
         <el-table-column prop="count" label="次数" width="90" />
         <el-table-column label="平均" width="100"><template #default="{ row }">{{ formatDuration(row.avg) }}</template></el-table-column>
