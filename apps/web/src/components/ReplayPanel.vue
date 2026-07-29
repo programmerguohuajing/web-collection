@@ -220,8 +220,6 @@ defineExpose({ play })
           <h2>播放窗口</h2>
         </div>
       </template>
-      <div class="replay-stage" ref="replayEl"></div>
-      <el-alert v-if="replayError" type="error" :title="replayError" show-icon style="margin-top:10px" />
       <div class="replay-controls">
         <el-button type="primary" :disabled="!duration" @click="isPlaying ? pauseReplay() : playReplay()">
           {{ isPlaying ? '暂停' : '播放' }}
@@ -229,6 +227,8 @@ defineExpose({ play })
         <el-slider :model-value="progress" :max="duration || 1" :step="500" :disabled="!duration" @change="seek" />
         <span class="replay-time">{{ formatTime(progress) }} / {{ formatTime(duration) }}</span>
       </div>
+      <div class="replay-stage" ref="replayEl"></div>
+      <el-alert v-if="replayError" type="error" :title="replayError" show-icon style="margin-top:10px" />
     </el-card>
   </section>
 </template>
