@@ -380,7 +380,14 @@ onMounted(load)
                 <el-table-column label="类型" width="110"><template #default="{ row: item }">{{ channelTypeLabel(item.channel_type) }}</template></el-table-column>
                 <el-table-column prop="status" label="状态" width="100" />
                 <el-table-column prop="attempts" label="尝试次数" width="90" />
-                <el-table-column prop="last_error" label="失败原因" min-width="260" show-overflow-tooltip />
+                <el-table-column prop="last_error" label="失败原因" min-width="260">
+                  <template #default="{ row: item }">
+                    <el-tooltip v-if="item.last_error" :content="item.last_error" placement="top" :append-to="() => document.body">
+                      <span class="table-ellipsis" :title="item.last_error">{{ item.last_error }}</span>
+                    </el-tooltip>
+                    <span v-else>-</span>
+                  </template>
+                </el-table-column>
                 <el-table-column label="发送时间" width="180"><template #default="{ row: item }">{{ item.sent_at ? new Date(Number(item.sent_at)).toLocaleString() : '-' }}</template></el-table-column>
                 <el-table-column label="操作" width="80"><template #default="{ row: item }"><el-button v-if="['failed','dead'].includes(item.status)" link type="primary" @click="retryDelivery(item)">重试</el-button></template></el-table-column>
               </el-table>
@@ -392,7 +399,13 @@ onMounted(load)
         <el-table-column prop="app_id" label="应用" width="140" />
         <el-table-column prop="metric" label="指标" width="110" />
         <el-table-column prop="level" label="级别" width="90" />
-        <el-table-column prop="message" label="告警内容" min-width="320" show-overflow-tooltip />
+        <el-table-column prop="message" label="告警内容" min-width="320">
+          <template #default="{ row }">
+            <el-tooltip :content="row.message" placement="top" :append-to="() => document.body">
+              <span class="table-ellipsis" :title="row.message">{{ row.message }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="通知" width="110"><template #default="{ row }"><el-tag :type="alertDeliveryType(row)">{{ alertDeliveryLabel(row) }}</el-tag></template></el-table-column>
       </el-table>
       <el-pagination class="pager" v-model:current-page="alertPager.page" v-model:page-size="alertPager.pageSize" :total="alertPager.total" layout="total, sizes, prev, pager, next" @change="load" />
