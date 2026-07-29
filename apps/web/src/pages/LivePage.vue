@@ -2,45 +2,16 @@
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
-import { api, loading, refreshVersion, resetPageFilters, queryFromFilters } from '../dashboard.js'
+import { api, queryFromFilters } from '../dashboard.js'
 
 const events = ref([])
 const initialLoading = ref(false)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
-const connected = ref(false)
-const ws = ref(null)
 const query = reactive({ userId: '', path: '', keyword: '' })
-let reconnectTimer = 0
 let pollTimer = 0
 
-function connectWs() {
-  try {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${proto}//${location.host}/api/live`
-    ws.value = new WebSocket(wsUrl)
-    ws.value.onopen = () => { connected.value = true }
-    ws.value.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data)
-        if (data.type === 'event') {
-          events.value.unshift(data.event)
-          if (events.value.length > 200) events.value.pop()
-        }
-      } catch {}
-    }
-    ws.value.onclose = () => {
-      connected.value = false
-      reconnectTimer = setTimeout(connectWs, 5000)
-    }
-    ws.value.onerror = () => { ws.value?.close() }
-  } catch {
-    connected.value = false
-  }
-}
-
-let firstPoll = true
-async function pollLive() {
-  if (firstPoll) initialLoading.value = true
+function pollLive() {
+  initialLoading.value = true
   try {
     const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/events?${suffix}&type=error,perf,behavior&_t=${Date.now()}`)
@@ -52,7 +23,7 @@ async function pollLive() {
     }
     if (events.value.length > 200) events.value.splice(200)
   } finally {
-    if (firstPoll) { initialLoading.value = false; firstPoll = false }
+    initialLoading.value = false
   }
 }
 
@@ -60,21 +31,17 @@ function onSearch() { pager.page = 1; pollLive() }
 function togglePause() { /* handled by user */ }
 
 onMounted(() => {
-  resetPageFilters()
-  connectWs()
   pollLive()
   pollTimer = setInterval(pollLive, 10000)
 })
 
 onBeforeUnmount(() => {
-  clearTimeout(reconnectTimer)
   clearInterval(pollTimer)
-  ws.value?.close()
 })
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>实时监控</h1><p>最近事件流与系统状态</p></div><div style="display:flex;align-items:center;gap:8px"><el-tag :type="connected ? 'success' : 'danger'" size="small">{{ connected ? '实时连接中' : '轮询模式' }}</el-tag><el-button @click="pollLive">刷新</el-button></div></div>
+  <div class="page-heading"><div><h1>实时监控</h1><p>最近事件流与系统状态</p></div><div><el-button @click="pollLive">刷新</el-button></div></div>
 
   <el-card shadow="never" class="section panel">
     <SearchPanel :fields="['path', 'userId', 'keyword']" @search="onSearch" />
