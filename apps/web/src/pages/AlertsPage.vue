@@ -9,13 +9,9 @@ const loading = ref(false)
 const rows = ref([])
 const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
-const applications = ref([])
-const query = reactive({ appId: '', level: '', status: '', metric: '', keyword: '' })
+const query = reactive({ level: '', status: '', metric: '', keyword: '' })
 
-onMounted(async () => {
-  try { applications.value = await api('/api/applications') } catch {}
-  load()
-})
+onMounted(load)
 
 async function load() {
   loading.value = true
@@ -49,6 +45,15 @@ async function viewDetail(row) {
   else if (row.url) router.push({ path: '/errors', query: { path: row.url } })
 }
 
+function metricLabel(metric) {
+  const map = { error: '错误', log_error: 'Error 日志', regression: '回归', lcp: 'LCP', inp: 'INP', cls: 'CLS', longtask: '长任务' }
+  return map[metric] || metric || '-'
+}
+function metricType(metric) {
+  if (metric === 'error' || metric === 'log_error' || metric === 'regression') return 'danger'
+  if (metric === 'lcp' || metric === 'inp' || metric === 'cls' || metric === 'longtask') return 'warning'
+  return 'info'
+}
 function levelType(level) {
   return level === 'critical' ? 'danger' : level === 'error' ? 'danger' : level === 'warning' ? 'warning' : 'info'
 }
@@ -59,7 +64,7 @@ function statusType(status) {
 
 function statusLabel(status) {
   const labels = { pending: '待处理', acknowledged: '处理中', resolved: '已解决', dismissed: '已关闭' }
-  return labels[status] || status
+  return labels[status] || status || '-'
 }
 
 function onSearch() { pager.page = 1; load() }
@@ -80,7 +85,6 @@ onMounted(load)
     </template>
 
     <div class="filter-bar">
-      <el-select v-model="query.appId" clearable placeholder="应用" style="width:160px" @change="onSearch"><el-option v-for="a in applications" :key="a.app_id" :label="a.name || a.app_id" :value="a.app_id" /></el-select>
       <el-select v-model="query.level" clearable placeholder="级别" style="width:120px" @change="onSearch">
         <el-option label="严重" value="critical" />
         <el-option label="错误" value="error" />
@@ -108,11 +112,9 @@ onMounted(load)
     <el-table v-loading="loading" :data="rows" border>
       <el-table-column label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column prop="app_id" label="应用" width="140" />
-      <el-table-column prop="metric" label="指标" width="100">
+      <el-table-column label="指标" width="100">
         <template #default="{ row }">
-          <el-tag v-if="row.metric === 'error' || row.metric === 'log_error' || row.metric === 'regression'" type="danger" size="small">{{ row.metric }}</el-tag>
-          <el-tag v-else-if="row.metric === 'lcp' || row.metric === 'inp' || row.metric === 'cls'" type="warning" size="small">{{ row.metric }}</el-tag>
-          <span v-else>{{ row.metric }}</span>
+          <el-tag :type="metricType(row.metric)" size="small">{{ metricLabel(row.metric) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="级别" width="90"><template #default="{ row }"><el-tag :type="levelType(row.level)" size="small">{{ row.level }}</el-tag></template></el-table-column>
