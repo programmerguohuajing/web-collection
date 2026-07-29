@@ -5,10 +5,12 @@ import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
   Histogram, House, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 import { api, error, filters, filterDefaults, loading, refresh, refreshAll, resetPages, applyRoutePrefill } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
+const router = useRouter()
 const store = useFilterStore()
 const applications = ref([])
 const groups = [
@@ -72,7 +74,7 @@ watch(() => route.path, () => {
         <span>统一观测工作台</span>
       </div>
       <el-scrollbar>
-        <el-menu router>
+        <el-menu :default-active="route.path" :active-index="route.path" @select="(index) => router.push(index)">
           <template v-for="group in groups" :key="group.label">
             <div v-if="group.label" class="menu-group">{{ group.label }}</div>
             <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
