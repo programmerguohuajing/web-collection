@@ -205,7 +205,8 @@ onMounted(() => { load(); loadChannels() })
         <el-button type="primary" @click="editChannel()">新增渠道</el-button>
       </div>
     </template>
-    <el-table :data="channels" border empty-text="暂无渠道">
+    <el-table :data="channels" border>
+      <template #empty><el-empty description="暂无渠道" :image-size="60" /></template>
       <el-table-column prop="name" label="名称" min-width="160" />
       <el-table-column label="类型" width="110"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
       <el-table-column prop="endpoint" label="接收端/Webhook 地址" min-width="220" show-overflow-tooltip />
