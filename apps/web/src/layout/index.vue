@@ -1,11 +1,11 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
   Histogram, House, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
-import { api, error, loading, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill } from '../dashboard.js'
+import { api, error, loading, refresh, refreshAll, resetPages, applyRoutePrefill } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
@@ -24,11 +24,6 @@ const groups = [
     { title: '日志平台', path: '/logs', icon: Files },
     { title: '链路追踪', path: '/traces', icon: Connection }
   ] },
-  { label: '产品分析', items: [
-    { title: '漏斗分析', path: '/analytics?tab=funnels', match: 'funnels', icon: Histogram },
-    { title: '用户路径', path: '/analytics?tab=paths', match: 'paths', icon: Aim },
-    { title: '行为分析', path: '/behavior', icon: DataAnalysis }
-  ] },
   { label: '洞察', items: [
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Aim },
@@ -40,7 +35,6 @@ const groups = [
   ] }
 ]
 
-const activeMenu = computed(() => route.path === '/analytics' ? `/analytics?tab=${route.query.tab || 'funnels'}` : route.path)
 
 // 顶部条件切换（应用 / 版本 / 时间范围）统一走 Pinia store，不再写入地址栏。
 async function applyGlobal() {
@@ -60,7 +54,11 @@ onMounted(async () => {
 })
 // 路由切换时重置页面级搜索条件，使关键字等不会跨页面缓存；深链参数仅作一次性预填。
 watch(() => route.path, () => {
-  resetPageFilters()
+  for (const key of Object.keys(filters)) {
+    if (key !== 'appId' && key !== 'release' && key !== 'range') {
+      filters[key] = ''
+    }
+  }
   applyRoutePrefill(route.query)
 })
 </script>
@@ -73,7 +71,7 @@ watch(() => route.path, () => {
         <span>统一观测工作台</span>
       </div>
       <el-scrollbar>
-        <el-menu :default-active="activeMenu" router>
+        <el-menu router>
           <template v-for="group in groups" :key="group.label">
             <div v-if="group.label" class="menu-group">{{ group.label }}</div>
             <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
