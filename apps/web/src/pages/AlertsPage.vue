@@ -34,23 +34,23 @@ async function loadChannels() {
 
 async function acknowledge(row) {
   try {
-    await api(`/api/alerts/${row.id}`, { method: 'PATCH', body: { status: 'acknowledged' } })
+    await api(`/api/alerts/${row.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'acknowledged' }) })
     row.status = 'acknowledged'
-  } catch (e) { /* silent */ }
+  } catch (e) { ElMessage.error(e.message || '操作失败') }
 }
-
 async function resolve(row) {
   try {
-    await api(`/api/alerts/${row.id}`, { method: 'PATCH', body: { status: 'resolved' } })
+    await api(`/api/alerts/${row.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'resolved' }) })
     row.status = 'resolved'
-  } catch (e) { /* silent */ }
+  } catch (e) { ElMessage.error(e.message || '操作失败') }
 }
-
 async function dismiss(row) {
   const confirmed = await ElMessageBox.confirm('确定关闭此告警吗？', '确认', { type: 'warning' }).then(() => true).catch(() => false)
   if (!confirmed) return
-  await api(`/api/alerts/${row.id}`, { method: 'PATCH', body: { status: 'dismissed' } })
-  row.status = 'dismissed'
+  try {
+    await api(`/api/alerts/${row.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'dismissed' }) })
+    row.status = 'dismissed'
+  } catch (e) { ElMessage.error(e.message || '操作失败') }
 }
 
 async function viewDetail(row) {
