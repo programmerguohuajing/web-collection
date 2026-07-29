@@ -48,7 +48,7 @@ watch(refreshVersion, () => { pager.page = 1; load() })
       <el-table-column prop="span_count" label="Span" width="80" />
       <el-table-column prop="error_count" label="错误" width="80" />
       <el-table-column prop="release_name" label="版本" width="120" />
-      <el-table-column label="页面" min-width="260"><template #default="{ row }"><span class="table-ellipsis" :title="row.url">{{ row.url }}</span></template></el-table-column>
+      <el-table-column label="页面" min-width="260"><template #default="{ row }"><el-tooltip :content="row.url" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.url }}</span></el-tooltip></template></el-table-column>
     </el-table>
     <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="pager.page" :page-size="pager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="pager.total" @current-change="value => { pager.page = value; load() }" @size-change="value => { pager.page = 1; pager.pageSize = value; load() }" />
   </el-card>
