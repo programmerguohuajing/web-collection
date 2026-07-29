@@ -186,7 +186,7 @@ async function alertList(env,url){
   return json({items:rows.results.map(mapAlert),total:Number(total.count),page,pageSize})
 }
 async function alertPatch(env,id,input){
-  const now=Date.now(),sets=['status=?','updated_at=?'],vals=[clip(input.status||'acknowledged',32),now]
+  const now=Date.now(),sets=['status=?'],vals=[clip(input.status||'acknowledged',32)]
   if(input.status==='resolved'){sets.push('resolved_at=?');vals.push(now)}
   await env.DB.prepare(`update alert_history set ${sets.join(',')} where id=?`).bind(...vals,id).run()
   return json({ok:true})
