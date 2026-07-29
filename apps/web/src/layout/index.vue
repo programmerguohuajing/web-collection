@@ -1,11 +1,11 @@
 <script setup>
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
   Histogram, House, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
-import { api, error, loading, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill } from '../dashboard.js'
+import { api, error, filters, filterDefaults, loading, refresh, refreshAll, resetPages, applyRoutePrefill } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
@@ -48,14 +48,18 @@ async function applyQuickRange(value) {
 }
 
 onMounted(async () => {
-  resetPageFilters()
+  for (const key of Object.keys(filterDefaults)) {
+    filters.value[key] = filterDefaults[key]
+  }
   applyRoutePrefill(route.query)
   ;[applications.value] = await Promise.all([api('/api/applications'), refresh()])
 })
 // 路由切换时重置页面级搜索条件，使关键字等不会跨页面缓存；深链参数仅作一次性预填。
-watch(() => route.path, async () => {
-  await nextTick()
-  resetPageFilters()
+watch(() => route.path, () => {
+  // 逐个清空而非替换整个 reactive 对象，避免级联重渲染阻塞 RouterView
+  for (const key of Object.keys(filterDefaults)) {
+    filters.value[key] = filterDefaults[key]
+  }
   applyRoutePrefill(route.query)
 })
 </script>
