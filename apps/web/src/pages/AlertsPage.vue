@@ -224,6 +224,7 @@ onMounted(() => { load(); loadChannels() })
         </template>
       </el-table-column>
     </el-table>
+    <el-empty v-if="!channels.length" description="暂无渠道" :image-size="60" style="margin-top:16px" />
   </el-card>
 
   <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑渠道' : '新增渠道'" width="560px" :loading="channelSaving">
