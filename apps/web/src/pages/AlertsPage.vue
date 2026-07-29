@@ -24,13 +24,17 @@ async function load() {
 }
 
 async function acknowledge(row) {
-  await api(`/api/alerts/${row.id}`, { method: 'PATCH', body: { status: 'acknowledged' } })
-  row.status = 'acknowledged'
+  try {
+    await api(`/api/alerts/${row.id}`, { method: 'PATCH', body: { status: 'acknowledged' } })
+    row.status = 'acknowledged'
+  } catch (e) { /* silent */ }
 }
 
 async function resolve(row) {
-  await api(`/api/alerts/${row.id}`, { method: 'PATCH', body: { status: 'resolved' } })
-  row.status = 'resolved'
+  try {
+    await api(`/api/alerts/${row.id}`, { method: 'PATCH', body: { status: 'resolved' } })
+    row.status = 'resolved'
+  } catch (e) { /* silent */ }
 }
 
 async function dismiss(row) {
