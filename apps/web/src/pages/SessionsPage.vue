@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import { api, queryFromFilters, resetPageFilters } from '../dashboard.js'
+import { formatDuration } from '../utils/format.js'
 
 const route = useRoute()
 const loading = ref(false)
