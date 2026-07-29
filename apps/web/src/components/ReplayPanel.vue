@@ -16,6 +16,7 @@ const replayEl = ref(null)
 const isPlaying = ref(false)
 const progress = ref(0)
 const duration = ref(0)
+const replayError = ref('')
 const currentReplayId = ref('')
 const loadingReplayId = ref('')
 let currentReplayer = null
@@ -58,6 +59,7 @@ function fitReplay(width, height) {
 }
 
 async function play(item) {
+  replayError.value = ''
   currentReplayId.value = item.replayId
   loadingReplayId.value = item.replayId
   const events = await props.loadReplay(item.replayId).finally(() => {
@@ -66,27 +68,38 @@ async function play(item) {
   if (currentReplayId.value !== item.replayId) return
   await nextTick()
   destroyPlayer()
-  if (!events.length || !replayEl.value) return
+  if (!events.length || !replayEl.value) {
+    replayError.value = '未获取到回放事件数据'
+    return
+  }
 
-  const meta = events.find((event) => event.type === 4)?.data || {}
+  const validEvents = events.filter(e => e && typeof e.timestamp === 'number')
+  if (!validEvents.length) {
+    replayError.value = '事件数据格式不完整，无法播放'
+    return
+  }
+
+  const meta = validEvents.find((event) => event.type === 4)?.data || {}
   const width = meta.width || replayEl.value.clientWidth || 1024
   const height = meta.height || replayEl.value.clientHeight || 768
 
   try {
-    currentReplayer = new Replayer(events, {
+    currentReplayer = new Replayer(validEvents, {
       root: replayEl.value,
       width,
       height,
       UNSAFE_replayCanvas: true,
       showWarning: false
     })
-    duration.value = Math.max(events[events.length - 1].timestamp - events[0].timestamp, 0)
+    duration.value = Math.max(validEvents[validEvents.length - 1].timestamp - validEvents[0].timestamp, 0)
     progress.value = 0
     fitReplay(width, height)
     currentReplayer.play()
     isPlaying.value = true
     startProgress()
   } catch (error) {
+    console.error('[Replay] failed to start:', error)
+    replayError.value = error.message || '播放初始化失败，数据可能不完整'
     destroyPlayer()
   }
 }
@@ -162,17 +175,17 @@ defineExpose({ play })
       <el-table :data="replays" row-key="replayId" highlight-current-row :current-row-key="currentReplayId" size="small" empty-text="暂无回放">
         <el-table-column label="页面" min-width="260">
           <template #default="{ row }">
-            <span class="table-ellipsis" :title="row.url || row.sessionId || ''">{{ row.url || row.sessionId || '' }}</span>
+            <el-tooltip :content="row.url || row.sessionId || ''" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.url || row.sessionId || '' }}</span></el-tooltip>
           </template>
         </el-table-column>
         <el-table-column v-if="replays.some(row => replayUser(row))" label="用户" min-width="140">
           <template #default="{ row }">
-            <span class="table-ellipsis" :title="replayUser(row) || ''">{{ replayUser(row) || '' }}</span>
+            <el-tooltip :content="replayUser(row) || ''" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ replayUser(row) || '' }}</span></el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="版本" width="120">
           <template #default="{ row }">
-            <span class="table-ellipsis" :title="row.release || ''">{{ row.release || '' }}</span>
+            <el-tooltip :content="row.release || ''" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.release || '' }}</span></el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="结束原因" width="110">
@@ -205,16 +218,23 @@ defineExpose({ play })
       <template #header>
         <div class="panel-head">
           <h2>播放窗口</h2>
-          <small>{{ formatTime(progress) }} / {{ formatTime(duration) }}</small>
         </div>
       </template>
       <div class="replay-stage" ref="replayEl"></div>
+      <el-alert v-if="replayError" type="error" :title="replayError" show-icon style="margin-top:10px" />
       <div class="replay-controls">
         <el-button type="primary" :disabled="!duration" @click="isPlaying ? pauseReplay() : playReplay()">
           {{ isPlaying ? '暂停' : '播放' }}
         </el-button>
         <el-slider :model-value="progress" :max="duration || 1" :step="500" :disabled="!duration" @change="seek" />
+        <span class="replay-time">{{ formatTime(progress) }} / {{ formatTime(duration) }}</span>
       </div>
     </el-card>
   </section>
 </template>
+
+<style scoped>
+.replay-controls { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.replay-controls .el-slider { flex: 1; min-width: 200px; }
+.replay-time { font-family: monospace; font-size: 13px; color: #627085; white-space: nowrap; }
+</style>

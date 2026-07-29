@@ -64,15 +64,15 @@ onMounted(() => { resetPageFilters(); load() })
     <SearchPanel :fields="['userId', 'userName', 'userPhone']" @search="onSearch" />
 
     <el-table v-loading="loading" :data="rows" border @row-click="viewSession" style="cursor:pointer">
-      <el-table-column label="会话 ID" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.session_id }}</template></el-table-column>
-      <el-table-column prop="user_id" label="用户 ID" width="180" show-overflow-tooltip />
+      <el-table-column label="会话 ID" min-width="200"><template #default="{ row }"><el-tooltip :content="row.session_id" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.session_id }}</span></el-tooltip></template></el-table-column>
+      <el-table-column prop="user_id" label="用户 ID" width="180"><template #default="{ row }"><el-tooltip :content="row.user_id" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ row.user_id }}</span></el-tooltip></template></el-table-column>
       <el-table-column prop="user_name" label="用户名" width="120" />
       <el-table-column label="开始时间" width="180"><template #default="{ row }">{{ new Date(Number(row.started_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column label="结束时间" width="180"><template #default="{ row }">{{ new Date(Number(row.ended_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column label="持续时长" width="110"><template #default="{ row }">{{ formatDuration(Number(row.duration)) }}</template></el-table-column>
       <el-table-column label="事件数" width="90" align="center"><template #default="{ row }">{{ row.event_count }}</template></el-table-column>
       <el-table-column label="错误数" width="90" align="center"><template #default="{ row }"><el-tag v-if="row.error_count" type="danger" size="small">{{ row.error_count }}</el-tag><span v-else>-</span></template></el-table-column>
-      <el-table-column prop="paths" label="访问页面" min-width="260" show-overflow-tooltip />
+      <el-table-column prop="paths" label="访问页面" min-width="260"><template #default="{ row }"><el-tooltip :content="(row.paths || []).join(' → ')" placement="top" :append-to="() => document.body"><span class="table-ellipsis">{{ (row.paths || []).join(' → ') }}</span></el-tooltip></template></el-table-column>
     </el-table>
     <el-pagination class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onSearch" @size-change="onSearch" />
   </el-card>
