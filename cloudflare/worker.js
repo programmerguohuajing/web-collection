@@ -226,7 +226,7 @@ async function alert(env,event,issue){
   const recent=await env.DB.prepare('select id from alert_history where app_id=? and metric=? and fingerprint=? and created_at>=?').bind(event.appId,metric,fingerprint,since).first()
   if(recent)return
   const now=Date.now(),level=metric==='regression'?'critical':event.type==='perf'?'warning':'error'
-  const result=await env.DB.prepare('insert into alert_history(app_id,metric,fingerprint,level,value,message,notified,context_json,created_at) values(?,?,?,?,?,?,0,?,?)').bind(event.appId,metric,fingerprint,level,event.value||1,alertMessage(event,metric,threshold),JSON.stringify(alertContext(event,event.type==='perf'?threshold:undefined)),now).run()
+  const result=await env.DB.prepare('insert into alert_history(app_id,metric,fingerprint,level,value,message,threshold,notified,context_json,created_at) values(?,?,?,?,?,?,?,0,?,?)').bind(event.appId,metric,fingerprint,level,event.value||1,alertMessage(event,metric,threshold),threshold,JSON.stringify(alertContext(event,event.type==='perf'?threshold:undefined)),now).run()
   await createAlertDeliveries(env,Number(result.meta.last_row_id))
 }
 export function alertMessage(event,metric,threshold){const page=event.path||event.url||'-';if(event.type==='perf'){const unit=metric==='cls'?'':'ms';return`[Web Collection] ${event.appId} ${metric.toUpperCase()} ${event.value}${unit}，超过阈值 ${threshold}${unit}，页面 ${page}`}return`[Web Collection] ${event.appId} ${event.name||metric}: ${event.message||'未知错误'}，页面 ${page}，版本 ${event.release||'-'}，Trace ${event.traceId||'-'}`}
