@@ -1,16 +1,14 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
   Histogram, House, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
-import { api, error, filters, filterDefaults, loading, refresh, refreshAll, resetPages, applyRoutePrefill } from '../dashboard.js'
+import { api, error, loading, refresh, refreshAll, resetPages, applyRoutePrefill } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
-const router = useRouter()
 const store = useFilterStore()
 const applications = ref([])
 const groups = [
@@ -34,9 +32,8 @@ const groups = [
   { label: '配置', items: [
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
     { title: '采集治理', path: '/governance', icon: Operation }
-  ] }
+  ]}
 ]
-
 
 // 顶部条件切换（应用 / 版本 / 时间范围）统一走 Pinia store，不再写入地址栏。
 async function applyGlobal() {
@@ -50,19 +47,7 @@ async function applyQuickRange(value) {
 }
 
 onMounted(async () => {
-  for (const key of Object.keys(filterDefaults)) {
-    filters.value[key] = filterDefaults[key]
-  }
-  applyRoutePrefill(route.query)
   ;[applications.value] = await Promise.all([api('/api/applications'), refresh()])
-})
-// 路由切换时重置页面级搜索条件，使关键字等不会跨页面缓存；深链参数仅作一次性预填。
-watch(() => route.path, () => {
-  // 逐个清空而非替换整个 reactive 对象，避免级联重渲染阻塞 RouterView
-  for (const key of Object.keys(filterDefaults)) {
-    filters.value[key] = filterDefaults[key]
-  }
-  applyRoutePrefill(route.query)
 })
 </script>
 
@@ -74,15 +59,17 @@ watch(() => route.path, () => {
         <span>统一观测工作台</span>
       </div>
       <el-scrollbar>
-        <el-menu :default-active="route.path" :active-index="route.path" @select="(index) => router.push(index)">
+        <nav class="sidebar-nav">
           <template v-for="group in groups" :key="group.label">
             <div v-if="group.label" class="menu-group">{{ group.label }}</div>
-            <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
-              <el-icon><component :is="item.icon" /></el-icon>
+            <div v-for="item in group.items" :key="item.path"
+                 class="nav-item" :class="{ active: route.path === item.path }"
+                 @click.prevent="$router.push(item.path)">
+              <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
               <span>{{ item.title }}</span>
-            </el-menu-item>
+            </div>
           </template>
-        </el-menu>
+        </nav>
       </el-scrollbar>
     </aside>
 
@@ -104,3 +91,19 @@ watch(() => route.path, () => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.sidebar-nav { padding: 8px 0; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 20px; cursor: pointer; color: #909399;
+  transition: all 0.2s; font-size: 14px; user-select: none;
+}
+.nav-item:hover { color: #fff; background: rgba(255,255,255,0.04); }
+.nav-item.active { color: #409eff; background: rgba(64,158,255,0.1); }
+.nav-item .el-icon { font-size: 18px; }
+.menu-group {
+  padding: 16px 20px 6px; font-size: 12px; color: #606266;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+</style>
