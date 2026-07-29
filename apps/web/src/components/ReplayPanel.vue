@@ -175,17 +175,17 @@ defineExpose({ play })
       <el-table :data="replays" row-key="replayId" highlight-current-row :current-row-key="currentReplayId" size="small" empty-text="暂无回放">
         <el-table-column label="页面" min-width="260">
           <template #default="{ row }">
-            <el-tooltip :content="row.url || row.sessionId || ''" placement="top" append-to="body"><span class="table-ellipsis">{{ row.url || row.sessionId || '' }}</span></el-tooltip>
+            <el-tooltip :content="row.url || row.sessionId || ''" placement="top"><span class="table-ellipsis">{{ row.url || row.sessionId || '' }}</span></el-tooltip>
           </template>
         </el-table-column>
         <el-table-column v-if="replays.some(row => replayUser(row))" label="用户" min-width="140">
           <template #default="{ row }">
-            <el-tooltip :content="replayUser(row) || ''" placement="top" append-to="body"><span class="table-ellipsis">{{ replayUser(row) || '' }}</span></el-tooltip>
+            <el-tooltip :content="replayUser(row) || ''" placement="top"><span class="table-ellipsis">{{ replayUser(row) || '' }}</span></el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="版本" width="120">
           <template #default="{ row }">
-            <el-tooltip :content="row.release || ''" placement="top" append-to="body"><span class="table-ellipsis">{{ row.release || '' }}</span></el-tooltip>
+            <el-tooltip :content="row.release || ''" placement="top"><span class="table-ellipsis">{{ row.release || '' }}</span></el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="结束原因" width="110">

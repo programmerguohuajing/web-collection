@@ -39,12 +39,12 @@ watch(refreshVersion, load)
     <el-table v-loading="loading" :data="rows" border>
       <el-table-column label="时间" width="180"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column>
       <el-table-column prop="name" label="级别" width="90"><template #default="{ row }"><el-tag :type="row.name === 'error' ? 'danger' : row.name === 'warn' ? 'warning' : 'info'">{{ row.name }}</el-tag></template></el-table-column>
-      <el-table-column label="内容" min-width="320"><template #default="{ row }"><el-tooltip :content="row.message" placement="top" append-to="body"><span class="table-ellipsis">{{ row.message }}</span></el-tooltip></template></el-table-column>
+      <el-table-column label="内容" min-width="320"><template #default="{ row }"><el-tooltip :content="row.message" placement="top"><span class="table-ellipsis">{{ row.message }}</span></el-tooltip></template></el-table-column>
       <el-table-column prop="appId" label="应用" width="130" />
       <el-table-column prop="release" label="版本" width="110" />
       <el-table-column prop="userId" label="用户" width="130" />
-      <el-table-column label="会话" min-width="180"><template #default="{ row }"><el-tooltip :content="row.sessionId || ''" placement="top" append-to="body"><span class="table-ellipsis">{{ row.sessionId || '' }}</span></el-tooltip></template></el-table-column>
-      <el-table-column label="Trace" min-width="180"><template #default="{ row }"><el-tooltip :content="row.traceId || ''" placement="top" append-to="body"><span class="table-ellipsis">{{ row.traceId ? (`/traces?traceId=${encodeURIComponent(row.traceId)}`) : '' }}</span></el-tooltip></template></el-table-column>
+      <el-table-column label="会话" min-width="180"><template #default="{ row }"><el-tooltip :content="row.sessionId || ''" placement="top"><span class="table-ellipsis">{{ row.sessionId || '' }}</span></el-tooltip></template></el-table-column>
+      <el-table-column label="Trace" min-width="180"><template #default="{ row }"><el-tooltip :content="row.traceId || ''" placement="top"><span class="table-ellipsis">{{ row.traceId ? (`/traces?traceId=${encodeURIComponent(row.traceId)}`) : '' }}</span></el-tooltip></template></el-table-column>
     </el-table>
     <el-pagination class="pager" v-model:current-page="query.page" v-model:page-size="query.pageSize" :total="total" layout="total, sizes, prev, pager, next" @change="load" />
   </el-card>
