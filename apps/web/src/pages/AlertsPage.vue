@@ -116,7 +116,13 @@ onMounted(load)
         </template>
       </el-table-column>
       <el-table-column label="级别" width="90"><template #default="{ row }"><el-tag :type="levelType(row.level)" size="small">{{ row.level }}</el-tag></template></el-table-column>
-      <el-table-column prop="message" label="告警内容" min-width="280" show-overflow-tooltip />
+      <el-table-column label="告警内容" min-width="280">
+        <template #default="{ row }">
+          <el-tooltip :content="row.message" placement="top" :append-to="() => document.body">
+            <span class="cell-ellipsis">{{ row.message }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="当前值" width="100"><template #default="{ row }">{{ row.value != null ? Number(row.value).toFixed(2) : '-' }}</template></el-table-column>
       <el-table-column prop="threshold" label="阈值" width="100"><template #default="{ row }">{{ row.threshold != null ? Number(row.threshold).toFixed(2) : '-' }}</template></el-table-column>
       <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
@@ -136,4 +142,5 @@ onMounted(load)
 
 <style scoped>
 .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.cell-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 </style>
