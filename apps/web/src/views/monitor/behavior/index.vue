@@ -1,10 +1,10 @@
 <script setup>
 import { ref } from 'vue'
-import { behavior, behaviorEvents, behaviorPager, setPage, setPageSize, tableLoading, refreshAll } from '../../dashboard.js'
-import EventTable from '../../components/EventTable.vue'
-import HeatmapPanel from '../../components/HeatmapPanel.vue'
-import RankPanel from '../../components/RankPanel.vue'
-import SearchPanel from '../../components/SearchPanel.vue'
+import { behavior, behaviorEvents, behaviorPager, setPage, setPageSize, tableLoading, refreshAll } from '../../../dashboard.js'
+import EventTable from '../../../components/EventTable.vue'
+import HeatmapPanel from '../../../components/HeatmapPanel.vue'
+import RankPanel from '../../../components/RankPanel.vue'
+import SearchPanel from '../../../components/SearchPanel.vue'
 
 const activeTab = ref('overview')
 </script>
