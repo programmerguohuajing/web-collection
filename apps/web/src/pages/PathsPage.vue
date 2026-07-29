@@ -5,21 +5,17 @@ import SearchPanel from '../components/SearchPanel.vue'
 
 const loading = ref(false)
 const rows = ref([])
-const total = ref(0)
-const pager = reactive({ page: 1, pageSize: 20, total: 0 })
-const query = reactive({ path: '', userId: '' })
 
 async function load() {
   loading.value = true
   try {
-    const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
+    const suffix = queryFromFilters({ ...query })
     const data = await api(`/api/analytics/paths?${suffix}`)
-    rows.value = data.items || []
-    pager.total = data.total || 0
+    rows.value = Array.isArray(data) ? data : []
   } finally { loading.value = false }
 }
 
-function onSearch() { pager.page = 1; load() }
+function onSearch() { load() }
 
 onMounted(load)
 </script>
@@ -30,7 +26,7 @@ onMounted(load)
   <el-card shadow="never" class="section panel">
     <template #header>
       <div class="panel-head">
-        <div><b>访问路径</b><small style="margin-left:8px">共 {{ total }} 条</small></div>
+        <div><b>访问路径</b><small style="margin-left:8px">共 {{ rows.length }} 条</small></div>
         <el-button @click="load">刷新</el-button>
       </div>
     </template>
@@ -47,7 +43,6 @@ onMounted(load)
         <template #default="{ row }">{{ row.count }}</template>
       </el-table-column>
     </el-table>
-    <el-pagination class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onSearch" @size-change="onSearch" />
   </el-card>
 </template>
 
