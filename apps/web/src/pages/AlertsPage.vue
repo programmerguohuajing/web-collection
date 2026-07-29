@@ -1,8 +1,8 @@
 <script setup>
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, queryFromFilters } from '../dashboard.js'
+import { api, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel } from '../dashboard.js'
 
 const router = useRouter()
 const loading = ref(false)
@@ -10,8 +10,11 @@ const rows = ref([])
 const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
 const query = reactive({ level: '', status: '', metric: '', keyword: '' })
-
-onMounted(load)
+const channels = ref([])
+const channelDialog = ref(false)
+const channelSaving = ref(false)
+const channelTesting = ref(false)
+const channelForm = reactive({ id: '', name: '', type: 'email', endpoint: '', appId: '', levels: 'error', metrics: 'error,log_error,regression', enabled: true, webhookUrl: '', webhookSecret: '', webhookHeaders: '' })
 
 async function load() {
   loading.value = true
@@ -21,6 +24,12 @@ async function load() {
     rows.value = data.items
     pager.total = data.total
   } finally { loading.value = false }
+}
+
+async function loadChannels() {
+  try {
+    channels.value = await api('/api/alert-channels')
+  } catch { channels.value = [] }
 }
 
 async function acknowledge(row) {
@@ -74,7 +83,53 @@ function statusLabel(status) {
 function onSearch() { pager.page = 1; load() }
 function onPageChange() { load() }
 
-onMounted(load)
+// --- 告警渠道 ---
+async function editChannel(row = {}) {
+  Object.assign(channelForm, {
+    id: row.id || '', name: row.name || '', type: row.type || 'email',
+    endpoint: row.endpoint || '', appId: row.app_id || '',
+    levels: row.levels || 'error', metrics: row.metrics || 'error,log_error,regression',
+    enabled: row.enabled ?? true, webhookUrl: row.webhook_url || '', webhookSecret: '', webhookHeaders: row.webhook_headers || ''
+  })
+  channelDialog.value = true
+}
+async function submitChannel() {
+  channelSaving.value = true
+  try {
+    const headers = {}
+    String(channelForm.webhookHeaders || '').split('\n').filter(Boolean).forEach(l => {
+      const i = l.indexOf(':')
+      if (i > 0) headers[l.slice(0, i).trim()] = l.slice(i + 1).trim()
+    })
+    await saveAlertChannel({ ...channelForm, webhookHeaders: headers })
+    ElMessage.success(channelForm.id ? '渠道已更新' : '渠道已添加')
+    channelDialog.value = false
+    loadChannels()
+  } finally { channelSaving.value = false }
+}
+async function toggleChannel(row) {
+  await saveAlertChannel({ ...row, enabled: !row.enabled })
+  row.enabled = !row.enabled
+}
+async function removeChannel(row) {
+  const confirmed = await ElMessageBox.confirm(`确定删除渠道"${row.name}"吗？`, '确认', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  await deleteAlertChannel(row.id)
+  ElMessage.success('渠道已删除')
+  loadChannels()
+}
+async function testChannel(row) {
+  channelTesting.value = true
+  try {
+    await testAlertChannel(row.id)
+    ElMessage.success('测试消息已发送')
+  } finally { channelTesting.value = false }
+}
+function channelTypeLabel(type) {
+  return { email: '邮件', webhook: 'Webhook', sms: '短信', dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信' }[type] || type
+}
+
+onMounted(() => { load(); loadChannels() })
 </script>
 
 <template>
@@ -142,6 +197,53 @@ onMounted(load)
     </el-table>
     <el-pagination class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onPageChange" @size-change="onPageChange" />
   </el-card>
+
+  <el-card shadow="never" class="section panel">
+    <template #header>
+      <div class="panel-head">
+        <div><b>通知渠道</b></div>
+        <el-button type="primary" @click="editChannel()">新增渠道</el-button>
+      </div>
+    </template>
+    <el-table :data="channels" border empty-text="暂无渠道">
+      <el-table-column prop="name" label="名称" min-width="160" />
+      <el-table-column label="类型" width="110"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
+      <el-table-column prop="endpoint" label="接收端/Webhook 地址" min-width="220" show-overflow-tooltip />
+      <el-table-column prop="app_id" label="应用范围" width="140" />
+      <el-table-column label="级别" width="200"><template #default="{ row }">{{ row.levels }}</template></el-table-column>
+      <el-table-column label="指标" width="200"><template #default="{ row }">{{ row.metrics }}</template></el-table-column>
+      <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
+      <el-table-column label="操作" width="240" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" size="small" @click="editChannel(row)">编辑</el-button>
+          <el-button link size="small" @click="testChannel(row)" :loading="channelTesting">测试</el-button>
+          <el-button link :type="row.enabled ? 'warning' : 'success'" size="small" @click="toggleChannel(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+          <el-button link type="danger" size="small" @click="removeChannel(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-card>
+
+  <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑渠道' : '新增渠道'" width="560px" :loading="channelSaving">
+    <el-form :model="channelForm" label-width="110px">
+      <el-form-item label="名称"><el-input v-model="channelForm.name" /></el-form-item>
+      <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','wecom']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
+      <el-form-item label="接收端"><el-input v-model="channelForm.endpoint" /></el-form-item>
+      <el-form-item label="应用 App ID"><el-input v-model="channelForm.appId" placeholder="留空则为全局渠道" /></el-form-item>
+      <el-form-item label="告警级别"><el-input v-model="channelForm.levels" placeholder="逗号分隔，例如 error,warning,critical" /></el-form-item>
+      <el-form-item label="指标"><el-input v-model="channelForm.metrics" placeholder="逗号分隔，例如 error,log_error,regression" /></el-form-item>
+      <el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item>
+      <template v-if="channelForm.type === 'webhook'">
+        <el-form-item label="Webhook URL"><el-input v-model="channelForm.webhookUrl" /></el-form-item>
+        <el-form-item label="Secret"><el-input v-model="channelForm.webhookSecret" type="password" show-password /></el-form-item>
+        <el-form-item label="Headers"><el-input v-model="channelForm.webhookHeaders" type="textarea" :rows="3" placeholder="每行一条，格式：Key: Value" /></el-form-item>
+      </template>
+    </el-form>
+    <template #footer>
+      <el-button @click="channelDialog=false">取消</el-button>
+      <el-button type="primary" @click="submitChannel" :loading="channelSaving">保存</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>

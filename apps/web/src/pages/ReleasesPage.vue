@@ -14,8 +14,8 @@ async function load() {
   try {
     const suffix = queryFromFilters({ page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/analytics/releases?${suffix}`)
-    rows.value = data.items
-    pager.total = data.total
+    rows.value = Array.isArray(data) ? data : []
+    pager.total = rows.value.length
   } finally { loading.value = false }
 }
 
