@@ -23,7 +23,8 @@ export const router = createRouter({
       { path: 'alerts', component: () => import('../pages/AlertsPage.vue'), meta: { title: '告警中心' } },
       { path: 'live', component: () => import('../pages/LivePage.vue'), meta: { title: '实时监控' } },
       { path: 'sessions', component: () => import('../pages/SessionsPage.vue'), meta: { title: '用户会话' } },
-      { path: 'releases', component: () => import('../pages/ReleasesPage.vue'), meta: { title: '发布管理' } }
+      { path: 'releases', component: () => import('../pages/ReleasesPage.vue'), meta: { title: '发布管理' } },
+      { path: 'paths', component: () => import('../pages/PathsPage.vue'), meta: { title: '用户路径' } }
       ]
     }
   ]

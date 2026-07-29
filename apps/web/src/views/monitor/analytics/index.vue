@@ -190,10 +190,6 @@ watch(selectedDashboardId, loadDashboardResults)
       </el-table>
       <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
     </el-tab-pane>
-    <el-tab-pane label="用户路径" name="paths">
-      <PathInsightPanel v-if="capabilities.productAnalyticsV2" :insights="insights" @changed="refreshInsights" />
-      <el-table v-else :data="paths" border><el-table-column prop="path" label="路径" min-width="500" /><el-table-column prop="count" label="会话数" width="120" /></el-table>
-    </el-tab-pane>
     <el-tab-pane label="漏斗分析" name="funnels">
       <el-card class="funnel-builder" shadow="never">
         <template #header>

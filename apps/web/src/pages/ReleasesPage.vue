@@ -1,28 +1,18 @@
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, queryFromFilters, resetPageFilters } from '../dashboard.js'
+import { api, queryFromFilters } from '../dashboard.js'
 
 const route = useRoute()
 const loading = ref(false)
 const rows = ref([])
 const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
-const appId = ref('')
-const applications = ref([])
-const query = reactive({ from: '', to: '' })
-
-onMounted(async () => {
-  try { applications.value = await api('/api/applications') } catch {}
-  appId.value = route.query.appId || ''
-  load()
-})
 
 async function load() {
-  if (!appId.value) { rows.value = []; total.value = 0; return }
   loading.value = true
   try {
-    const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
+    const suffix = queryFromFilters({ page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/analytics/releases?${suffix}`)
     rows.value = data.items
     pager.total = data.total
@@ -33,9 +23,8 @@ function onSearch() { pager.page = 1; load() }
 function formatNum(v) { return v != null ? Number(v).toLocaleString() : '-' }
 function formatMs(v) { return v != null ? Number(v).toFixed(1) + ' ms' : '-' }
 
-watch(() => route.query.appId, val => { if (val) { appId.value = val; load() } })
-
-onMounted(() => { resetPageFilters(); appId.value = route.query.appId || ''; load() })
+watch(() => route.query.appId, () => load())
+onMounted(load)
 </script>
 
 <template>
@@ -48,12 +37,6 @@ onMounted(() => { resetPageFilters(); appId.value = route.query.appId || ''; loa
         <el-button @click="load">刷新</el-button>
       </div>
     </template>
-
-    <div class="filter-bar">
-      <el-select v-model="appId" clearable placeholder="选择应用" style="width:200px" @change="load">
-        <el-option v-for="a in applications" :key="a.app_id" :label="a.name || a.app_id" :value="a.app_id" />
-      </el-select>
-    </div>
 
     <el-table v-loading="loading" :data="rows" border>
       <el-table-column prop="release" label="版本" min-width="160" />
@@ -69,12 +52,5 @@ onMounted(() => { resetPageFilters(); appId.value = route.query.appId || ''; loa
       <el-table-column label="P95 LCP" width="120" align="center"><template #default="{ row }">{{ formatMs(row.lcp) }}</template></el-table-column>
     </el-table>
     <el-pagination class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onSearch" @size-change="onSearch" />
-  </el-card>
-
-  <el-card v-if="rows.length >= 2" shadow="never" class="section panel" style="margin-top:16px">
-    <template #header>
-      <div class="panel-head"><b>版本对比</b><small style="margin-left:8px">选择两个版本进行比较</small></div>
-    </template>
-    <VersionCompare :rows="rows" :app-id="appId" />
   </el-card>
 </template>
