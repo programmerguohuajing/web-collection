@@ -396,7 +396,7 @@ onMounted(load)
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
-        <el-table-column prop="app_id" label="应用" width="140" />
+        <el-table-column prop="appId" label="应用" width="140" />
         <el-table-column prop="metric" label="指标" width="110" />
         <el-table-column prop="level" label="级别" width="90" />
         <el-table-column prop="message" label="告警内容" min-width="320">

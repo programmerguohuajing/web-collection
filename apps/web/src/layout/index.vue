@@ -31,6 +31,7 @@ const groups = [
   ] },
   { label: '洞察', items: [
     { title: '用户会话', path: '/sessions', icon: User },
+    { title: '用户路径', path: '/paths', icon: Aim },
     { title: '发布管理', path: '/releases', icon: Operation }
   ] },
   { label: '配置', items: [

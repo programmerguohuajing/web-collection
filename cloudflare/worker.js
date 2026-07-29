@@ -181,14 +181,14 @@ async function alertList(env,url){
     (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status='sent') delivery_sent,
     (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('failed','dead')) delivery_failed,
     (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('pending','sending')) delivery_pending
-    from alerts a order by created_at desc limit ? offset ?`).bind(pageSize,(page-1)*pageSize).all()
-  const total=await env.DB.prepare('select count(*) count from alerts').first()
+    from alert_history a order by created_at desc limit ? offset ?`).bind(pageSize,(page-1)*pageSize).all()
+  const total=await env.DB.prepare('select count(*) count from alert_history').first()
   return json({items:rows.results.map(mapAlert),total:Number(total.count),page,pageSize})
 }
 async function alertPatch(env,id,input){
   const now=Date.now(),sets=['status=?','updated_at=?'],vals=[clip(input.status||'acknowledged',32),now]
   if(input.status==='resolved'){sets.push('resolved_at=?');vals.push(now)}
-  await env.DB.prepare(`update alerts set ${sets.join(',')} where id=?`).bind(...vals,id).run()
+  await env.DB.prepare(`update alert_history set ${sets.join(',')} where id=?`).bind(...vals,id).run()
   return json({ok:true})
 }
 async function applicationList(env,url){const select=`select app_id,name,platform,owner,enabled,sample_rate,replay_sample_rate,rules_json,created_at,updated_at,(collect_key_hash is not null) collect_key_enabled,(select count(*) from releases r where r.app_id=applications.app_id) release_count from applications order by updated_at desc`;if(!url.searchParams.has('page')&&!url.searchParams.has('pageSize'))return json((await env.DB.prepare(select).all()).results.map(mapApplication));const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare(`${select} limit ? offset ?`).bind(pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from applications').first()]);return json({items:rows.results.map(mapApplication),total:Number(total.count),page,pageSize})}
@@ -223,10 +223,10 @@ async function alert(env,event,issue){
   if(event.type==='log'&&!config.logError||metric==='regression'&&!config.regression||metric==='error'&&(!config.error||Number(issue?.count||1)<Number(config.errorCount||1)))return
   const since=Date.now()-config.cooldownMinutes*60000
   const fingerprint=issue?.fingerprint||await sha256(event.type==='error'?issueKey(event):`${event.metric||event.name||event.type}:${event.url||event.path||''}`)
-  const recent=await env.DB.prepare('select id from alerts where app_id=? and metric=? and fingerprint=? and created_at>=?').bind(event.appId,metric,fingerprint,since).first()
+  const recent=await env.DB.prepare('select id from alert_history where app_id=? and metric=? and fingerprint=? and created_at>=?').bind(event.appId,metric,fingerprint,since).first()
   if(recent)return
   const now=Date.now(),level=metric==='regression'?'critical':event.type==='perf'?'warning':'error'
-  const result=await env.DB.prepare('insert into alerts(app_id,metric,fingerprint,level,value,message,notified,context_json,created_at) values(?,?,?,?,?,?,0,?,?)').bind(event.appId,metric,fingerprint,level,event.value||1,alertMessage(event,metric,threshold),JSON.stringify(alertContext(event,event.type==='perf'?threshold:undefined)),now).run()
+  const result=await env.DB.prepare('insert into alert_history(app_id,metric,fingerprint,level,value,message,notified,context_json,created_at) values(?,?,?,?,?,?,0,?,?)').bind(event.appId,metric,fingerprint,level,event.value||1,alertMessage(event,metric,threshold),JSON.stringify(alertContext(event,event.type==='perf'?threshold:undefined)),now).run()
   await createAlertDeliveries(env,Number(result.meta.last_row_id))
 }
 export function alertMessage(event,metric,threshold){const page=event.path||event.url||'-';if(event.type==='perf'){const unit=metric==='cls'?'':'ms';return`[Web Collection] ${event.appId} ${metric.toUpperCase()} ${event.value}${unit}，超过阈值 ${threshold}${unit}，页面 ${page}`}return`[Web Collection] ${event.appId} ${event.name||metric}: ${event.message||'未知错误'}，页面 ${page}，版本 ${event.release||'-'}，Trace ${event.traceId||'-'}`}
@@ -291,16 +291,16 @@ async function alertDeliveryList(env,url){
 }
 
 async function createAlertDeliveries(env,alertId){
-  const alertRow=await env.DB.prepare('select * from alerts where id=?').bind(alertId).first()
+  const alertRow=await env.DB.prepare('select * from alert_history where id=?').bind(alertId).first()
   if(!alertRow)return
   const alertValue=workerAlert(alertRow),channels=(await env.DB.prepare('select * from alert_channels where enabled=1').all()).results
   const matched=channels.filter(channel=>channelMatches(channel,alertValue))
   if(!channels.length&&env.FEISHU_WEBHOOK_URL){
     try{
       await sendChannel({type:'feishu',config_json:'{}'},{url:env.FEISHU_WEBHOOK_URL},alertValue)
-      await env.DB.prepare('update alerts set notified=1,notify_error=null where id=?').bind(alertId).run()
+      await env.DB.prepare('update alert_history set notified=1,notify_error=null where id=?').bind(alertId).run()
     }catch(error){
-      await env.DB.prepare('update alerts set notified=0,notify_error=? where id=?').bind(alertError(error),alertId).run()
+      await env.DB.prepare('update alert_history set notified=0,notify_error=? where id=?').bind(alertError(error),alertId).run()
     }
     return
   }
@@ -356,7 +356,7 @@ async function queueOrDeliverAlert(env,id){
 
 async function deliverWorkerAlert(env,id,retried=0){
   const row=await env.DB.prepare(`select d.*,c.config_json,c.secret_ciphertext,a.app_id,a.metric,a.level,a.value,a.message,a.context_json,a.created_at alert_created_at
-    from alert_deliveries d left join alert_channels c on c.id=d.channel_id join alerts a on a.id=d.alert_id where d.id=?`).bind(id).first()
+    from alert_deliveries d left join alert_channels c on c.id=d.channel_id join alert_history a on a.id=d.alert_id where d.id=?`).bind(id).first()
   if(!row||['sent','cancelled'].includes(row.status))return
   if(!row.channel_id){
     await env.DB.prepare(`update alert_deliveries set status='cancelled',last_error='渠道不存在',updated_at=? where id=?`).bind(Date.now(),id).run()
@@ -381,7 +381,7 @@ async function deliverWorkerAlert(env,id,retried=0){
 
 async function updateWorkerAlertStatus(env,alertId){
   const stats=await env.DB.prepare(`select count(*) total,sum(case when status='sent' then 1 else 0 end) sent,sum(case when status in ('failed','dead') then 1 else 0 end) failed from alert_deliveries where alert_id=?`).bind(alertId).first()
-  await env.DB.prepare('update alerts set notified=?,notify_error=? where id=?').bind(Number(stats.sent)>0,Number(stats.failed)?`${Number(stats.failed)}/${Number(stats.total)} 个渠道发送失败`:null,alertId).run()
+  await env.DB.prepare('update alert_history set notified=?,notify_error=? where id=?').bind(Number(stats.sent)>0,Number(stats.failed)?`${Number(stats.failed)}/${Number(stats.total)} 个渠道发送失败`:null,alertId).run()
 }
 
 function workerAlert(row){
@@ -390,7 +390,7 @@ function workerAlert(row){
 
 function alertError(error){return String(error?.message||error).slice(0,1000)}
 
-async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['alerts','delete from alerts where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
+async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['alerts','delete from alert_history where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
 async function exportCsv(env,kind,url){const filter=kind==='issues'?issueFilters(url):kind==='replays'?replayFilters(url):filters(url),select=kind==='replays'?'select app_id,session_id,max(user_id) user_id,max(user_name) user_name,max(user_phone) user_phone,min(created_at) first_seen,max(created_at) last_seen,max(url) url,max(release_name) release_name,max(end_reason) end_reason,count(*) event_count from replays':`select * from ${kind}`,group=kind==='replays'?' group by app_id,session_id':'',order=kind==='issues'?'last_seen':kind==='replays'?'last_seen':'ts',rows=(await env.DB.prepare(`${select} ${filter.where}${group} order by ${order} desc limit 10000`).bind(...filter.values).all()).results,keys=rows.length?Object.keys(rows[0]):[],cell=v=>`"${String(v??'').replaceAll('"','""')}"`,csv=rows.length?'\ufeff'+[keys.map(cell).join(','),...rows.map(r=>keys.map(k=>cell(r[k])).join(','))].join('\r\n'):'';return new Response(csv,{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':`attachment; filename="web-collection-${kind}.csv"`}})}
 
 export function filters(url,forcedType,fixed=[],fixedValues=[]){const p=url.searchParams,parts=[...fixed],values=[...fixedValues];for(const [field,key,value] of [['app_id','appId'],['release_name','release'],['type','type',forcedType],['name','name'],['user_id','userId'],['session_id','sessionId']]){const v=value||p.get(key);if(v){const items=field==='type'?String(v).split(',').filter(Boolean):[v];parts.push(items.length>1?`${field} in (${items.map(()=>'?').join(',')})`:`${field}=?`);values.push(...items)}}if(p.get('traceId')){parts.push('trace_id like ?');values.push(`%${p.get('traceId')}%`)}if(p.get('path')){parts.push('(path like ? or url like ?)');values.push(...Array(2).fill(`%${p.get('path')}%`))}if(p.get('startTime')){parts.push('ts>=?');values.push(Number(p.get('startTime')))}if(p.get('endTime')){parts.push('ts<=?');values.push(Number(p.get('endTime')))}if(p.get('keyword')){parts.push('(name like ? or message like ? or props_json like ? or trace_id like ?)');values.push(...Array(4).fill(`%${p.get('keyword')}%`))}return{where:parts.length?`where ${parts.join(' and ')}`:'',values}}
