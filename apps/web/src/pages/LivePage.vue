@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import { api, queryFromFilters } from '../dashboard.js'
