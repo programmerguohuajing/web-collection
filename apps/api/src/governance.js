@@ -48,7 +48,6 @@ export async function listApplications(filters = {}) {
     (a.collect_key_hash is not null) as collect_key_enabled, count(distinct r.release_name)::integer as release_count
     from applications a left join releases r on r.app_id = a.app_id
     group by a.app_id order by a.updated_at desc`
-  if (filters.page == null && filters.pageSize == null) return all(select)
   const [items, total] = await Promise.all([
     all(`${select} limit ? offset ?`, [page.pageSize, (page.page - 1) * page.pageSize]),
     scalar('select count(*) count from applications')
