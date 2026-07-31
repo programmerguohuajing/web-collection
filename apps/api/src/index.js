@@ -136,11 +136,8 @@ app.post('/api/issues/:id/resolve', async (req, res, next) => {
 app.get('/api/applications', async (req, res, next) => {
   try { res.json(await listApplications(req.query)) } catch (err) { next(err) }
 })
-app.put('/api/applications/:appId', async (req, res, next) => {
-  try { res.json(await saveApplication({ ...req.body, appId: req.params.appId })) } catch (err) { next(err) }
-})
-app.delete('/api/applications/:appId', async (req, res, next) => {
-  try { res.json(await deleteApplication(req.params.appId)) } catch (err) { next(err) }
+app.post('/api/applications', async (req, res, next) => {
+  try { res.json(await saveApplication(req.body || {})) } catch (err) { next(err) }
 })
 app.get('/api/applications/:appId/releases', async (req, res, next) => {
   try { res.json(await listReleases(req.params.appId, req.query)) } catch (err) { next(err) }
@@ -150,6 +147,15 @@ app.put('/api/applications/:appId/releases/:release', async (req, res, next) => 
 })
 app.delete('/api/applications/:appId/releases/:release', async (req, res, next) => {
   try { res.json(await deleteRelease(req.params.appId, req.params.release)) } catch (err) { next(err) }
+})
+app.get('/api/applications/:appId', async (req, res, next) => {
+  try { res.json(await listApplications({ appId: req.params.appId, page: 1, pageSize: 1 })) } catch (err) { next(err) }
+})
+app.put('/api/applications/:appId', async (req, res, next) => {
+  try { res.json(await saveApplication({ ...req.body, appId: req.params.appId })) } catch (err) { next(err) }
+})
+app.delete('/api/applications/:appId', async (req, res, next) => {
+  try { res.json(await deleteApplication(req.params.appId)) } catch (err) { next(err) }
 })
 app.get('/api/settings', async (req, res, next) => {
   try { res.json(await getSettings()) } catch (err) { next(err) }
@@ -205,7 +211,7 @@ app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await
 app.get('/api/analytics/heatmap', async (req, res, next) => { try { res.json(await getHeatmap(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/releases/compare', async (req, res, next) => {  try {    const { appId } = req.query    res.json(await getReleaseDetailComparison(appId, req.query.from, req.query.to))  } catch (err) { next(err) }})
+app.get('/api/analytics/releases/compare', async (req, res, next) => { try { const { appId } = req.query; res.json(await getReleaseDetailComparison(appId, req.query.from, req.query.to)) } catch (err) { next(err) } })
 app.get('/api/analytics/event-names', async (req, res, next) => { try { res.json(await listFunnelEventNames(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/event-properties', async (req, res, next) => { try { res.json(await listEventProperties({ ...filters(req.query), eventName: req.query.eventName })) } catch (err) { next(err) } })
 app.post('/api/analytics/insights/query', async (req, res, next) => { try { res.json(await queryEventInsight(req.body || {})) } catch (err) { next(err) } })
