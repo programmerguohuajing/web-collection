@@ -59,7 +59,7 @@ export async function getHeatmap(filters = {}) {
   }
 }
 
-export function listLogs(filters = {}) {
+export async function listLogs(filters = {}) {
   const { where, params } = whereFor({ ...filters, type: 'log' })
   const page = pageOf(filters)
   const [rows, totalRows] = await Promise.all([
@@ -170,7 +170,7 @@ export async function listEventProperties(filters = {}) {
   if (!eventName) throw new Error('事件名称不能为空')
   const { where, params } = whereFor({ ...filters, name: eventName }, ["type in ('behavior','track')"])
   return all(`select key name, count(*)::integer count
-    from events cross join lateral jsonb_object_keys(coalesce(props_json, '{}'::jsonb)) key
+    from events cross join lateral jsonb_object_keys(case when jsonb_typeof(props_json) = 'object' then props_json else '{}'::jsonb end) key
     ${where} group by key order by count desc, key limit 100`, params)
 }
 
