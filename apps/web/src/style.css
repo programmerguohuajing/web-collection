@@ -3,3 +3,4 @@
 @media(max-width:760px){.sidebar-container{position:static;width:100%;height:auto}.sidebar-logo-container span,.sidebar-container .el-menu-item span{display:block}.sidebar-container .el-scrollbar{height:auto}.sidebar-container .el-menu{display:grid;grid-template-columns:repeat(2,1fr)}.menu-group,.sidebar-footer{display:none}.main-container{margin-left:0}.navbar{position:static;display:block;height:auto;padding:10px}.context-selectors{grid-template-columns:repeat(2,1fr);margin-bottom:8px}.global-search{max-width:none}.navbar-actions{position:absolute;right:12px;top:14px}.app-main{padding:12px}.metrics,.grid,.ruoyi-query,.sourcemap-form,.replay-grid,.governance-form{grid-template-columns:1fr}.incident-banner{align-items:flex-start;flex-wrap:wrap}.incident-banner .el-button{width:100%}.chart-legend{display:none}}
 .sidebar-logo-container span{white-space:nowrap}
 .replay-grid{grid-template-columns:1fr}
+.table-cell-tooltip{max-width:720px}

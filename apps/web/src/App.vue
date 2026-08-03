@@ -2,6 +2,7 @@
 const tableConfig = {
   tooltipOptions: {
     appendTo: 'body',
+    popperClass: 'table-cell-tooltip',
     popperOptions: {
       modifiers: [{ name: 'computeStyles', options: { adaptive: false } }]
     }
