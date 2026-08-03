@@ -2,10 +2,9 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel } from '../dashboard.js'
+import { api, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel, pageLoading } from '../dashboard.js'
 
 const router = useRouter()
-const loading = ref(false)
 const rows = ref([])
 const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
@@ -17,13 +16,13 @@ const channelTesting = ref(false)
 const channelForm = reactive({ id: '', name: '', type: 'email', endpoint: '', appId: '', levels: 'error', metrics: 'error,log_error,regression', enabled: true, webhookUrl: '', webhookSecret: '', webhookHeaders: '' })
 
 async function load() {
-  loading.value = true
+  pageLoading.value = true
   try {
     const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/alerts?${suffix}`)
     rows.value = data.items
     pager.total = data.total
-  } finally { loading.value = false }
+  } finally { pageLoading.value = false }
 }
 
 async function loadChannels() {
@@ -169,7 +168,7 @@ onMounted(() => { load(); loadChannels() })
       <el-button type="primary" @click="onSearch">搜索</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="rows" border>
+    <el-table :data="rows" border>
       <el-table-column label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column prop="app_id" label="应用" width="140" />
       <el-table-column label="指标" width="100">

@@ -1,22 +1,21 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
-import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
+import { api, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
 import SearchPanel from '../../../components/SearchPanel.vue'
 
 const traces = ref([])
 const spans = ref([])
 const active = ref(null)
-const loading = ref(false)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
 const spanPager = reactive({ page: 1, pageSize: 10, total: 0 })
 
 async function load() {
-  loading.value = true
+  pageLoading.value = true
   try {
     const data = await api(`/api/traces?${queryFromFilters({ page: pager.page, pageSize: pager.pageSize })}`)
     traces.value = data.items
     Object.assign(pager, { page: data.page, pageSize: data.pageSize, total: data.total })
-  } finally { loading.value = false }
+  } finally { pageLoading.value = false }
 }
 function onSearch() {
   pager.page = 1
@@ -41,7 +40,7 @@ watch(refreshVersion, () => { pager.page = 1; load() })
   <SearchPanel :fields="['traceId', 'range', 'release', 'path']" @search="onSearch" />
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><b>前端链路</b><el-button @click="load">刷新</el-button></div></template>
-    <el-table v-loading="loading" :data="traces" border @row-click="open">
+    <el-table :data="traces" border @row-click="open">
       <el-table-column prop="trace_id" label="Trace ID" min-width="260" />
       <el-table-column label="开始时间" width="180"><template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template></el-table-column>
       <el-table-column prop="duration" label="持续时间(ms)" width="130" />

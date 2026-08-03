@@ -1,9 +1,8 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteApplication, deleteRelease, loadGovernance, loadReleases, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease } from '../../../dashboard.js'
+import { deleteApplication, deleteRelease, loadGovernance, loadReleases, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease } from '../../../dashboard.js'
 
-const loading = ref(false)
 const applications = ref([])
 const applicationOptions = ref([])
 const appPager = reactive({ page: 1, pageSize: 10, total: 0 })
@@ -19,7 +18,7 @@ const newCollectKey = ref('')
 const collectKeyDialog = ref(false)
 
 async function load() {
-  loading.value = true
+  pageLoading.value = true
   try {
     const data = await loadGovernance({
       appPage: appPager.page, appPageSize: appPager.pageSize
@@ -29,7 +28,7 @@ async function load() {
     Object.assign(appPager, { page: data.applications.page, pageSize: data.applications.pageSize, total: data.applications.total })
     Object.assign(settings.retention, data.settings.retention)
     Object.assign(settings.alerts, data.settings.alerts)
-  } finally { loading.value = false }
+  } finally { pageLoading.value = false }
 }
 
 function editApp(row = {}) {
@@ -120,7 +119,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading">
+  <div>
     <el-card shadow="never" class="section panel">
       <template #header><div class="panel-head"><b>应用与采样</b><el-button type="primary" @click="editApp()">新增应用</el-button></div></template>
       <el-table :data="applications" border>

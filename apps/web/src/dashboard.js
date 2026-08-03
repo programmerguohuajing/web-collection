@@ -6,6 +6,7 @@ const apiBase = import.meta.env?.VITE_API_BASE || ''
 export const loading = ref(false)
 export const refreshVersion = ref(0)
 export const tableLoading = ref({ events: false, errorEvents: false, perf: false, behavior: false, issues: false, replays: false })
+export const pageLoading = ref(false)
 export const error = ref('')
 export const summary = ref(null)
 export const events = ref([])
@@ -96,6 +97,7 @@ export async function refreshAll() {
 
 export async function refresh() {
   loading.value = true
+  pageLoading.value = true
   error.value = ''
   try {
     const [summaryData, eventData, errorEventData, issueData, replayData, perfData, behaviorData] = await Promise.all([
@@ -118,6 +120,7 @@ export async function refresh() {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
+    pageLoading.value = false
   }
 }
 
