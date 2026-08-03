@@ -3,11 +3,10 @@ import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
-import { api, queryFromFilters, resetPageFilters } from '../dashboard.js'
+import { api, queryFromFilters, resetPageFilters, pageLoading } from '../dashboard.js'
 import { formatDuration } from '../utils/format.js'
 
 const route = useRoute()
-const loading = ref(false)
 const rows = ref([])
 const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
@@ -16,16 +15,15 @@ const activeSession = ref(null)
 const drawerOpen = ref(false)
 const sessionEvents = ref([])
 const sessionPager = reactive({ page: 1, pageSize: 20, total: 0 })
-const eventLoading = ref(false)
 
 async function load() {
-  loading.value = true
+  pageLoading.value = true
   try {
     const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/analytics/sessions?${suffix}`)
     rows.value = data.items
     pager.total = data.total
-  } finally { loading.value = false }
+  } finally { pageLoading.value = false }
 }
 
 async function viewSession(row) {
@@ -36,13 +34,13 @@ async function viewSession(row) {
 }
 
 async function loadSessionEvents(sessionId) {
-  eventLoading.value = true
+  pageLoading.value = true
   try {
     const suffix = queryFromFilters({}, ['startTime', 'endTime'])
     const data = await api(`/api/analytics/sessions/${encodeURIComponent(sessionId)}?${suffix}&page=${sessionPager.page}&pageSize=${sessionPager.pageSize}`)
     sessionEvents.value = data.items
     sessionPager.total = data.total
-  } finally { eventLoading.value = false }
+  } finally { pageLoading.value = false }
 }
 
 function onSearch() { pager.page = 1; load() }
@@ -64,7 +62,7 @@ onMounted(() => { resetPageFilters(); load() })
 
     <SearchPanel :fields="['userId', 'userName', 'userPhone']" @search="onSearch" />
 
-    <el-table v-loading="loading" :data="rows" border @row-click="viewSession" style="cursor:pointer">
+    <el-table :data="rows" border @row-click="viewSession" style="cursor:pointer">
       <el-table-column label="会话 ID" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.session_id }}</template></el-table-column>
       <el-table-column prop="user_id" label="用户 ID" width="180" show-overflow-tooltip />
       <el-table-column prop="user_name" label="用户名" width="120" />

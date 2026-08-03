@@ -1,22 +1,21 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, queryFromFilters } from '../dashboard.js'
+import { api, queryFromFilters, pageLoading } from '../dashboard.js'
 
 const route = useRoute()
-const loading = ref(false)
 const rows = ref([])
 const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
 
 async function load() {
-  loading.value = true
+  pageLoading.value = true
   try {
     const suffix = queryFromFilters({ page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/analytics/releases?${suffix}`)
     rows.value = Array.isArray(data) ? data : []
     pager.total = rows.value.length
-  } finally { loading.value = false }
+  } finally { pageLoading.value = false }
 }
 
 function onSearch() { pager.page = 1; load() }
@@ -38,7 +37,7 @@ onMounted(load)
       </div>
     </template>
 
-    <el-table v-loading="loading" :data="rows" border>
+    <el-table :data="rows" border>
       <el-table-column prop="release" label="版本" min-width="160" />
       <el-table-column prop="app_id" label="应用" width="180" />
       <el-table-column label="事件数" width="100" align="center"><template #default="{ row }">{{ formatNum(row.events) }}</template></el-table-column>

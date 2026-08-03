@@ -2,7 +2,7 @@
 import { ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, queryFromFilters, refreshVersion } from '../../../dashboard.js'
+import { api, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
 import AnalyticsChart from '../../../components/AnalyticsChart.vue'
 import EventInsightPanel from '../../../components/EventInsightPanel.vue'
 import PathInsightPanel from '../../../components/PathInsightPanel.vue'
@@ -11,7 +11,6 @@ import SearchPanel from '../../../components/SearchPanel.vue'
 const router = useRouter()
 const route = useRoute()
 const tab = ref('sessions')
-const loading = ref(false)
 const sessions = ref([])
 const sessionEvents = ref([])
 const activeSession = ref(null)
@@ -55,7 +54,7 @@ async function refreshInsights() {
   await loadDashboardResults()
 }
 async function load() {
-  loading.value = true
+  pageLoading.value = true
   try {
     capabilities.value = await api('/api/capabilities').catch(() => ({ productAnalyticsV2: false }))
     const query = queryFromFilters()
@@ -71,7 +70,7 @@ async function load() {
     insights.value = insightData
     if (!selectedDashboardId.value && dashboardData[0]) selectedDashboardId.value = dashboardData[0].id
     await loadDashboardResults()
-  } finally { loading.value = false }
+  } finally { pageLoading.value = false }
 }
 
 async function saveFunnel() {
@@ -173,7 +172,7 @@ watch(selectedDashboardId, loadDashboardResults)
     <el-card><span>近 5 分钟事件</span><strong>{{ live.events || 0 }}</strong></el-card>
     <el-card><span>历史会话样本</span><strong>{{ sessionPager.total }}</strong></el-card>
   </div>
-  <el-tabs v-model="tab" v-loading="loading" class="panel section analytics-tabs" @tab-change="changeTab">
+  <el-tabs v-model="tab" class="panel section analytics-tabs" @tab-change="changeTab">
     <el-tab-pane v-if="capabilities.productAnalyticsV2" label="事件分析" name="insights">
       <EventInsightPanel :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
     </el-tab-pane>
