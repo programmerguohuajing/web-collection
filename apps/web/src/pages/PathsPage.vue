@@ -1,18 +1,17 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { api, queryFromFilters } from '../dashboard.js'
+import { api, queryFromFilters, pageLoading } from '../dashboard.js'
 import SearchPanel from '../components/SearchPanel.vue'
 
-const loading = ref(false)
 const rows = ref([])
 
 async function load() {
-  loading.value = true
+  pageLoading.value = true
   try {
     const suffix = queryFromFilters()
     const data = await api(`/api/analytics/paths?${suffix}`)
     rows.value = Array.isArray(data) ? data : []
-  } finally { loading.value = false }
+  } finally { pageLoading.value = false }
 }
 
 function onSearch() { load() }
@@ -33,7 +32,7 @@ onMounted(load)
 
     <SearchPanel :fields="['path', 'userId']" @search="onSearch" />
 
-    <el-table v-loading="loading" :data="rows" border empty-text="暂无路径数据">
+    <el-table :data="rows" border empty-text="暂无路径数据">
       <el-table-column prop="path" label="路径" min-width="500">
         <template #default="{ row }">
           <span class="path-flow">{{ row.path }}</span>

@@ -1,4 +1,6 @@
 <script setup>
+import { pageLoading } from './dashboard.js'
+
 const tableConfig = {
   tableLayout: 'fixed',
   tooltipOptions: {
@@ -25,6 +27,6 @@ const tableConfig = {
 
 <template>
   <el-config-provider :table="tableConfig">
-    <router-view />
+    <router-view v-loading="pageLoading" />
   </el-config-provider>
 </template>

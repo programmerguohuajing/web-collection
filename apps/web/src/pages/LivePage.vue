@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
-import { api, queryFromFilters } from '../dashboard.js'
+import { api, queryFromFilters, pageLoading } from '../dashboard.js'
 
 const events = ref([])
 const initialLoading = ref(false)
@@ -13,7 +13,7 @@ const query = reactive({ userId: '', path: '', keyword: '' })
 let pollTimer = 0
 
 async function pollLive() {
-  initialLoading.value = true
+  pageLoading.value = true
   try {
     const suffix = queryFromFilters({ ...query, page: page.value, pageSize: pageSize.value })
     const data = await api(`/api/events?${suffix}&type=error,perf,behavior&_t=${Date.now()}`)
@@ -27,7 +27,7 @@ async function pollLive() {
     pageSize.value = data.pageSize || pageSize.value
     page.value = data.page || page.value
   } finally {
-    initialLoading.value = false
+    pageLoading.value = false
   }
 }
 
