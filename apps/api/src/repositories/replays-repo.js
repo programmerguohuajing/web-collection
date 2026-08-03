@@ -73,7 +73,12 @@ export async function listReplayEventRows(idOrSessionId) {
       [idOrSessionId, idOrSessionId, idOrSessionId, idOrSessionId]
     )
   }
-  return all('select events_json from replay_events where session_id = ? order by created_at asc, id asc', [idOrSessionId])
+  // 优先精确匹配；若精确匹配无结果，再用 ILIKE 前缀匹配（兼容分段扩展 sessionId）。
+  let rows = await all('select events_json from replay_events where session_id = ? order by created_at asc, id asc', [idOrSessionId])
+  if (!rows.length) {
+    rows = await all('select events_json from replay_events where session_id ilike ? order by created_at asc, id asc', [`${idOrSessionId}%`])
+  }
+  return rows
 }
 
 /** 插入一条回放事件详情记录 */
