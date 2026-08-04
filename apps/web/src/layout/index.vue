@@ -5,7 +5,7 @@ import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
   Histogram, House, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
-import { api, error, loading, refresh, refreshAll, resetPages, applyRoutePrefill } from '../dashboard.js'
+import { api, error, loading, refresh, refreshAll, resetPages, applyRoutePrefill, pageLoading } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
@@ -86,7 +86,7 @@ onMounted(async () => {
 
       <main class="app-main">
         <el-alert v-if="error" class="section" type="error" :title="error" show-icon />
-        <router-view />
+        <router-view v-loading="pageLoading" />
       </main>
     </section>
   </div>
