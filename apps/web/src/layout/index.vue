@@ -1,16 +1,22 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, Connection, DataAnalysis, Files, Film, Grid,
-  Histogram, House, Monitor, Operation, Stopwatch, User, Warning
+  Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
+  Histogram, House, Menu, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
 import { api, error, loading, refresh, refreshAll, resetPages, applyRoutePrefill, pageLoading } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
+const router = useRouter()
 const store = useFilterStore()
 const applications = ref([])
+const menuOpen = ref(false)
+
+function toggleMenu() { menuOpen.value = !menuOpen.value }
+function closeMenu() { menuOpen.value = false }
+function navigate(path) { closeMenu(); router.push(path) }
 const groups = [
   { label: '', items: [{ title: '总览', path: '/overview', icon: House }] },
   { label: '监控', items: [
@@ -53,10 +59,37 @@ onMounted(async () => {
 
 <template>
   <div class="app-wrapper">
-    <aside class="sidebar-container">
+    <!-- 移动端菜单入口按钮 -->
+    <button class="mobile-menu-btn" @click="toggleMenu">
+      <el-icon><component :is="menuOpen ? Fold : Menu" /></el-icon>
+    </button>
+
+    <!-- 移动端遮罩菜单 -->
+    <div v-if="menuOpen" class="mobile-menu-overlay" @click.self="closeMenu">
+      <aside class="mobile-sidebar">
+        <div class="sidebar-logo-container">
+          <Monitor class="brand-mark" />
+          <span class="logo-text">统一观测工作台</span>
+        </div>
+        <nav class="sidebar-nav">
+          <template v-for="group in groups" :key="group.label">
+            <div v-if="group.label" class="menu-group">{{ group.label }}</div>
+            <div v-for="item in group.items" :key="item.path"
+                 class="nav-item" :class="{ active: route.path === item.path }"
+                 @click.prevent="navigate(item.path)">
+              <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
+              <span>{{ item.title }}</span>
+            </div>
+          </template>
+        </nav>
+      </aside>
+    </div>
+
+    <!-- 桌面端侧边栏 -->
+    <aside class="desktop-only sidebar-container">
       <div class="sidebar-logo-container">
         <Monitor class="brand-mark" />
-        <span>统一观测工作台</span>
+        <span class="logo-text">统一观测工作台</span>
       </div>
       <el-scrollbar>
         <nav class="sidebar-nav">
@@ -64,7 +97,7 @@ onMounted(async () => {
             <div v-if="group.label" class="menu-group">{{ group.label }}</div>
             <div v-for="item in group.items" :key="item.path"
                  class="nav-item" :class="{ active: route.path === item.path }"
-                 @click.prevent="$router.push(item.path)">
+                 @click.prevent="router.push(item.path)">
               <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
               <span>{{ item.title }}</span>
             </div>
