@@ -1,11 +1,11 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
   Histogram, House, Menu, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
-import { api, error, loading, refresh, refreshAll, resetPages, applyRoutePrefill, pageLoading } from '../dashboard.js'
+import { api, error, loading, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
@@ -17,6 +17,11 @@ const menuOpen = ref(false)
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
 function navigate(path) { closeMenu(); router.push(path) }
+/** 监听路由变化，将 URL query 参数（如 traceId）预填到页面搜索条件中 */
+watch(() => route.query, () => {
+  resetPageFilters()
+  applyRoutePrefill(route.query)
+}, { immediate: true })
 const groups = [
   { label: '', items: [{ title: '总览', path: '/overview', icon: House }] },
   { label: '监控', items: [
