@@ -42,6 +42,7 @@ export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins
   }
 }
 
+/** 检查请求 URL 是否在白名单内（与 fetch.js 共用逻辑：空名单全允许，否则前缀/同源匹配） */
 function allowedRequest(value, allowlist) {
   if (!allowlist?.length) return true
   const target = String(value || '')
@@ -53,5 +54,8 @@ function allowedRequest(value, allowlist) {
   })
 }
 
+/** 判断请求 URL 是否允许注入链路追踪 header（同源或白名单内 origin） */
 function canTrace(value, origins = []) { try { const url = new URL(value, location.href); return url.origin === location.origin || origins.includes(url.origin) } catch { return false } }
+
+/** 生成指定字节数的安全随机十六进制字符串（用于 spanId） */
 function randomHex(bytes) { const data = new Uint8Array(bytes); crypto.getRandomValues(data); return [...data].map(value => value.toString(16).padStart(2, '0')).join('') }

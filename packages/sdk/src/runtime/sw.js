@@ -31,6 +31,11 @@ export function setupServiceWorkerMonitor({ metric, error }) {
   return () => {}
 }
 
+/**
+ * 上报 Service Worker 状态变化
+ * @param {string} scriptURL - Service Worker 脚本地址
+ * @param {'active'|'updated'} state - 当前状态（已激活 / 已更新）
+ */
 function reportSwState(scriptURL, state) {
   if (!scriptURL) return
   metric('service_worker_' + state, 0, { scriptURL })

@@ -209,22 +209,32 @@ export function createEys(options = {}) {
   function startCapture() {
     if (captureStarted) return
     captureStarted = true
-    // 环境与运行时信息（最先采集，供后续模块使用）
+    // 1) 环境与运行时信息（优先采集，供后续模块使用）
     stopEnvironment = setupEnvironmentMonitor({ context: globalContext, enabled: cfg.environmentInfo })
     stopRuntime = setupRuntimeMonitor({ context: globalContext, config: cfg.runtimeInfo })
+    // 2) Console 日志拦截
     stopConsole = cfg.console ? setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels }) : () => {}
+    // 3) 全局错误监控
     stopError = setupErrorMonitor({ error, clipSize: 500 })
+    // 4) 性能监控（单例，只初始化一次）
     if (!performanceStarted) {
       finalizePerformance = setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId, requestAllowlist: cfg.privacy.requestAllowlist })
       performanceStarted = true
     }
+    // 5) 内存监控
     stopMemory = setupMemoryMonitor({ metric, interval: cfg.memoryInterval })
+    // 6) 请求 body 采样
     stopBodySampler = setupBodySampler({ metric, sampleRate: cfg.requestBodySampling })
+    // 7) 白屏检测
     observeWhiteScreen()
+    // 8) JS 启动耗时（用双重 rAF 确保渲染完成后再计算）
     requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
+    // 9) 行为监控 + 回放路由分段
     if (cfg.behavior) stopBehavior = setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking })
     else if (cfg.replay && cfg.replaySegmentByRoute) stopRoute = setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') })
+    // 10) 曝光采集
     if (cfg.exposure) stopExposure = setupExposureMonitor({ push })
+    // 11) 网络状态变化 & App 前后台切换
     const onOnline = () => push({ type: 'behavior', name: 'network_change', props: { online: true } })
     const onOffline = () => push({ type: 'behavior', name: 'network_change', props: { online: false } })
     const onVisibility = () => push({ type: 'behavior', name: document.hidden ? 'app_background' : 'app_foreground' })
@@ -237,7 +247,9 @@ export function createEys(options = {}) {
       removeEventListener('offline', onOffline)
       document.removeEventListener('visibilitychange', onVisibility)
     }
+    // 12) 回放录制
     if (cfg.replay) startReplay()
+    // 13) 可选监控模块（按需开启）
     if (cfg.keyboardTracking) stopKeyboard = setupKeyboardMonitor({ push, keys: cfg.keyboardTrackingKeys })
     if (cfg.touchTracking) stopTouch = setupTouchMonitor({ push })
     if (cfg.workerMonitoring) stopWorker = setupWorkerMonitor({ error })
@@ -245,17 +257,24 @@ export function createEys(options = {}) {
     if (cfg.bundleMonitoring) stopBundle = setupBundleMonitor({ metric })
   }
 
+  /**
+   * 白屏检测：定时检查指定选择器是否渲染出有效内容
+   * - 检测到有效内容 → 上报 white_screen 耗时 + blank_screen_rate=0
+   * - 超时未检测到 → 上报 blank_screen_rate=100
+   */
   function observeWhiteScreen() {
     const started = performance.now()
     clearInterval(whiteScreenTimer)
     whiteScreenTimer = setInterval(() => {
       const element = document.querySelector(cfg.whiteScreenSelector)
+      // 有效判定：元素存在且宽高均 > 0（排除 display:none / 空节点）
       if (element?.getBoundingClientRect().width && element.getBoundingClientRect().height) {
         clearInterval(whiteScreenTimer)
         whiteScreenTimer = 0
         metric('white_screen', performance.now())
         metric('blank_screen_rate', 0)
       } else if (performance.now() - started >= cfg.whiteScreenTimeout) {
+        // 超时判定为白屏
         clearInterval(whiteScreenTimer)
         whiteScreenTimer = 0
         metric('blank_screen_rate', 100)
@@ -263,12 +282,12 @@ export function createEys(options = {}) {
     }, 100)
   }
 
-  /** 自定义事件追踪 */
+  /** 自定义事件追踪（供业务代码调用） */
   function track(name, props = {}) {
     push({ type: 'track', name, props })
   }
 
-  /** 错误上报，触发回放分段结束（原因=error）并立即上报 */
+  /** 错误上报：触发回放分段结束（原因=error）并立即发送 */
   function error(err, extra = {}) {
     endReplaySegment('error')
     push({
@@ -281,20 +300,26 @@ export function createEys(options = {}) {
     }, true)
   }
 
-  /** 性能指标上报 */
+  /** 性能指标上报：记录耗时数据，同时对慢 API 自动上报 slow_api_rate=100 */
   function metric(name, value, props = {}) {
     const { __traceId: traceId, __spanId: spanId, ...details } = props
     push({ type: 'perf', metric: name, value: Number(value), props: details, traceId, spanId })
+    // 自动检测慢 API（>1s），上报慢请求率指标
     if (name === 'fetch' || name === 'xhr') {
       push({ type: 'perf', metric: 'slow_api_rate', value: Number(value) > 1000 ? 100 : 0, props: { threshold: 1000 } })
     }
   }
 
-  /** 结构化日志；服务端会再次执行脱敏。 */
+  /** 结构化日志上报，服务端会再次执行脱敏 */
   function log(level, message, props = {}) {
     push({ type: 'log', name: String(level || 'info'), message: redact(message), props: redactLogObject(props), traceId: pageTraceId })
   }
 
+  /**
+   * 设置隐私同意状态
+   * - denied → 停止采集，清空队列和回放缓存
+   * - granted → 如果 enabled 则重新启动采集
+   */
   function setConsent(status) {
     cfg.consent = status === 'denied' ? 'denied' : 'granted'
     if (cfg.consent === 'denied') {
@@ -306,6 +331,7 @@ export function createEys(options = {}) {
     if (cfg.consent === 'granted' && cfg.enabled) startCapture()
   }
 
+  /** 启用/禁用 SDK */
   function setEnabled(enabled) {
     cfg.enabled = Boolean(enabled)
     if (!cfg.enabled) {
@@ -317,6 +343,7 @@ export function createEys(options = {}) {
     if (cfg.enabled && cfg.consent !== 'denied') startCapture()
   }
 
+  /** 停止所有采集模块，恢复默认状态 */
   function stopCapture() {
     if (!captureStarted) return
     stopEnvironment()
@@ -340,14 +367,23 @@ export function createEys(options = {}) {
     captureStarted = false
   }
 
+  /** 设置全局上下文（脱敏后合并到所有上报事件中） */
   function setContext(context = {}) {
     Object.assign(globalContext, redactObject(context, cfg.privacy.redactKeys))
   }
 
+  /** 添加面包屑——记录最近操作，错误发生时自动附着到错误事件上 */
   function addBreadcrumb(name, data = {}) {
     remember({ type: 'track', name: String(name || 'breadcrumb'), message: JSON.stringify(redactObject(data, cfg.privacy.redactKeys)), ts: Date.now(), url: location.href })
   }
 
+  /**
+   * 开始一个事务（Transaction）
+   * 用于追踪一个完整业务流程的耗时，如"支付流程"、"表单提交"
+   * @param {string} name - 事务名称
+   * @param {object} [context={}] - 初始上下文
+   * @returns {{ setData: Function, finish: Function }} 事务对象
+   */
   function startTransaction(name, context = {}) {
     const startedAt = performance.now()
     let data = { ...context }
@@ -362,6 +398,7 @@ export function createEys(options = {}) {
     }
   }
 
+  /** 设置用户信息，已入队事件会回填用户字段 */
   function setUser(user = {}) {
     cfg.userId = user.id || user.userId || cfg.userId || ''
     cfg.userName = user.name || user.userName || cfg.userName || ''
@@ -539,6 +576,7 @@ export function createEys(options = {}) {
     flushReplay(true)
   }
 
+  /** 停止当前回放录制：清除定时器、调用 stopReplay 清理函数、置空引用 */
   function stopCurrentReplay() {
     clearTimeout(replayStopTimer)
     stopReplay?.()
@@ -603,30 +641,66 @@ export function install(app, options = {}) {
   app.config.globalProperties.$eys = eys
 }
 
-/** 从 localStorage 加载之前持久化的事件队列 */
+/**
+ * 从 localStorage 加载之前持久化的事件队列
+ * @param {number} maxQueue - 最大保留条数
+ * @returns {object[]} 恢复的事件数组
+ */
 function loadQueue(maxQueue) {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]').slice(-maxQueue) } catch { return [] }
 }
 
-/** 采样未命中时返回的空实现客户端，所有方法均为 no-op */
+/**
+ * 采样未命中时返回的空实现客户端
+ * 所有方法均为 no-op，无任何副作用。ID 生成器等透传方法则原样返回。
+ * @returns {object} 空操作的客户端对象
+ */
 function noopClient() {
   return { track() {}, error() {}, metric() {}, log() {}, setUser() {}, setConsent() {}, setEnabled() {}, setContext() {}, addBreadcrumb() {}, startTransaction() { return { setData() {}, finish() {} } }, markPageReady() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
 }
 
+/**
+ * 生成指定字节数的安全随机十六进制字符串
+ * 用于 traceId（16 字节 → 32 位十六进制）等 ID 生成
+ * @param {number} bytes - 字节数
+ * @returns {string} 十六进制字符串
+ */
 function randomHex(bytes) {
   const data = new Uint8Array(bytes)
   crypto.getRandomValues(data)
   return [...data].map(value => value.toString(16).padStart(2, '0')).join('')
 }
 
+/**
+ * 敏感信息脱敏（正则替换）
+ * 处理两种模式：
+ *   1. key=value / key: value → key=[REDACTED]
+ *   2. 手机号中间四位替换为 ****
+ * 结果截断到 500 字符
+ * @param {*} value - 需要脱敏的值
+ * @returns {string} 脱敏后字符串
+ */
 function redact(value) {
   return String(value).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi, '$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g, '***$1').slice(0, 500)
 }
 
+/**
+ * 对日志 props 对象做脱敏
+ * 遍历对象每个条目（最多 50 个），先序列化再脱敏
+ * @param {object} [value={}]
+ * @returns {object} 脱敏后的对象
+ */
 function redactLogObject(value = {}) {
   return Object.fromEntries(Object.entries(value).slice(0, 50).map(([key, item]) => [key, redact(serialize(item))]))
 }
 
+/**
+ * 任意值安全的 JSON 序列化
+ * - 普通对象 → JSON string
+ * - Error 实例 / 不可序列化对象 → "[Unserializable]"
+ * @param {*} value
+ * @returns {string}
+ */
 function serialize(value) {
   if (typeof value !== 'object' || value === null) return value
   try { return JSON.stringify(value) } catch { return '[Unserializable]' }

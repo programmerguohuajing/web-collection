@@ -101,20 +101,23 @@ export function navigationMetrics(nav) {
 
 /**
  * 观察并计算 CLS（累积布局偏移）。
- * 使用会话窗口策略：1 秒内连续偏移累加，5 秒窗口上限，
+ * 使用会话窗口策略：1 秒内连续偏移视为同一会话窗口并累加，单个窗口上限 5 秒。
  * 取所有会话窗口中的最大值作为最终 CLS。
- * 忽略有用户输入（hadRecentInput）触发的偏移。
+ * 忽略有用户输入（hadRecentInput）触发的偏移，因为那是用户主动操作导致的。
  *
- * @param {Function} metric - SDK 主实例的 metric 方法
+ * @returns {{ value: () => number, sources: () => string[] }}
+ *   value - 返回当前 CLS 值的函数
+ *   sources - 返回布局偏移源元素路径列表的函数
  */
 function observeCls() {
-  let cls = 0
-  let sessionValue = 0
-  let first = 0
-  let last = 0
-  const sources = []
+  let cls = 0           // 全局最大 CLS 值
+  let sessionValue = 0  // 当前会话窗口内的累计偏移值
+  let first = 0         // 当前会话窗口的第一个偏移时间
+  let last = 0          // 当前会话窗口的最后一个偏移时间
+  const sources = []    // 引发偏移的源元素路径
   observe('layout-shift', e => {
-    if (e.hadRecentInput) return
+    if (e.hadRecentInput) return  // 忽略用户交互触发的偏移
+    // 会话窗口策略：距上次偏移 <1s 且窗口 <5s → 同一窗口累加；否则开启新窗口
     if (sessionValue && e.startTime - last < 1000 && e.startTime - first < 5000) {
       sessionValue += e.value
     } else {
@@ -123,6 +126,7 @@ function observeCls() {
     }
     last = e.startTime
     if (sessionValue > cls) cls = sessionValue
+    // 收集偏移源元素（最多 3 个/次），去重加入来源列表
     e.sources?.slice(0, 3).forEach(source => {
       const path = elementPath(source.node)
       if (path && !sources.includes(path)) sources.push(path)
@@ -131,10 +135,17 @@ function observeCls() {
   return { value: () => cls, sources: () => sources.slice(0, 10) }
 }
 
+/**
+ * 构建元素的可读路径（tag#id.class）
+ * 用于 CLS 偏移源定位和 LCP 元素标识
+ * @param {Element} element - DOM 元素
+ * @returns {string} 截断到 240 字符的元素路径
+ */
 function elementPath(element) {
   if (!element) return ''
   const tag = String(element.tagName || '').toLowerCase()
   const id = element.id ? `#${element.id}` : ''
+  // 仅取前 2 个 class 名，防止超长
   const classes = typeof element.className === 'string' ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(name => `.${name}`).join('') : ''
   return `${tag}${id}${classes}`.slice(0, 240)
 }

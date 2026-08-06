@@ -36,6 +36,13 @@ export function setupBundleMonitor({ metric }) {
   }
 }
 
+/**
+ * 根据 JS/CSS 字节统计构建 chunk 列表
+ * 对 URL 提取 chunk 名去重，同一 chunk 只保留一条记录，最多返回 50 个
+ * @param {Map<string, number>} jsBytes  - URL → JS 字节数
+ * @param {Map<string, number>} cssBytes - URL → CSS 字节数
+ * @returns {Array<{name: string, size: number, type: string}>} chunk 列表
+ */
 function buildChunks(jsBytes, cssBytes) {
   const chunks = []
   const seen = new Set()
@@ -56,12 +63,21 @@ function buildChunks(jsBytes, cssBytes) {
   return chunks.slice(0, 50)
 }
 
+/**
+ * 从资源 URL 提取可读的 chunk 名称
+ * 例如：
+ *   /assets/main.a1b2c3.js       → main
+ *   /js/vendors~chunk.d4e5f6.js  → vendors~chunk
+ *   blob:...                      → unknown
+ * @param {string} url - 资源完整 URL
+ * @returns {string} 提取的 chunk 名
+ */
 function chunkKey(url) {
   try {
     const u = new URL(url)
     const parts = u.pathname.split('/').filter(Boolean)
     const file = parts.pop() || ''
-    // 提取 chunk 名：如 main.abc123.js -> main，vendors~xxx.js -> vendors
+    // 依次去除：多级扩展名(.min.js)、hash值(6位以上)、分割符中的 hash
     const base = file.replace(/\.\w+\.\w+$/, '').replace(/\.[a-f0-9]{6,}/g, '').replace(/~\w+~/g, '~')
     return base || 'unknown'
   } catch {
@@ -69,6 +85,12 @@ function chunkKey(url) {
   }
 }
 
+/**
+ * 安全的 PerformanceObserver 工厂
+ * 使用 buffered: true 可捕获创建前已产生的条目，try-catch 防止不支持的类型报错
+ * @param {string} type    - PerformanceEntry 类型
+ * @param {Function} handler - 单条性能条目的回调
+ */
 function observe(type, handler) {
   try {
     new PerformanceObserver(list => list.getEntries().forEach(handler)).observe({ type, buffered: true })

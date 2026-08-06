@@ -14,6 +14,10 @@ export function setupMemoryMonitor({ metric, interval = 60000 }) {
 
   let timer = 0
 
+  /**
+   * 上报当前内存使用快照
+   * @param {'periodic'|'final'} phase - 上报时机：periodic（周期采样）/ final（销毁时最后一次）
+   */
   function report(phase) {
     metric('memory', mem.usedJSHeapSize, {
       totalJSHeapSize: mem.totalJSHeapSize,
@@ -28,6 +32,6 @@ export function setupMemoryMonitor({ metric, interval = 60000 }) {
 
   return () => {
     clearInterval(timer)
-    report('final')
+    report('final')  // 销毁前最后一次采样
   }
 }

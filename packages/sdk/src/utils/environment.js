@@ -38,32 +38,37 @@ export function setupEnvironmentMonitor({ context, enabled = true }) {
   }
 }
 
+/**
+ * 采集设备与环境指纹信息
+ * 涵盖屏幕、视口、语言、网络、电池、特性支持等多个维度
+ * @returns {object} 环境信息对象
+ */
 function collectEnvironment() {
   if (typeof window === 'undefined') return {}
   const env = {}
 
-  // 屏幕
+  // ---- 屏幕信息 ----
   env.screenWidth = screen.width
   env.screenHeight = screen.height
   env.devicePixelRatio = window.devicePixelRatio || 1
   env.colorDepth = screen.colorDepth
 
-  // 视口
+  // ---- 视口信息（实时动态更新） ----
   env.viewportWidth = window.innerWidth
   env.viewportHeight = window.innerHeight
 
-  // 语言与区域
+  // ---- 语言与区域 ----
   env.language = navigator.language || ''
   env.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''
   env.timezoneOffset = new Date().getTimezoneOffset()
 
-  // 平台
+  // ---- 平台信息 ----
   env.platform = navigator.platform || ''
   env.vendor = navigator.vendor || ''
   env.cookieEnabled = navigator.cookieEnabled
   env.doNotTrack = navigator.doNotTrack || ''
 
-  // 网络
+  // ---- 网络信息（Network Information API） ----
   try {
     const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection
     if (conn) {
@@ -74,7 +79,7 @@ function collectEnvironment() {
     }
   } catch {}
 
-  // 电池
+  // ---- 电池信息（Battery Status API，异步采集） ----
   try {
     if (navigator.getBattery) {
       navigator.getBattery().then(batt => {
@@ -84,7 +89,7 @@ function collectEnvironment() {
     }
   } catch {}
 
-  // 特性支持
+  // ---- 浏览器特性支持检测 ----
   env.features = {
     serviceWorker: 'serviceWorker' in navigator,
     webWorker: typeof Worker !== 'undefined',

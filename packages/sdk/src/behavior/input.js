@@ -53,11 +53,18 @@ export function setupInputMonitor({ push }) {
   }
 }
 
+/**
+ * 判断 DOM 元素是否为可输入元素
+ * 可输入元素包括：<input>、<textarea>、contenteditable 元素
+ * 排除 <select>（由 selectTracking 独立处理）
+ * @param {Element} el - DOM 元素
+ * @returns {boolean}
+ */
 function isInputElement(el) {
   if (!el || el.nodeType !== 1) return false
   const tag = el.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA') return true
-  if (tag === 'SELECT') return false // select 由 selectTracking 处理
+  if (tag === 'SELECT') return false // select 由 selectTracking 独立处理
   if (el.isContentEditable) return true
   return false
 }

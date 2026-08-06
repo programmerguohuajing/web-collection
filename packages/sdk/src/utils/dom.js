@@ -22,20 +22,35 @@ export function elementInfo(el) {
     name: clip(el.getAttribute?.('name') || '', 80),
     href: clip(el.getAttribute?.('href') || '', 200)
   }
+  // 收集所有 data-track-* 自定义属性，去掉前缀后作为 key
   for (const item of el.attributes || []) {
     if (item.name.startsWith('data-track-')) props[item.name.slice(11)] = item.value
   }
+  // 降级标签：优先取文本内容 → ariaLabel → alt → title → placeholder → name → id
   props.label = props.text || props.ariaLabel || props.alt || props.title || props.placeholder || props.name || props.id || ''
   return props
 }
 
+/**
+ * 提取元素的可读文本内容
+ * 优先使用自身 innerText，若为空则尝试通过关联 <label> 元素获取文本
+ * @param {Element} el - DOM 元素
+ * @returns {string} 可读文本
+ */
 function readableText(el) {
   const ownText = (el.innerText || el.textContent || '').trim()
   if (ownText) return ownText
+  // 通过 CSS 选择器查找关联的 <label>：先找最近的父级 label，再通过 for 属性查找
   const label = el.closest?.('label') || (el.id ? el.ownerDocument?.querySelector?.(`label[for="${cssEscape(el.id)}"]`) : null)
   return (label?.innerText || label?.textContent || '').trim()
 }
 
+/**
+ * CSS 选择器值中的特殊字符转义
+ * 防止 id 中的引号、反斜杠等破坏选择器语法
+ * @param {string} value - 需要转义的值
+ * @returns {string} 转义后的值
+ */
 function cssEscape(value) {
   return String(value).replace(/["\\]/g, '\\$&')
 }

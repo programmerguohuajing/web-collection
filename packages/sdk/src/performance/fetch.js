@@ -39,6 +39,13 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error, trac
   }
 }
 
+/**
+ * 检查请求 URL 是否在白名单内
+ * 规则：白名单为空 → 全部允许；非空 → 前缀匹配或同源匹配
+ * @param {string} value     - 请求 URL
+ * @param {string[]} allowlist - 白名单列表
+ * @returns {boolean} 是否允许监控此请求
+ */
 function allowedRequest(value, allowlist) {
   if (!allowlist?.length) return true
   const target = String(value || '')
@@ -50,16 +57,37 @@ function allowedRequest(value, allowlist) {
   })
 }
 
+/**
+ * 构造带 traceparent 头部的新 headers 对象（W3C Trace Context 标准）
+ * traceparent 格式：00-{traceId}-{spanId}-01
+ * @param {Request|string} input  - fetch 的 input 参数
+ * @param {RequestInit} init      - fetch 的 init 参数
+ * @param {string} traceId        - 32 位十六进制 traceId
+ * @param {string} spanId         - 16 位十六进制 spanId
+ * @returns {Headers} 合并了 traceparent 的新 headers
+ */
 function withTraceHeader(input, init, traceId, spanId) {
   const headers = new Headers(init.headers || input?.headers)
   headers.set('traceparent', `00-${traceId}-${spanId}-01`)
   return headers
 }
 
+/**
+ * 判断请求 URL 是否允许注入链路追踪 header
+ * 同源请求始终允许，跨域请求仅当 origin 在 traceOrigins 白名单内才允许
+ * @param {string} value          - 请求 URL
+ * @param {string[]} [origins=[]] - 允许透传 traceparent 的跨域 origin 列表
+ * @returns {boolean}
+ */
 function canTrace(value, origins = []) {
   try { const url = new URL(value, location.href); return url.origin === location.origin || origins.includes(url.origin) } catch { return false }
 }
 
+/**
+ * 生成指定字节数的安全随机十六进制字符串（用于 traceId / spanId）
+ * @param {number} bytes - 字节数（如 8 → 16 位十六进制，16 → 32 位）
+ * @returns {string} 十六进制字符串
+ */
 function randomHex(bytes) {
   const data = new Uint8Array(bytes)
   crypto.getRandomValues(data)
