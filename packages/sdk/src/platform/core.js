@@ -1,12 +1,26 @@
+/**
+ * @file 平台层核心 SDK
+ * 提供 createPlatformEys 工厂函数，通过适配器模式抽象掉不同宿主环境的差异，
+ * 实现统一的埋点、错误追踪、网络请求监控、页面生命周期插桩。
+ * 与 Web 端 SDK 共享 core/event.js 中的事件分类、采样、脱敏等核心逻辑。
+ */
 import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, sanitizeEvent } from '../core/event.js'
 
+/** 存储队列和 deviceId 的 localStorage key */
 const QUEUE_KEY = '__web_collection_platform_queue__'
 const DEVICE_KEY = '__web_collection_device_id__'
 
+/**
+ * 创建平台 SDK 实例
+ * @param {object}   options - 平台配置项
+ * @param {import('../../platform.d.ts').PlatformAdapter} adapter - 平台适配器
+ * @returns {import('../../platform.d.ts').PlatformEysClient}
+ */
 export function createPlatformEys(options = {}, adapter) {
   if (!adapter?.request) throw new Error('Web Collection: platform request adapter is required')
   const startedAt = Date.now()
 
+  // ========== 合并配置 ==========
   const cfg = {
     endpoint: '/api/collect',
     appId: 'default',
@@ -29,28 +43,32 @@ export function createPlatformEys(options = {}, adapter) {
     ...options
   }
   cfg.privacy ||= {}
+  // 采样判断：随机数大于采样率则返回空操作客户端（不上报任何数据）
   if (Math.random() > cfg.sampleRate) return noopClient()
 
+  // ========== 实例状态 ==========
   const sessionId = id()
-  const pageTraceId = id().replace(/-/g, '').slice(0, 32)
-  const queue = []
-  const breadcrumbs = []
-  const pageStarts = new WeakMap()
-  const disposers = []
+  const pageTraceId = id().replace(/-/g, '').slice(0, 32)  // 页面级 TraceId，用于链路追踪
+  const queue = []              // 事件上报队列
+  const breadcrumbs = []        // 面包屑（最近事件快照，错误上报时附带）
+  const pageStarts = new WeakMap()  // 页面开始时间记录（WeakMap 自动 GC，无内存泄漏）
+  const disposers = []          // 清理函数集合
   let deviceId = id()
-  let flushing = false
-  let flushAllRequested = false
+  let flushing = false          // 是否正在上报
+  let flushAllRequested = false // 是否请求了全量上报
   let destroyed = false
   let persistence = Promise.resolve()
-  let lastError = { fingerprint: '', ts: 0 }
+  let lastError = { fingerprint: '', ts: 0 }  // 错误去重：相同错误 1 秒内不重复上报
   const globalContext = {}
   const stats = { enqueued: 0, dropped: 0, droppedByConsent: 0, droppedBySample: 0, sent: 0, failed: 0 }
   let errorsRegistered = false
 
-  const ready = hydrate()
-  const timer = setInterval(flush, cfg.flushInterval)
-  if (cfg.enabled && cfg.consent !== 'denied') registerGlobalErrors()
+  // ========== 初始化 ==========
+  const ready = hydrate()                    // 从存储恢复队列和 deviceId
+  const timer = setInterval(flush, cfg.flushInterval)  // 定时上报
+  if (cfg.enabled && cfg.consent !== 'denied') registerGlobalErrors()  // 注册全局错误监听
 
+  // ========== 公开 API ==========
   return {
     track,
     error,
@@ -73,6 +91,10 @@ export function createPlatformEys(options = {}, adapter) {
     instrumentPage
   }
 
+  // ================================================================
+  //  核心方法
+  // ================================================================
+
   function track(name, props = {}) {
     push({ type: 'track', name, props })
   }
@@ -82,6 +104,7 @@ export function createPlatformEys(options = {}, adapter) {
   }
 
   function metric(name, value, props = {}) {
+    // 提取 __traceId / __spanId 作为独立字段，实现链路追踪串联
     const { __traceId: traceId = pageTraceId, __spanId: spanId, ...details } = props
     push({ type: 'perf', metric: name, value: Number(value), props: details, traceId, spanId, source: 'platform' })
   }
@@ -90,6 +113,7 @@ export function createPlatformEys(options = {}, adapter) {
     const err = normalizeError(reason)
     const fingerprint = `${err.name}|${err.message}|${err.stack}`
     const now = Date.now()
+    // 错误去重：相同指纹的错误在 1 秒内只上报一次
     if (lastError.fingerprint === fingerprint && now - lastError.ts < 1000) return
     lastError = { fingerprint, ts: now }
     push({ type: 'error', name: err.name, message: err.message, stack: err.stack, props: extra, traceId: pageTraceId, source: 'platform' }, true)
@@ -97,6 +121,7 @@ export function createPlatformEys(options = {}, adapter) {
 
   function setConsent(status) {
     cfg.consent = status === 'denied' ? 'denied' : 'granted'
+    // 拒绝时清空队列并持久化
     if (cfg.consent === 'denied') {
       queue.length = 0
       void persist()
@@ -117,6 +142,7 @@ export function createPlatformEys(options = {}, adapter) {
 
   function addBreadcrumb(name, data = {}) {
     breadcrumbs.push({ type: 'track', name: String(name || 'breadcrumb'), message: JSON.stringify(redactObject(data, cfg.privacy.redactKeys)), ts: Date.now(), url: adapter.getContext?.().url || '' })
+    // 最多保留 20 条面包屑
     if (breadcrumbs.length > 20) breadcrumbs.shift()
   }
 
@@ -127,7 +153,7 @@ export function createPlatformEys(options = {}, adapter) {
     return {
       setData(value = {}) { data = { ...data, ...value } },
       finish(result = {}) {
-        if (finished) return
+        if (finished) return  // 防止重复结束
         finished = true
         metric('transaction', Date.now() - startedAt, { name, ...data, ...result })
       }
@@ -146,6 +172,7 @@ export function createPlatformEys(options = {}, adapter) {
     cfg.userId = user.id || user.userId || cfg.userId
     cfg.userName = user.name || user.userName || cfg.userName
     cfg.userPhone = user.phone || user.userPhone || cfg.userPhone
+    // 将用户信息回填到已入队的事件中
     queue.forEach(item => {
       item.userId ||= cfg.userId
       item.userName ||= cfg.userName
@@ -154,8 +181,15 @@ export function createPlatformEys(options = {}, adapter) {
     persist()
   }
 
+  /**
+   * 事件入队核心方法
+   * 经过采样、脱敏、beforeSend 钩子后进入队列
+   * @param {object} event  - 原始事件对象
+   * @param {boolean} [urgent=false] - 是否立即发送
+   */
   function push(event, urgent = false) {
     if (destroyed) return
+    // 禁用或拒绝时直接丢弃
     if (!cfg.enabled || cfg.consent === 'denied') {
       stats.dropped++
       stats.droppedByConsent++
@@ -181,34 +215,46 @@ export function createPlatformEys(options = {}, adapter) {
       context: { ...globalContext, ...(event.context || {}) },
       ts: Date.now(),
       retry: 0,
-      breadcrumbs: event.type === 'error' ? breadcrumbs.slice(-20) : undefined,
+      breadcrumbs: event.type === 'error' ? breadcrumbs.slice(-20) : undefined,  // 仅错误事件附带面包屑
       ...event
     }
+    // 按事件分类采样
     if (Math.random() > sampleRateFor(eventCategory(item), cfg.categorySampleRates, 1)) {
       stats.dropped++
       stats.droppedBySample++
       return
     }
+    // 脱敏处理
     item = sanitizeEvent(item, cfg.privacy)
+    // beforeSend 钩子：返回 false 拦截，返回对象替换
     if (typeof cfg.beforeSend === 'function') {
       try { item = cfg.beforeSend(item) } catch { item = false }
     }
+    // 钩子处理后可能返回了含敏感数据的新对象，因此需要再次脱敏
     if (item && typeof item === 'object') item = sanitizeEvent(item, cfg.privacy)
     if (!item || typeof item !== 'object') { stats.dropped++; return }
     stats.enqueued++
+    // 将非 error 事件写入面包屑
     if (['track', 'behavior', 'perf'].includes(item.type)) {
       breadcrumbs.push({ type: item.type, name: item.name || item.metric, ts: item.ts, url: item.url })
       if (breadcrumbs.length > 20) breadcrumbs.shift()
     }
     queue.push(item)
+    // 队列溢出保护
     if (queue.length > cfg.maxQueue) queue.splice(0, queue.length - cfg.maxQueue)
     persist()
+    // 紧急事件或队列超过批次大小时立即发送
     if (urgent || queue.length >= cfg.batchSize) void flush()
   }
+
+  // ================================================================
+  //  网络层
+  // ================================================================
 
   async function flush(force = false) {
     await ready
     if (!cfg.enabled || cfg.consent === 'denied') return
+    // 防止并发发送
     if (flushing) {
       flushAllRequested ||= force
       return
@@ -217,6 +263,7 @@ export function createPlatformEys(options = {}, adapter) {
     flushing = true
     try {
       do {
+        // 分批发送，每批不超过 100 条
         const batch = queue.slice(0, Math.min(cfg.batchSize, 100))
         try {
           const response = await adapter.request({
@@ -227,10 +274,12 @@ export function createPlatformEys(options = {}, adapter) {
           })
           const status = response?.statusCode ?? response?.status ?? 200
           if (status < 200 || status >= 300) throw new Error(`HTTP ${status}`)
+          // 成功：从队列中移除已发送的事件
           queue.splice(0, batch.length)
           stats.sent += batch.length
         } catch {
           stats.failed += batch.length
+          // 增加重试计数，超过 maxRetries 的事件会被丢弃
           batch.forEach(item => item.retry++)
           queue.splice(0, batch.length, ...batch.filter(item => item.retry <= cfg.maxRetries))
           break
@@ -244,13 +293,18 @@ export function createPlatformEys(options = {}, adapter) {
     }
   }
 
+  /**
+   * 包装平台原生 Request，自动注入性能埋点和错误追踪
+   * 支持 Promise 和 callback 两种风格
+   */
   function wrapRequest(request = adapter.rawRequest, kind = 'request') {
     if (typeof request !== 'function') throw new Error('Web Collection: request function is required')
     return function monitoredRequest(options = {}) {
+      // SDK 自身上报不监控，白名单过滤
       if (String(options.url || '').startsWith(cfg.endpoint) || !allowedRequest(options.url, cfg.privacy.requestAllowlist)) return request(options)
       const startedAt = Date.now()
       const spanId = id().replace(/-/g, '').slice(0, 16)
-      let recorded = false
+      let recorded = false  // 防止 success/fail 双重回调
       const record = (response, failed) => {
         if (recorded) return
         recorded = true
@@ -266,6 +320,7 @@ export function createPlatformEys(options = {}, adapter) {
       }
       try {
         const result = request(wrapped)
+        // 若返回 Promise，则通过 then/catch 自动埋点
         return result?.then
           ? result.then(response => { record(response, false); return response }, reason => { record(reason, true); throw reason })
           : result
@@ -276,6 +331,7 @@ export function createPlatformEys(options = {}, adapter) {
     }
   }
 
+  /** 包装原生 Fetch，自动注入性能埋点和错误追踪 */
   function wrapFetch(fetchImpl = globalThis.fetch) {
     if (typeof fetchImpl !== 'function') throw new Error('Web Collection: fetch function is required')
     return async function monitoredFetch(input, init = {}) {
@@ -296,6 +352,14 @@ export function createPlatformEys(options = {}, adapter) {
     }
   }
 
+  // ================================================================
+  //  小程序 / 跨平台框架 生命周期插桩
+  // ================================================================
+
+  /**
+   * 插桩 App 生命周期（小程序 onLaunch / onShow / onError / onHide 等）
+   * 在原生命周期函数基础上附加行为上报，保留原有调用
+   */
   function instrumentApp(config = {}) {
     return {
       ...config,
@@ -307,6 +371,10 @@ export function createPlatformEys(options = {}, adapter) {
     }
   }
 
+  /**
+   * 插桩 Page 生命周期（小程序 onLoad / onShow / onHide / onUnload）
+   * 自动计算页面停留时间并上报 pageView / pageLeave
+   */
   function instrumentPage(config = {}) {
     const enter = function (query) {
       pageStarts.set(this, Date.now())
@@ -327,10 +395,12 @@ export function createPlatformEys(options = {}, adapter) {
     }
   }
 
+  /** 获取页面路径 */
   function pagePath(page) {
     return page?.route || page?.$page?.fullPath || adapter.getContext?.().path || ''
   }
 
+  /** 注册全局错误和状态变化监听（通过适配器的 onError/onUnhandledRejection 等） */
   function registerGlobalErrors() {
     if (errorsRegistered) return
     errorsRegistered = true
@@ -340,10 +410,16 @@ export function createPlatformEys(options = {}, adapter) {
     if (adapter.onNavigationStateChange) disposers.push(adapter.onNavigationStateChange(event => behavior('navigation_change', { route: event?.route || event?.name || event?.state?.routes?.at?.(-1)?.name || '' })))
   }
 
+  // ================================================================
+  //  持久化
+  // ================================================================
+
+  /** 从存储中恢复上次会话的队列和 deviceId */
   async function hydrate() {
     try {
       const [storedQueue, storedDeviceId] = await Promise.all([adapter.getStorage?.(QUEUE_KEY), adapter.getStorage?.(DEVICE_KEY)])
       if (Array.isArray(storedQueue)) queue.unshift(...storedQueue.slice(-cfg.maxQueue))
+      // 回填用户信息
       queue.forEach(item => {
         item.userId ||= cfg.userId
         item.userName ||= cfg.userName
@@ -357,9 +433,11 @@ export function createPlatformEys(options = {}, adapter) {
     } catch {}
   }
 
+  /** 持久化当前队列到存储，使用链式 Promise 保证顺序写入 */
   async function persist() {
     await ready
     const snapshot = queue.slice(-cfg.maxQueue)
+    // 链式 Promise：确保上一次写入完成后再写下一次
     persistence = persistence.then(() => adapter.setStorage?.(QUEUE_KEY, snapshot)).catch(() => {})
     await persistence
   }
@@ -367,12 +445,18 @@ export function createPlatformEys(options = {}, adapter) {
   function destroy() {
     clearInterval(timer)
     disposers.forEach(dispose => dispose?.())
+    // 上报 SDK 健康指标（丢弃/失败统计等）
     if (stats.dropped || stats.failed) push({ type: 'perf', metric: 'sdk_health', value: stats.enqueued, props: { ...stats }, source: 'auto' })
-    void flush(true)
+    void flush(true)  // 销毁前最后一次强制上报
     destroyed = true
   }
 }
 
+// ================================================================
+//  工具函数
+// ================================================================
+
+/** 标准化错误对象（兼容 Error 实例、类 Error 对象、原始值） */
 function normalizeError(reason) {
   if (reason instanceof Error) return { name: reason.name || 'Error', message: reason.message, stack: reason.stack || '' }
   if (reason && typeof reason === 'object') {
@@ -381,10 +465,15 @@ function normalizeError(reason) {
   return { name: 'Error', message: String(reason), stack: '' }
 }
 
+/** 生成唯一 ID（优先 crypto.randomUUID，降级为时间戳+随机数） */
 function id() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
 }
 
+/**
+ * 检查请求 URL 是否在允许白名单内
+ * 白名单为空时允许所有请求；非空时按字符串前缀匹配或同源检查
+ */
 function allowedRequest(value, allowlist = []) {
   if (!allowlist.length) return true
   const target = String(value || '')
@@ -396,6 +485,7 @@ function allowedRequest(value, allowlist = []) {
   })
 }
 
+/** 返回一个所有方法均为空操作的客户端（采样未命中或未适配时使用） */
 function noopClient() {
   const noop = () => {}
   return { track: noop, error: noop, metric: noop, behavior: noop, setConsent: noop, setEnabled: noop, setContext: noop, addBreadcrumb: noop, startTransaction: () => ({ setData: noop, finish: noop }), pageView: noop, pageLeave: noop, markPageReady: noop, setUser: noop, flush: noop, destroy: noop, wrapRequest: request => request, wrapFetch: fetch => fetch, instrumentApp: value => value, instrumentPage: value => value }
