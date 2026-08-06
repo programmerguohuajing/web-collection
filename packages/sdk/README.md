@@ -37,6 +37,33 @@ createEys({
 })
 ```
 
+### Script Integration
+
+```html
+<script src="https://your-domain.com/sdk/web-collection-sdk.iife.js"></script>
+<script>
+  window.WebCollection.createEys({
+    endpoint: 'https://your-domain.com/api/collect',
+    appId: 'web',
+    release: '1.0.0'
+  })
+</script>
+```
+
+### Vue3 Plugin Integration
+
+```js
+import { createApp } from 'vue'
+import WebCollection from '@web-collection/sdk'
+import App from './App.vue'
+
+createApp(App).use(WebCollection, {
+  endpoint: 'https://your-domain.com/api/collect',
+  appId: 'web',
+  release: '1.0.0'
+}).mount('#app')
+```
+
 Enabling `console: true` captures `console.log/info/warn/error` and keeps the latest 20 console breadcrumbs (up to 500 characters each), used for search and reconstructing error context. This is disabled by default to avoid accidentally capturing sensitive data in application logs; use `consoleLevels` to limit the captured levels.
 
 You can also record structured logs proactively:
