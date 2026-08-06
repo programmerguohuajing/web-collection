@@ -1,13 +1,8 @@
 {
   "name": "@web-collection/sdk",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/programmerguohuajing/web-collection.git",
-    "directory": "packages/sdk"
-  },
   "files": [
     "dist",
     "index.d.ts",
