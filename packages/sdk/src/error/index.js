@@ -34,9 +34,16 @@ export function setupErrorMonitor({ error, clipSize = 500 }) {
   }
 }
 
+/**
+ * 构建元素的 CSS 选择器路径，用于错误定位
+ * 格式：tagName#id.class1.class2，截断到 240 字符
+ * @param {Element} element - DOM 元素
+ * @returns {string} 元素路径字符串
+ */
 function safeElementPath(element) {
   const tag = String(element?.tagName || '').toLowerCase()
   const id = element?.id ? `#${element.id}` : ''
+  // 仅取前 2 个 class 名防止超长
   const classes = typeof element?.className === 'string' ? element.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(name => `.${name}`).join('') : ''
   return `${tag}${id}${classes}`.slice(0, 240)
 }
