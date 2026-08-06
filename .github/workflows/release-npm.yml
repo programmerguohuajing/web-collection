@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
   id-token: write
 
 jobs:
@@ -16,22 +17,47 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+
+      - name: Setup Node and pnpm
+        uses: actions/setup-node@v4
         with:
-          node-version: 24
-          cache: pnpm
+          node-version: '18'
           registry-url: 'https://registry.npmjs.org'
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @web-collection/sdk test
-      - run: pnpm --filter @web-collection/sdk build
+
+      - name: Enable corepack and pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run SDK tests
+        run: pnpm --filter @web-collection/sdk test
+
+      - name: Build SDK
+        run: pnpm --filter @web-collection/sdk build
+
       - name: Verify tag matches package version
         if: github.ref_type == 'tag'
         shell: bash
         run: |
           package_version="$(node -p "require('./packages/sdk/package.json').version")"
-          test "$GITHUB_REF_NAME" = "v$package_version"
+          if [ "$GITHUB_REF_NAME" != "v$package_version" ]; then
+            echo "Tag name ($GITHUB_REF_NAME) does not match package version (v$package_version)";
+            exit 1;
+          fi
+
+      - name: Configure npm auth
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+
       - name: Publish SDK
         if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.ref_name == 'main')
         working-directory: packages/sdk
-        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --no-git-checks --access public
