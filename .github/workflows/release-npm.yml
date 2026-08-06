@@ -46,7 +46,7 @@ jobs:
       - name: Configure npm auth
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
         run: |
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
 
@@ -54,5 +54,5 @@ jobs:
         if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.ref_name == 'main')
         working-directory: packages/sdk
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
         run: pnpm publish --no-git-checks --access public
