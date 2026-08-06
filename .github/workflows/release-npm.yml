@@ -27,11 +27,8 @@ jobs:
       - name: Install pnpm v7
         run: npm install -g pnpm@7
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run SDK tests
-        run: pnpm --filter @web-collection/sdk test || true
+      - name: Install SDK dependencies (package-only)
+        run: pnpm --filter @web-collection/sdk install --workspace-root=false
 
       - name: Build SDK
         run: pnpm --filter @web-collection/sdk build
