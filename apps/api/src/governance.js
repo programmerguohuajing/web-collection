@@ -74,6 +74,14 @@ export async function saveApplication(input) {
 }
 
 export async function deleteApplication(appId) {
+  // 先删除该应用所有入库的采集数据（releases 通过 ON DELETE CASCADE 自动删除）
+  await run('delete from events where app_id=?', [appId])
+  await run('delete from issues where app_id=?', [appId])
+  await run('delete from replay_events where app_id=?', [appId])
+  await run('delete from sourcemaps where app_id=?', [appId])
+  await run('delete from alert_history where app_id=?', [appId]) // alert_deliveries 通过 ON DELETE CASCADE 级联
+  await run('delete from funnel_definitions where app_id=?', [appId])
+  // 最后删除应用记录
   await run('delete from applications where app_id=?', [appId])
   applicationCache.delete(appId)
   rulesCache.delete(appId)
