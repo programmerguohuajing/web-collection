@@ -48,7 +48,11 @@ async function submitApp() {
   await load()
 }
 async function removeApp(row) {
-  const confirmed = await ElMessageBox.confirm(`确定删除应用“${row.name}”吗？版本配置会一并删除，已采集数据仍会保留；SDK 继续上报时应用会重新出现。`, '删除应用', { type: 'warning' }).then(() => true).catch(() => false)
+  const confirmed = await ElMessageBox.confirm(
+    `确定删除应用"${row.name}"吗？此操作将同步删除该应用所有入库数据（事件、错误、回放、SourceMap、告警历史等），且不可恢复。`,
+    '删除应用',
+    { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+  ).then(() => true).catch(() => false)
   if (!confirmed) return
   await deleteApplication(row.app_id)
   ElMessage.success('应用已删除')
@@ -101,7 +105,7 @@ async function submitRelease() {
   }
 }
 async function removeRelease(row) {
-  const confirmed = await ElMessageBox.confirm(`确定删除版本“${row.release_name}”吗？SDK 继续上报该版本时会重新出现。`, '删除版本', { type: 'warning' }).then(() => true).catch(() => false)
+  const confirmed = await ElMessageBox.confirm(`确定删除版本"${row.release_name}"吗？SDK 继续上报该版本时会重新出现。`, '删除版本', { type: 'warning' }).then(() => true).catch(() => false)
   if (!confirmed) return
   await deleteRelease(activeAppId.value, row.release_name)
   if (releases.value.length === 1 && releasePager.page > 1) releasePager.page--
