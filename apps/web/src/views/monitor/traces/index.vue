@@ -2,12 +2,14 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { api, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
 import SearchPanel from '../../../components/SearchPanel.vue'
+import DistributedTraceTree from '../../../components/DistributedTraceTree.vue'
 
 const traces = ref([])
 const spans = ref([])
 const active = ref(null)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
 const spanPager = reactive({ page: 1, pageSize: 10, total: 0 })
+const activeTab = ref('spans')
 
 async function load() {
   pageLoading.value = true
@@ -30,6 +32,7 @@ async function open(row) {
   if (!row.trace_id?.trim()) return
   active.value = row
   spanPager.page = 1
+  activeTab.value = 'spans'
   await loadSpans()
 }
 onMounted(load)
@@ -51,15 +54,27 @@ watch(refreshVersion, () => { pager.page = 1; load() })
     </el-table>
     <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="pager.page" :page-size="pager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="pager.total" @current-change="value => { pager.page = value; load() }" @size-change="value => { pager.page = 1; pager.pageSize = value; load() }" />
   </el-card>
-  <el-drawer v-model="active" size="65%" :title="`链路 ${active?.trace_id || ''}`">
-    <el-table :data="spans" border>
-      <el-table-column label="时间" width="140"><template #default="{ row }">{{ new Date(row.ts).toLocaleTimeString() }}</template></el-table-column>
-      <el-table-column prop="metric" label="Span" width="120" />
-      <el-table-column label="耗时(ms)" width="110"><template #default="{ row }">{{ Number(Number(row.value || 0).toFixed(2)) }}</template></el-table-column>
-      <el-table-column prop="spanId" label="Span ID" width="150" />
-      <el-table-column label="请求" min-width="260"><template #default="{ row }">{{ row.props?.method }} {{ row.props?.url || row.url }}</template></el-table-column>
-      <el-table-column label="状态" width="90"><template #default="{ row }">{{ row.props?.status || '-' }}</template></el-table-column>
-    </el-table>
-    <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="spanPager.page" :page-size="spanPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="spanPager.total" @current-change="value => { spanPager.page = value; loadSpans() }" @size-change="value => { spanPager.page = 1; spanPager.pageSize = value; loadSpans() }" />
+  <el-drawer v-model="active" size="75%" :title="`链路 ${active?.trace_id || ''}`">
+    <el-tabs v-model="activeTab" class="trace-tabs">
+      <el-tab-pane label="Span 列表" name="spans">
+        <el-table :data="spans" border>
+          <el-table-column label="时间" width="140"><template #default="{ row }">{{ new Date(row.ts).toLocaleTimeString() }}</template></el-table-column>
+          <el-table-column prop="metric" label="Span" width="120" />
+          <el-table-column label="耗时(ms)" width="110"><template #default="{ row }">{{ Number(Number(row.value || 0).toFixed(2)) }}</template></el-table-column>
+          <el-table-column prop="span_id" label="Span ID" width="150" />
+          <el-table-column label="请求" min-width="260"><template #default="{ row }">{{ row.props?.method }} {{ row.props?.url || row.url }}</template></el-table-column>
+          <el-table-column label="状态" width="90"><template #default="{ row }">{{ row.props?.status || '-' }}</template></el-table-column>
+        </el-table>
+        <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="spanPager.page" :page-size="spanPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="spanPager.total" @current-change="value => { spanPager.page = value; loadSpans() }" @size-change="value => { spanPager.page = 1; spanPager.pageSize = value; loadSpans() }" />
+      </el-tab-pane>
+      <el-tab-pane label="分布式调用树" name="tree" v-if="active?.trace_id">
+        <DistributedTraceTree :trace-id="active.trace_id" />
+      </el-tab-pane>
+    </el-tabs>
   </el-drawer>
 </template>
+
+<style scoped>
+.trace-tabs { height: 100%; }
+.trace-tabs :deep(.el-tabs__content) { max-height: calc(100vh - 200px); overflow-y: auto; }
+</style>
