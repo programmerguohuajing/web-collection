@@ -27,6 +27,8 @@ import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, s
 import { getId } from './utils/id.js'
 import { setupEnvironmentMonitor } from './utils/environment.js'
 import { setupRuntimeMonitor } from './utils/runtime.js'
+// 链路追踪模块
+import { createTracer, Tracer, getCurrentSpan, Span, SpanKind } from './trace/index.js'
 
 /** localStorage 中持久化待上报事件队列的键名 */
 const STORE_KEY = '__web_collection_queue__'
@@ -104,6 +106,10 @@ export function createEys(options = {}) {
     collectKey: '',
     tracing: true,
     traceOrigins: [],
+    // distributedTracing 开启链路追踪的层级 span 功能
+    distributedTracing: false,
+    // baggage 静态业务属性，会透传到所有 span
+    baggage: {},
     // requests 控制是否开启请求性能采集。
     requests: true,
     // exposure 控制是否开启曝光采集。
@@ -158,6 +164,16 @@ export function createEys(options = {}) {
   const originalFetch = window.fetch?.bind(window)
   const replayEvents = []
   const pageTraceId = randomHex(16)
+  // 创建 Tracer 实例（当 distributedTracing 开启时）
+  const tracer = cfg.distributedTracing
+    ? createTracer({
+        name: 'web-eys-sdk',
+        version: SDK_VERSION,
+        traceId: pageTraceId,
+        baggage: cfg.baggage,
+        sampler: { sampleRate: cfg.sampleRate, categorySampleRates: cfg.categorySampleRates }
+      })
+    : null
   /** 回放分段：基础会话 ID 不变，发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
    *  每种 sessionId 对应一条独立的回放记录，不再互相叠加。 */
   const replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -204,7 +220,31 @@ export function createEys(options = {}) {
 
   if (cfg.enabled && cfg.consent !== 'denied') startCapture()
 
-  return { track, error, metric, log, setUser, setConsent, setEnabled, setContext, addBreadcrumb, startTransaction, markPageReady: () => metric('data_ready', performance.now()), flush, destroy, startReplay, stopReplay: stopReplayRecording, flushReplay, addReplayEvent, takeReplaySnapshot, endReplaySegment }
+  return {
+    track,
+    error,
+    metric,
+    log,
+    setUser,
+    setConsent,
+    setEnabled,
+    setContext,
+    addBreadcrumb,
+    startTransaction,
+    markPageReady: () => metric('data_ready', performance.now()),
+    flush,
+    destroy,
+    startReplay,
+    stopReplay: stopReplayRecording,
+    flushReplay,
+    addReplayEvent,
+    takeReplaySnapshot,
+    endReplaySegment,
+    // 链路追踪公共 API
+    startSpan: tracer ? (name, options) => tracer.startSpan(name, options) : noopSpan,
+    withSpan: tracer ? (name, fn, options) => tracer.withSpan(name, fn, options) : (name, fn) => fn(),
+    getCurrentSpan: () => tracer?.getCurrentSpan?.() ?? null
+  }
 
   function startCapture() {
     if (captureStarted) return
@@ -218,7 +258,18 @@ export function createEys(options = {}) {
     stopError = setupErrorMonitor({ error, clipSize: 500 })
     // 4) 性能监控（单例，只初始化一次）
     if (!performanceStarted) {
-      finalizePerformance = setupPerformanceMonitor({ metric, error, endpoint: cfg.endpoint, originalFetch, requests: cfg.requests, tracing: cfg.tracing, traceOrigins: cfg.traceOrigins, pageTraceId, requestAllowlist: cfg.privacy.requestAllowlist })
+      finalizePerformance = setupPerformanceMonitor({
+        metric,
+        error,
+        endpoint: cfg.endpoint,
+        originalFetch,
+        requests: cfg.requests,
+        tracing: cfg.tracing,
+        traceOrigins: cfg.traceOrigins,
+        pageTraceId,
+        requestAllowlist: cfg.privacy.requestAllowlist,
+        tracer
+      })
       performanceStarted = true
     }
     // 5) 内存监控
@@ -302,8 +353,19 @@ export function createEys(options = {}) {
 
   /** 性能指标上报：记录耗时数据，同时对慢 API 自动上报 slow_api_rate=100 */
   function metric(name, value, props = {}) {
-    const { __traceId: traceId, __spanId: spanId, ...details } = props
-    push({ type: 'perf', metric: name, value: Number(value), props: details, traceId, spanId })
+    // 从当前 span 上下文中提取链路追踪信息
+    const currentSpan = tracer?.getCurrentSpan?.()
+    const spanCtx = currentSpan?.getContext?.()
+    const { __traceId: traceId, __spanId: spanId, __parentSpanId: propParentSpanId, ...details } = props
+    push({
+      type: 'perf',
+      metric: name,
+      value: Number(value),
+      props: details,
+      traceId: traceId ?? spanCtx?.traceId ?? pageTraceId,
+      spanId,
+      parentSpanId: propParentSpanId ?? spanCtx?.parentSpanId
+    })
     // 自动检测慢 API（>1s），上报慢请求率指标
     if (name === 'fetch' || name === 'xhr') {
       push({ type: 'perf', metric: 'slow_api_rate', value: Number(value) > 1000 ? 100 : 0, props: { threshold: 1000 } })
@@ -656,7 +718,48 @@ function loadQueue(maxQueue) {
  * @returns {object} 空操作的客户端对象
  */
 function noopClient() {
-  return { track() {}, error() {}, metric() {}, log() {}, setUser() {}, setConsent() {}, setEnabled() {}, setContext() {}, addBreadcrumb() {}, startTransaction() { return { setData() {}, finish() {} } }, markPageReady() {}, flush() {}, destroy() {}, startReplay() {}, stopReplay() {}, flushReplay() {}, addReplayEvent() {}, takeReplaySnapshot() {}, endReplaySegment() {} }
+  return {
+    track() {},
+    error() {},
+    metric() {},
+    log() {},
+    setUser() {},
+    setConsent() {},
+    setEnabled() {},
+    setContext() {},
+    addBreadcrumb() {},
+    startTransaction() { return { setData() {}, finish() {} } },
+    markPageReady() {},
+    flush() {},
+    destroy() {},
+    startReplay() {},
+    stopReplay() {},
+    flushReplay() {},
+    addReplayEvent() {},
+    takeReplaySnapshot() {},
+    endReplaySegment() {},
+    startSpan() { return noopSpan() },
+    withSpan(name, fn) { return fn() },
+    getCurrentSpan() { return null }
+  }
+}
+
+/**
+ * 链路追踪未启用时的降级 span
+ * @returns {object}
+ */
+function noopSpan() {
+  return {
+    setAttribute() { return this },
+    setAttributes() { return this },
+    addEvent() {},
+    recordException() {},
+    setStatus() {},
+    end() {},
+    isEnded() { return false },
+    getContext() { return {} },
+    toJSON() { return {} }
+  }
 }
 
 /**

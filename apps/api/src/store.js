@@ -11,7 +11,7 @@ import { countEventRows, insertEventRow, listEventRows, trimEventRows } from './
 import { countIssueRows, getIssueRow, listIssueRows, resolveIssueRow, upsertIssueRow } from './repositories/issues-repo.js'
 import { countReplaySessions, insertReplayEventRow, listReplayEventRows, listReplaySessions } from './repositories/replays-repo.js'
 import { getSourceMapRow, upsertSourceMapRow } from './repositories/sourcemaps-repo.js'
-import { ensureSchema } from './db.js'
+import { run, ensureSchema } from './db.js'
 import { mapEvent } from './mappers/event-mapper.js'
 import { mapIssue } from './mappers/issue-mapper.js'
 import { mapReplay } from './mappers/replay-mapper.js'

@@ -64,6 +64,7 @@ export async function ensureSchema() {
   await run(`alter table events add column if not exists user_phone varchar(32)`)
   await run(`alter table events add column if not exists trace_id varchar(64)`)
   await run(`alter table events add column if not exists span_id varchar(32)`)
+  await run(`alter table events add column if not exists parent_span_id varchar(32)`)
   await run(`alter table events add column if not exists sdk_version varchar(32)`)
   await run(`alter table events add column if not exists environment varchar(64)`)
   await run(`alter table events add column if not exists source varchar(32)`)
@@ -201,6 +202,41 @@ export async function ensureSchema() {
   await run(`comment on column sourcemaps.file_name is 'SourceMap 对应的源文件名'`)
   await run(`comment on column sourcemaps.map_json is 'SourceMap 完整内容（JSONB 格式）'`)
   await run(`comment on column sourcemaps.created_at is 'SourceMap 上传时间戳（毫秒级 Unix 时间）'`)
+
+  // ==================== spans 表（分布式链路追踪） ====================
+  await run(`create table if not exists spans (
+    id              varchar(64) primary key,
+    trace_id        varchar(64) not null,
+    span_id         varchar(32) not null,
+    parent_span_id  varchar(32),
+    service_name    varchar(128),
+    operation_name  varchar(256),
+    kind            varchar(16),
+    start_ts        bigint not null,
+    duration        double precision,
+    status_code     varchar(16),
+    status_message  text,
+    attributes_json jsonb,
+    ts              bigint not null
+  )`)
+  // spans 表索引
+  await run(`create index if not exists idx_spans_trace on spans(trace_id, start_ts)`)
+  await run(`create index if not exists idx_spans_parent on spans(trace_id, parent_span_id)`)
+  // spans 表注释
+  await run(`comment on table spans is '分布式链路追踪 span 表，存储后端服务上报的 span 数据'`)
+  await run(`comment on column spans.id is 'Span 唯一标识（由服务端生成或客户端指定）'`)
+  await run(`comment on column spans.trace_id is '链路 ID，串联前端和后端所有 span'`)
+  await run(`comment on column spans.span_id is 'Span 唯一标识（16 位十六进制）'`)
+  await run(`comment on column spans.parent_span_id is '父 Span ID，为空表示根 span'`)
+  await run(`comment on column spans.service_name is '服务名称，如 gateway、svc-order 等'`)
+  await run(`comment on column spans.operation_name is '操作名称，如 GET /api/order'`)
+  await run(`comment on column spans.kind is 'Span 类型：SERVER/CLIENT/PRODUCER/CONSUMER/INTERNAL'`)
+  await run(`comment on column spans.start_ts is 'Span 开始时间戳（毫秒级 Unix 时间）'`)
+  await run(`comment on column spans.duration is 'Span 持续时间（毫秒）'`)
+  await run(`comment on column spans.status_code is 'Span 状态：OK/ERROR/UNSET'`)
+  await run(`comment on column spans.status_message is '状态消息（如错误描述）'`)
+  await run(`comment on column spans.attributes_json is 'Span 属性（JSONB 格式），如 http.method、http.status_code'`)
+  await run(`comment on column spans.ts is '入库时间戳'`)
 
   // ==================== 采集治理 ====================
   await run(`create table if not exists applications (

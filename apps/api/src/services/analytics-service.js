@@ -107,7 +107,109 @@ export async function getSessions(filters = {}) {
   return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(row => ({ ...row, started_at: Number(row.started_at), ended_at: Number(row.ended_at), duration: Number(row.ended_at) - Number(row.started_at), replaySessionId: replays.find(item => item.session_id.startsWith(row.session_id))?.session_id })) }
 }
 
-export async function getSessionEvents(sessionId, filters = {}) {
+export async function getTraceTopology(traceId, filters = {}) {
+  if (!traceId?.trim()) return { nodes: [], edges: [] }
+  const { where, params } = whereFor(filters, [`trace_id = ?`])
+  params.push(traceId)
+  const rows = await all(`select * from events ${where} order by ts asc limit 5000`, params)
+  const events = rows.map(mapEvent)
+
+  // 根节点：取 trace 中的页面 path
+  const pageEvent = events.find(e => e.type === 'pv' || e.name === 'pv') || events[0]
+  const pagePath = pageEvent?.path || pageEvent?.url || '/'
+  const pageId = `page:${pagePath}`
+  const nodes = new Map()
+  nodes.set(pageId, { id: pageId, label: pagePath, type: 'page', value: 1 })
+
+  const edges = new Map()
+  for (const event of events) {
+    if (!['fetch', 'xhr'].includes(event.metric)) continue
+    const method = event.props?.method || 'GET'
+    const url = event.props?.url || event.url || ''
+    const apiPath = normalizeApiPath(url)
+    const apiId = `api:${method} ${apiPath}`
+    if (!nodes.has(apiId)) {
+      nodes.set(apiId, { id: apiId, label: `${method} ${apiPath}`, type: 'api', value: 0 })
+    }
+    const node = nodes.get(apiId)
+    node.value++
+
+    const edgeKey = `${pageId}|${apiId}`
+    const existing = edges.get(edgeKey)
+    const isError = isNetworkError(event) || (event.props?.status >= 400)
+    if (existing) {
+      existing.calls++
+      existing.avgDuration = Math.round((existing.avgDuration * (existing.calls - 1) + Number(event.value || 0)) / existing.calls)
+      if (isError) existing.errors++
+    } else {
+      edges.set(edgeKey, {
+        source: pageId,
+        target: apiId,
+        calls: 1,
+        avgDuration: Number(event.value || 0),
+        errors: isError ? 1 : 0
+      })
+    }
+  }
+
+  return { nodes: [...nodes.values()], edges: [...edges.values()] }
+}
+
+function normalizeApiPath(url) {
+  try {
+    const u = new URL(url, 'http://x')
+    return `${u.host}${u.pathname}`
+  } catch { return url }
+}
+
+function isNetworkError(event) {
+  return event.props?.statusClass === 'network_error' || event.props?.failed === true || event.props?.status == null
+}
+
+export async function getClickPaths(filters = {}) {
+  const { where, params } = whereFor(filters, ["type='behavior'", "name='click'", "props_json ? 'elementLabel'"])
+  const rows = await all(`select session_id, ts, path, props_json from events ${where} order by session_id, ts limit 20000`, params)
+
+  const sessions = groupBy(rows, row => row.session_id || '')
+  const edgeMap = new Map()
+  const nodeMap = new Map()
+
+  for (const events of Object.values(sessions)) {
+    if (!events.length) continue
+    const clicks = events.map(e => {
+      const props = parseJson(e.props_json) || {}
+      return {
+        id: `${props.elementLabel}@${e.path || props.path || ''}`,
+        label: props.elementLabel || 'unknown',
+        path: e.path || props.path || ''
+      }
+    }).filter(c => c.label && c.label !== 'unknown')
+
+    const seen = new Set()
+    for (let i = 1; i < clicks.length; i++) {
+      const from = clicks[i - 1]
+      const to = clicks[i]
+      if (!from || !to) continue
+      const key = `${from.id}|${to.id}`
+      if (!nodeMap.has(from.id)) nodeMap.set(from.id, { id: from.id, label: from.label, type: 'click', value: 0 })
+      if (!nodeMap.has(to.id)) nodeMap.set(to.id, { id: to.id, label: to.label, type: 'click', value: 0 })
+      nodeMap.get(from.id).value++
+      nodeMap.get(to.id).value++
+
+      if (!edgeMap.has(key)) {
+        edgeMap.set(key, { source: from.id, target: to.id, calls: 0, sessions: 0 })
+      }
+      const edge = edgeMap.get(key)
+      edge.calls++
+      if (!seen.has(key)) {
+        edge.sessions++
+        seen.add(key)
+      }
+    }
+  }
+
+  return { nodes: [...nodeMap.values()], edges: [...edgeMap.values()] }
+}
   const page = pageOf(filters)
   if (!sessionId?.trim()) return { ...page, total: 0, items: [] }
   const [rows, totalRows] = await Promise.all([
@@ -571,4 +673,165 @@ export function whereFor(filters = {}, fixed = []) {
   if (filters.endTime) { parts.push('ts<=?'); params.push(Number(filters.endTime)) }
   if (filters.keyword) { parts.push('(name ilike ? or message ilike ? or props_json::text ilike ? or trace_id ilike ?)'); params.push(...Array(4).fill(`%${filters.keyword}%`)) }
   return { where: parts.length ? `where ${parts.join(' and ')}` : '', params }
+}
+
+/**
+ * 批量写入 span 数据到 spans 表
+ * @param {Array} spans - span 数组
+ * @returns {Promise<{ok: boolean, count: number}>}
+ */
+export async function recordSpans(spans) {
+  if (!Array.isArray(spans) || spans.length === 0) {
+    return { ok: true, count: 0 }
+  }
+  const now = Date.now()
+  for (const span of spans) {
+    const id = span.id || `${span.trace_id || span.traceId}-${span.span_id || span.spanId}-${now}`
+    await run(
+      `insert into spans(id, trace_id, span_id, parent_span_id, service_name, operation_name, kind, start_ts, duration, status_code, status_message, attributes_json, ts)
+       values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
+       on conflict (id) do update set
+         trace_id=excluded.trace_id,
+         parent_span_id=excluded.parent_span_id,
+         service_name=excluded.service_name,
+         operation_name=excluded.operation_name,
+         duration=excluded.duration,
+         status_code=excluded.status_code,
+         status_message=excluded.status_message,
+         attributes_json=excluded.attributes_json`,
+      [
+        id,
+        span.traceId || span.trace_id || '',
+        span.spanId || span.span_id || '',
+        span.parentSpanId || span.parent_span_id || '',
+        span.serviceName || span.service_name || 'unknown',
+        span.operationName || span.operation_name || '',
+        span.kind || 'INTERNAL',
+        span.startTime || span.start_ts || now,
+        span.duration ?? 0,
+        span.status?.code || span.status_code || 'UNSET',
+        span.status?.message || span.status_message || '',
+        JSON.stringify(span.attributes || span.attributes_json || {}),
+        now
+      ]
+    )
+  }
+  return { ok: true, count: spans.length }
+}
+
+/**
+ * 查询并重建分布式调用树
+ * 合并前端 events 和后端 spans，按 parentSpanId 建树
+ *
+ * @param {string} traceId - 链路 ID
+ * @param {object} filters - 过滤条件
+ * @returns {Promise<{root: object|null, nodes: Array, edges: Array, criticalPath: Array, errorSpans: Array}>}
+ */
+export async function getDistributedTrace(traceId, filters = {}) {
+  if (!traceId?.trim()) {
+    return { root: null, nodes: [], edges: [], criticalPath: [], errorSpans: [] }
+  }
+  // 并行查询前端 events 和后端 spans
+  const [events, backendSpans] = await Promise.all([
+    all('select * from events where trace_id=? order by ts asc', [traceId]),
+    all('select * from spans where trace_id=? order by start_ts asc', [traceId])
+  ])
+  // 将 events 统一转换为 span 格式
+  const eventSpans = events.map(event => ({
+    id: `event-${event.id}`,
+    traceId: event.trace_id,
+    spanId: event.span_id,
+    parentSpanId: event.parent_span_id || '',
+    serviceName: 'frontend',
+    operationName: event.metric || event.name || event.type,
+    kind: 'CLIENT',
+    startTs: Number(event.ts),
+    duration: event.type === 'perf' ? Number(event.value) : 0,
+    statusCode: event.type === 'error' ? 'ERROR' : 'OK',
+    attributes: event.props_json || {}
+  }))
+  // 合并所有 spans
+  const allSpans = [
+    ...eventSpans,
+    ...backendSpans.map(span => ({
+      id: span.id,
+      traceId: span.trace_id,
+      spanId: span.span_id,
+      parentSpanId: span.parent_span_id || '',
+      serviceName: span.service_name || 'unknown',
+      operationName: span.operation_name || '',
+      kind: span.kind || 'INTERNAL',
+      startTs: Number(span.start_ts),
+      duration: Number(span.duration) || 0,
+      statusCode: span.status_code || 'UNSET',
+      attributes: span.attributes_json || {}
+    }))
+  ]
+  // 建树
+  const spanMap = new Map()
+  const nodes = []
+  const edges = []
+  const errorSpans = []
+  const allSpanIds = new Set(allSpans.map(s => s.spanId).filter(Boolean))
+  for (const span of allSpans) {
+    if (!span.spanId) continue
+    spanMap.set(span.spanId, span)
+    const isError = span.statusCode === 'ERROR'
+    const hasError = isError || Object.keys(span.attributes || {}).some(k => String(span.attributes[k]).toLowerCase().includes('error'))
+    const node = {
+      id: span.spanId,
+      name: span.operationName,
+      service: span.serviceName,
+      kind: span.kind,
+      startTs: span.startTs,
+      duration: span.duration,
+      status: span.statusCode,
+      hasError: hasError || isError
+    }
+    if (span.parentSpanId && spanMap.has(span.parentSpanId)) {
+      edges.push({ source: span.parentSpanId, target: span.spanId })
+    }
+    nodes.push(node)
+    if (hasError || isError) errorSpans.push(span.spanId)
+  }
+  // 找根节点
+  const roots = nodes.filter(node => {
+    const span = spanMap.get(node.id)
+    return !span.parentSpanId || !allSpanIds.has(span.parentSpanId)
+  })
+  // 计算关键路径（耗时最长的链）
+  const criticalPath = computeCriticalPath(roots, spanMap)
+  return { root: roots[0] || null, nodes, edges, criticalPath, errorSpans }
+}
+
+/**
+ * 计算关键路径（从根到叶子耗时最长的链）
+ * @param {Array} roots - 根节点列表
+ * @param {Map} spanMap - spanId -> span 映射
+ * @returns {Array} 关键路径节点 ID 列表
+ */
+function computeCriticalPath(roots, spanMap) {
+  if (!roots.length) return []
+  // DFS 找最长路径
+  function dfs(spanId, path, maxPath) {
+    path.push(spanId)
+    const span = spanMap.get(spanId)
+    const children = [...spanMap.values()].filter(s => s.parentSpanId === spanId)
+    if (!children.length) {
+      if (path.length > maxPath.path.length) {
+        maxPath.path = [...path]
+        maxPath.duration = children.reduce((sum, c) => sum + (spanMap.get(c.spanId)?.duration || 0), 0) + (span?.duration || 0)
+      }
+    } else {
+      for (const child of children) {
+        dfs(child.spanId, path, maxPath)
+      }
+    }
+    path.pop()
+  }
+  let maxPath = { path: [], duration: 0 }
+  for (const root of roots) {
+    dfs(root.id, [], maxPath)
+  }
+  return maxPath.path
 }
