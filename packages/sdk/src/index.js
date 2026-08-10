@@ -28,7 +28,7 @@ import { getId } from './utils/id.js'
 import { setupEnvironmentMonitor } from './utils/environment.js'
 import { setupRuntimeMonitor } from './utils/runtime.js'
 // 链路追踪模块
-import { createTracer, Tracer, getCurrentSpan, Span, SpanKind } from './trace/index.js'
+import { createTracer, createSampler, Tracer, getCurrentSpan, Span, SpanKind } from './trace/index.js'
 
 /** localStorage 中持久化待上报事件队列的键名 */
 const STORE_KEY = '__web_collection_queue__'
@@ -171,7 +171,7 @@ export function createEys(options = {}) {
         version: SDK_VERSION,
         traceId: pageTraceId,
         baggage: cfg.baggage,
-        sampler: { sampleRate: cfg.sampleRate, categorySampleRates: cfg.categorySampleRates }
+        sampler: createSampler({ sampleRate: cfg.sampleRate, categorySampleRates: cfg.categorySampleRates })
       })
     : null
   /** 回放分段：基础会话 ID 不变，发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
