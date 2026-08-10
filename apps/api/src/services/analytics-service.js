@@ -220,14 +220,18 @@ export async function getClickPaths(filters = {}) {
 }
 
 export async function getPaths(filters = {}) {
+  const page = pageOf(filters)
   const { where, params } = whereFor(filters, ["type='behavior'", "name in ('pv','pushState','replaceState','popstate','hashchange')"])
-  const rows = await all(`select session_id, path, ts from events ${where} order by session_id, ts limit 20000`, params)
+  const rows = await all(`select session_id, path, ts from events ${where} order by session_id, ts`, params)
   const counts = new Map()
   for (const events of Object.values(groupBy(rows, row => row.session_id || ''))) {
     const path = events.map(item => item.path).filter((value, index, list) => value && value !== list[index - 1]).slice(0, 8).join(' → ')
     if (path) counts.set(path, (counts.get(path) || 0) + 1)
   }
-  return [...counts].map(([path, count]) => ({ path, count })).sort((a, b) => b.count - a.count).slice(0, 50)
+  const sorted = [...counts].map(([path, count]) => ({ path, count })).sort((a, b) => b.count - a.count)
+  const total = sorted.length
+  const start = (page.page - 1) * page.pageSize
+  return { ...page, total, items: sorted.slice(start, start + page.pageSize) }
 }
 
 export async function getLive(filters = {}) {
