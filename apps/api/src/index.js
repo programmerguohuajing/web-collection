@@ -205,6 +205,14 @@ app.post('/api/applications/:appId/collect-key', async (req, res, next) => {
 app.get('/api/logs', async (req, res, next) => { try { res.json(await listLogs(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/traces', async (req, res, next) => { try { res.json(await listTraces(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await getTrace(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/traces/:traceId/distributed', async (req, res, next) => { try { res.json(await getDistributedTrace(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
+// 链路追踪 span 接收端点
+app.post('/api/spans', async (req, res, next) => {
+  try {
+    const spans = Array.isArray(req.body) ? req.body : [req.body]
+    res.json(await recordSpans(spans))
+  } catch (err) { next(err) }
+})
 app.get('/api/analytics/sessions', async (req, res, next) => { try { res.json(await getSessions(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(filters(req.query))) } catch (err) { next(err) } })
