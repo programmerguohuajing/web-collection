@@ -4,17 +4,19 @@ import { api, queryFromFilters, pageLoading } from '../dashboard.js'
 import SearchPanel from '../components/SearchPanel.vue'
 
 const rows = ref([])
+const pager = reactive({ page: 1, pageSize: 20, total: 0 })
 
 async function load() {
   pageLoading.value = true
   try {
-    const suffix = queryFromFilters()
+    const suffix = queryFromFilters({ page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/analytics/paths?${suffix}`)
-    rows.value = Array.isArray(data) ? data : []
+    rows.value = data.items || []
+    pager.total = data.total || 0
   } finally { pageLoading.value = false }
 }
 
-function onSearch() { load() }
+function onSearch() { pager.page = 1; load() }
 
 onMounted(load)
 </script>
@@ -51,6 +53,7 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="pager.page" :page-size="pager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="pager.total" @current-change="value => { pager.page = value; load() }" @size-change="value => { pager.page = 1; pager.pageSize = value; load() }" />
   </el-card>
 </template>
 
