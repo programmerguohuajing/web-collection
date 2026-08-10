@@ -25,14 +25,25 @@ import { observe, onReady } from '../utils/performance.js'
  * @param {string} opts.endpoint - 采集接口地址，用于过滤自身请求避免循环上报
  * @param {Function} opts.originalFetch - 原始 fetch 引用，用于请求监控
  * @param {boolean} opts.requests - 是否开启请求（Fetch + XHR）性能监控
+ * @param {object} [opts.tracer] - Tracer 实例（用于链路追踪）
  */
-export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch, requests, tracing, traceOrigins, pageTraceId, requestAllowlist = [] }) {
+export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch, requests, tracing, traceOrigins, pageTraceId, requestAllowlist = [], tracer }) {
+  // 创建 Page Root Span（作为页面加载的根 span）
+  const rootSpan = tracer?.createRootSpan?.('page', { 'page.url': location.href })
+  const rootContext = rootSpan?.getContext()
+
   // 页面加载完成后采集 Navigation Timing 指标
   onReady(() => {
     const nav = performance.getEntriesByType('navigation')[0]
     if (nav) {
       const values = navigationMetrics(nav)
-      metric('navigation', nav.duration, { ...values, __traceId: pageTraceId, __spanId: pageTraceId.slice(0, 16) })
+      metric('navigation', nav.duration, {
+        ...values,
+        // 链路追踪字段
+        __traceId: rootContext?.traceId ?? pageTraceId,
+        __spanId: rootContext?.spanId,
+        __parentSpanId: rootContext?.parentSpanId
+      })
       for (const [name, value] of Object.entries(values)) metric(name, value)
     }
   })
@@ -62,8 +73,8 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
 
   if (requests) {
     const serverTiming = setupServerTimingMonitor({ metric })
-    setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist, serverTiming })
-    setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist, serverTiming })
+    setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist, serverTiming, tracer })
+    setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist, serverTiming, tracer })
     setupWebSocketMonitor({ metric, error })
     setupSseMonitor({ metric, error })
   }

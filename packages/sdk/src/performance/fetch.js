@@ -8,33 +8,98 @@
  * @param {string} opts.endpoint - 采集接口地址，用于过滤
  * @param {Function} opts.metric - 性能指标上报方法
  * @param {Function} opts.error - 错误上报方法
+ * @param {object} [opts.tracer] - Tracer 实例（可选，用于链路追踪）
  */
-export function setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming }) {
+export function setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming, tracer }) {
   if (!originalFetch) return
 
   window.fetch = async (input, init = {}) => {
     const url = String(input?.url || input)
     const start = performance.now()
-    const spanId = randomHex(8)
+    const method = init.method || input?.method || 'GET'
     const traced = tracing && allowedRequest(url, requestAllowlist) && canTrace(url, traceOrigins)
-    const requestInit = traced ? { ...init, headers: withTraceHeader(input, init, pageTraceId, spanId) } : init
+
+    // 使用 Tracer 创建层级 span（如果可用）
+    let activeSpan = null
+    let spanContext = null
+    if (tracer && traced) {
+      activeSpan = tracer.startSpan('fetch ' + url, {
+        kind: 'CLIENT',
+        attributes: {
+          'http.url': url,
+          'http.method': method
+        }
+      })
+      spanContext = activeSpan.getContext()
+    }
+
+    // 构建请求头
+    const requestInit = init
+    if (spanContext) {
+      const headers = new Headers(init.headers || input?.headers)
+      headers.set('traceparent', `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags}`)
+      // 注入 baggage（如果有）
+      if (activeSpan?.context?.baggage?.size > 0) {
+        for (const [key, value] of activeSpan.context.baggage) {
+          headers.set('baggage-' + encodeURIComponent(key), encodeURIComponent(value))
+        }
+      }
+      requestInit = { ...init, headers }
+    }
+
     try {
       const res = await originalFetch(input, requestInit)
       if (!url.includes(endpoint) && allowedRequest(url, requestAllowlist)) {
         const timing = performance.getEntriesByName(new URL(url, location.href).href).at(-1)
-        const fetchProps = { url, method: init.method || input?.method || 'GET', status: res.status, statusClass: `${Math.floor(res.status / 100)}xx`, ok: res.ok, responseSize: Number(res.headers?.get?.('content-length') || 0) || undefined, dns: timing ? timing.domainLookupEnd - timing.domainLookupStart : undefined, tcp: timing ? timing.connectEnd - timing.connectStart : undefined, ttfb: timing?.responseStart, __traceId: traced ? pageTraceId : undefined, __spanId: traced ? spanId : undefined }
+        const fetchProps = {
+          url,
+          method,
+          status: res.status,
+          statusClass: `${Math.floor(res.status / 100)}xx`,
+          ok: res.ok,
+          responseSize: Number(res.headers?.get?.('content-length') || 0) || undefined,
+          dns: timing ? timing.domainLookupEnd - timing.domainLookupStart : undefined,
+          tcp: timing ? timing.connectEnd - timing.connectStart : undefined,
+          ttfb: timing?.responseStart,
+          // 链路追踪字段
+          __traceId: spanContext?.traceId ?? (traced ? pageTraceId : undefined),
+          __spanId: spanContext?.spanId,
+          __parentSpanId: spanContext?.parentSpanId
+        }
         const serverTimingHeader = res.headers?.get?.('server-timing')
         if (serverTiming && serverTimingHeader) fetchProps.serverTiming = serverTiming.parse(serverTimingHeader)
         metric('fetch', performance.now() - start, fetchProps)
         if (!res.ok) error(new Error(`HTTP ${res.status}`), { name: 'FetchError', source: url, status: res.status, errorType: 'http' })
+
+        // 从响应头提取后端返回的 trace 上下文
+        if (activeSpan) {
+          const responseTraceparent = res.headers?.get?.('traceresponse') || res.headers?.get?.('traceparent')
+          if (responseTraceparent) {
+            const parts = responseTraceparent.split('-')
+            if (parts.length >= 4) {
+              // 更新 span，记录服务端返回的 spanId
+              activeSpan.setAttribute('http.response_trace_id', parts[1])
+            }
+          }
+        }
       }
       return res
     } catch (err) {
       if (!url.includes(endpoint) && allowedRequest(url, requestAllowlist)) {
         const errorType = err?.name === 'AbortError' ? 'aborted' : err?.name === 'TimeoutError' ? 'timeout' : 'network'
         error(err, { name: 'FetchError', source: url, errorType, aborted: errorType === 'aborted' })
+        // 记录异常到 span
+        if (activeSpan) {
+          activeSpan.recordException(err)
+        }
       }
       throw err
+    } finally {
+      // 结束 span
+      if (activeSpan) {
+        activeSpan.end()
+        tracer?.endSpan(activeSpan)
+      }
     }
   }
 }
@@ -58,21 +123,6 @@ function allowedRequest(value, allowlist) {
 }
 
 /**
- * 构造带 traceparent 头部的新 headers 对象（W3C Trace Context 标准）
- * traceparent 格式：00-{traceId}-{spanId}-01
- * @param {Request|string} input  - fetch 的 input 参数
- * @param {RequestInit} init      - fetch 的 init 参数
- * @param {string} traceId        - 32 位十六进制 traceId
- * @param {string} spanId         - 16 位十六进制 spanId
- * @returns {Headers} 合并了 traceparent 的新 headers
- */
-function withTraceHeader(input, init, traceId, spanId) {
-  const headers = new Headers(init.headers || input?.headers)
-  headers.set('traceparent', `00-${traceId}-${spanId}-01`)
-  return headers
-}
-
-/**
  * 判断请求 URL 是否允许注入链路追踪 header
  * 同源请求始终允许，跨域请求仅当 origin 在 traceOrigins 白名单内才允许
  * @param {string} value          - 请求 URL
@@ -81,15 +131,4 @@ function withTraceHeader(input, init, traceId, spanId) {
  */
 function canTrace(value, origins = []) {
   try { const url = new URL(value, location.href); return url.origin === location.origin || origins.includes(url.origin) } catch { return false }
-}
-
-/**
- * 生成指定字节数的安全随机十六进制字符串（用于 traceId / spanId）
- * @param {number} bytes - 字节数（如 8 → 16 位十六进制，16 → 32 位）
- * @returns {string} 十六进制字符串
- */
-function randomHex(bytes) {
-  const data = new Uint8Array(bytes)
-  crypto.getRandomValues(data)
-  return [...data].map(value => value.toString(16).padStart(2, '0')).join('')
 }
