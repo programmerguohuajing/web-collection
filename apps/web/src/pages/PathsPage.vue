@@ -11,8 +11,19 @@ async function load() {
   try {
     const suffix = queryFromFilters({ page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/analytics/paths?${suffix}`)
-    rows.value = data.items || []
-    pager.total = data.total || 0
+
+    // 兼容旧格式（数组）和新格式（对象）
+    if (Array.isArray(data)) {
+      rows.value = data
+      pager.total = data.length
+      pager.page = 1
+      pager.pageSize = data.length
+    } else {
+      rows.value = data.items || []
+      pager.total = data.total || 0
+      pager.page = data.page || 1
+      pager.pageSize = data.pageSize || 20
+    }
   } finally { pageLoading.value = false }
 }
 
