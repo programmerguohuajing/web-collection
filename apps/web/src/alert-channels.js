@@ -22,7 +22,11 @@ export function createAlertChannelForm(row = {}) {
     authType: config.authType || 'none',
     token: '',
     username: '',
-    password: ''
+    password: '',
+    appId: config.appId || '',
+    appSecret: '',
+    chatId: config.chatId || '',
+    receiveIdType: config.receiveIdType || 'chat_id'
   }
 }
 
@@ -30,7 +34,10 @@ export function buildAlertChannelPayload(form) {
   const endpoint = String(form.endpoint || '').trim()
   const recipients = String(form.recipients || '').trim()
   const type = String(form.type || '')
-  if (!form.id && !endpoint) throw new Error('新渠道必须填写 HTTPS 服务地址或 Webhook 地址')
+  const isFeishuApp = type === 'feishu_app'
+  if (!form.id && !endpoint && !isFeishuApp) throw new Error('新渠道必须填写 HTTPS 服务地址或 Webhook 地址')
+  if (!form.id && isFeishuApp && !String(form.appSecret || '').trim()) throw new Error('飞书智能体渠道必须填写 App Secret')
+  if (!form.id && isFeishuApp && !String(form.chatId || '').trim()) throw new Error('飞书智能体渠道必须填写目标群组/用户 ID')
   if ((type === 'email' || type === 'sms') && !recipients) throw new Error('邮件或短信渠道必须填写接收人')
 
   const secrets = {}
@@ -38,6 +45,7 @@ export function buildAlertChannelPayload(form) {
   if (String(form.token || '').trim()) secrets.token = String(form.token).trim()
   if (String(form.username || '').trim()) secrets.username = String(form.username).trim()
   if (String(form.password || '')) secrets.password = String(form.password)
+  if (isFeishuApp && String(form.appSecret || '').trim()) secrets.appSecret = String(form.appSecret).trim()
 
   return {
     id: form.id || undefined,
@@ -51,7 +59,10 @@ export function buildAlertChannelPayload(form) {
       recipients,
       subject: String(form.subject || '').trim(),
       templateId: String(form.templateId || '').trim(),
-      authType: form.authType || 'none'
+      authType: form.authType || 'none',
+      appId: isFeishuApp ? String(form.appId || '').trim() : undefined,
+      chatId: isFeishuApp ? String(form.chatId || '').trim() : undefined,
+      receiveIdType: isFeishuApp ? String(form.receiveIdType || 'chat_id').trim() : undefined
     },
     appIds: list(form.appIds),
     levels: list(form.levels),

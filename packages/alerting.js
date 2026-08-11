@@ -1,6 +1,6 @@
 import { Receiver } from '@upstash/qstash'
 
-export const channelTypes = ['email', 'sms', 'feishu', 'wecom', 'dingtalk', 'webhook']
+export const channelTypes = ['email', 'sms', 'feishu', 'feishu_app', 'wecom', 'dingtalk', 'webhook']
 export const alertLevels = ['warning', 'error', 'critical']
 export const alertMetrics = ['error', 'log_error', 'regression', 'lcp', 'inp', 'cls', 'longtask']
 
@@ -36,6 +36,7 @@ export function normalizeChannel(input = {}) {
     ...plainObject(input.secrets)
   }
   if (secrets.url) validateEndpoint(String(secrets.url))
+  if (type === 'feishu_app' && !String(config.chatId || '').trim()) throw new Error('飞书智能体渠道必须填写目标群组/用户 ID')
   const method = String(config.method || 'POST').toUpperCase()
   if (!['POST', 'PUT', 'PATCH'].includes(method)) throw new Error('仅支持 POST、PUT、PATCH 请求')
   return {
@@ -109,8 +110,6 @@ export async function decryptSecrets(ciphertext, masterKey) {
 
 export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
   const config = parseValue(channel.config_json ?? channel.config, {})
-  const url = String(secrets.url || '').trim()
-  validateEndpoint(url)
   const variables = {
     message: alert.message,
     appId: alert.appId,
@@ -127,25 +126,44 @@ export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
     subject: config.subject || 'Web Collection 告警',
     templateId: config.templateId || ''
   }
-  const headers = { 'content-type': 'application/json', ...renderObject(config.headers, variables, secrets) }
-  if (config.authType === 'bearer') {
-    if (!secrets.token) throw new Error('Bearer Token 未配置')
-    headers.authorization = `Bearer ${secrets.token}`
-  } else if (config.authType === 'basic') {
-    if (!secrets.username || !secrets.password) throw new Error('Basic 用户名或密码未配置')
-    headers.authorization = `Basic ${base64(encoder.encode(`${secrets.username}:${secrets.password}`))}`
-  }
   const type = channel.type
-  const body = type === 'feishu'
-    ? { msg_type: 'text', content: { text: alert.message } }
-    : type === 'wecom'
+  let targetUrl
+  let headers
+  let body
+  if (type === 'feishu') {
+    // 飞书自定义机器人：直接 POST 到群 webhook 地址
+    const url = String(secrets.url || '').trim()
+    validateEndpoint(url)
+    targetUrl = url
+    headers = { 'content-type': 'application/json' }
+    body = { msg_type: 'text', content: { text: alert.message } }
+  } else if (type === 'feishu_app') {
+    // 飞书智能体/应用机器人：通过 OpenAPI 发送
+    const resolved = await buildFeishuAppRequest(secrets, config, alert, fetcher)
+    targetUrl = resolved.url
+    headers = resolved.headers
+    body = resolved.body
+  } else {
+    const url = String(secrets.url || '').trim()
+    validateEndpoint(url)
+    targetUrl = url
+    headers = { 'content-type': 'application/json', ...renderObject(config.headers, variables, secrets) }
+    if (config.authType === 'bearer') {
+      if (!secrets.token) throw new Error('Bearer Token 未配置')
+      headers.authorization = `Bearer ${secrets.token}`
+    } else if (config.authType === 'basic') {
+      if (!secrets.username || !secrets.password) throw new Error('Basic 用户名或密码未配置')
+      headers.authorization = `Basic ${base64(encoder.encode(`${secrets.username}:${secrets.password}`))}`
+    }
+    body = type === 'wecom'
       ? { msgtype: 'text', text: { content: alert.message } }
       : type === 'dingtalk'
         ? { msgtype: 'text', text: { content: alert.message } }
         : config.bodyTemplate
           ? renderObject(JSON.parse(config.bodyTemplate), variables, secrets)
           : defaultBody(type, variables)
-  const response = await fetcher(url, {
+  }
+  const response = await fetcher(targetUrl, {
     method: config.method || 'POST',
     headers,
     body: JSON.stringify(body),
@@ -154,7 +172,14 @@ export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
   const text = await response.text()
   if (!response.ok) throw new Error(`HTTP ${response.status}${text ? `: ${redactSecrets(text.slice(0, 300), secrets)}` : ''}`)
   const result = parseValue(text, {})
-  return { providerMessageId: String(result.messageId || result.msg_id || result.id || response.headers.get('x-request-id') || '').slice(0, 256) || null }
+  let providerMessageId
+  if (type === 'feishu_app') {
+    if (result.code !== 0 && result.code !== undefined) throw new Error(`飞书接口返回错误 code=${result.code}: ${result.msg || ''}`)
+    providerMessageId = String(result.data?.message_id || result.message_id || '').slice(0, 256) || null
+  } else {
+    providerMessageId = String(result.messageId || result.msg_id || result.id || response.headers.get('x-request-id') || '').slice(0, 256) || null
+  }
+  return { providerMessageId }
 }
 
 export async function publishDelivery({ token, baseUrl, deliveryId, fetcher = fetch }) {
@@ -201,6 +226,40 @@ function renderObject(value, variables, secrets) {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, renderObject(item, variables, secrets)]))
   if (typeof value !== 'string') return value
   return value.replace(/\{\{\s*(secret\.)?([A-Za-z0-9_]+)\s*\}\}/g, (_, secret, key) => String(secret ? secrets[key] ?? '' : variables[key] ?? ''))
+}
+
+async function buildFeishuAppRequest(secrets, config, alert, fetcher) {
+  const appId = String(config.appId || '').trim()
+  const appSecret = String(secrets.appSecret || '').trim()
+  const chatId = String(config.chatId || '').trim()
+  if (!appId || !appSecret) throw new Error('飞书应用 App ID / App Secret 未配置')
+  if (!chatId) throw new Error('飞书目标群组/用户 ID 未配置')
+  const domain = String(config.feishuDomain || 'https://open.feishu.cn').replace(/\/+$/, '')
+  const receiveIdType = encodeURIComponent(String(config.receiveIdType || 'chat_id').trim() || 'chat_id')
+  const token = await getFeishuTenantToken(appId, appSecret, fetcher)
+  return {
+    url: `${domain}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: alert.message }) }
+  }
+}
+
+const feishuTokenCache = new Map()
+
+async function getFeishuTenantToken(appId, appSecret, fetcher) {
+  const cached = feishuTokenCache.get(appId)
+  if (cached && cached.expire > Date.now()) return cached.token
+  const response = await fetcher('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    signal: AbortSignal.timeout(8000)
+  })
+  const data = parseValue(await response.text(), {})
+  if (!response.ok || data.code !== 0) throw new Error(`获取飞书 tenant_access_token 失败: ${data.msg || response.status}`)
+  const expire = (Number(data.expire) || 7200) * 1000
+  feishuTokenCache.set(appId, { token: data.tenant_access_token, expire: Date.now() + expire - 60000 })
+  return data.tenant_access_token
 }
 
 function validateEndpoint(value) {

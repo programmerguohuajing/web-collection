@@ -11,6 +11,7 @@ const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
 const query = reactive({ level: '', status: '', metric: '', keyword: '' })
 const channels = ref([])
+const applications = ref([])
 const channelDialog = ref(false)
 const channelSaving = ref(false)
 const channelTestingId = ref(null)
@@ -57,6 +58,18 @@ async function loadChannels() {
     if (requestId === channelsRequestId) channels.value = []
   } finally {
     if (requestId === channelsRequestId) channelsLoading.value = false
+  }
+}
+
+async function loadApplications() {
+  try {
+    const data = await api('/api/applications', { requestKey: 'alerts:applications' })
+    applications.value = normalizePageResponse(data).items.map(item => ({
+      appId: item.app_id || item.appId || '',
+      name: item.name || item.appName || item.app_id || item.appId || '-'
+    }))
+  } catch {
+    applications.value = []
   }
 }
 
@@ -154,10 +167,10 @@ async function testChannel(row) {
   } finally { channelTestingId.value = null }
 }
 function channelTypeLabel(type) {
-  return { email: '邮件', webhook: 'Webhook', sms: '短信', dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信' }[type] || type
+  return { email: '邮件', webhook: 'Webhook', sms: '短信', dingtalk: '钉钉', feishu: '飞书', feishu_app: '飞书智能体', wecom: '企业微信' }[type] || type
 }
 
-onMounted(() => { load(); loadChannels() })
+onMounted(() => { load(); loadChannels(); loadApplications() })
 </script>
 
 <template>
@@ -258,14 +271,38 @@ onMounted(() => { load(); loadChannels() })
   <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑渠道' : '新增渠道'" width="560px" :loading="channelSaving">
     <el-form :model="channelForm" label-width="110px">
       <el-form-item label="名称"><el-input v-model="channelForm.name" /></el-form-item>
-      <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','wecom']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
-      <el-form-item label="服务地址" required>
+      <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','feishu_app','wecom']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
+      <el-form-item v-if="channelForm.type !== 'feishu_app'" label="服务地址" required>
         <el-input v-model="channelForm.endpoint" :placeholder="channelForm.endpointConfigured ? '已加密保存；留空表示不修改' : 'https://provider.example.com/webhook'" />
       </el-form-item>
+      <template v-if="channelForm.type === 'feishu_app'">
+        <el-form-item label="App ID"><el-input v-model="channelForm.appId" placeholder="飞书开放平台应用的 App ID" /></el-form-item>
+        <el-form-item label="App Secret" required>
+          <el-input v-model="channelForm.appSecret" type="password" show-password :placeholder="channelForm.endpointConfigured ? '留空表示不修改' : '飞书开放平台应用的 App Secret'" />
+        </el-form-item>
+        <el-form-item label="目标群/用户 ID" required>
+          <el-input v-model="channelForm.chatId" placeholder="群 ID（oc_xxxx）或用户 open_id / user_id" />
+        </el-form-item>
+        <el-form-item label="发送范围">
+          <el-select v-model="channelForm.receiveIdType" style="width:100%">
+            <el-option label="群（chat_id）" value="chat_id" />
+            <el-option label="用户 open_id" value="open_id" />
+            <el-option label="用户 user_id" value="user_id" />
+            <el-option label="用户 union_id" value="union_id" />
+          </el-select>
+        </el-form-item>
+        <el-alert type="info" :closable="false" show-icon title="需先把该应用机器人加入目标群并发布版本">
+          <template #default>智能体/应用机器人需在飞书开放平台开启「机器人」能力并发布，且在目标群内有发言权限、已申请 im:message 权限。</template>
+        </el-alert>
+      </template>
       <el-form-item v-if="channelForm.type === 'email' || channelForm.type === 'sms'" label="接收人" required>
         <el-input v-model="channelForm.recipients" :placeholder="channelForm.type === 'email' ? '多个邮箱以逗号分隔' : '多个手机号以逗号分隔'" />
       </el-form-item>
-      <el-form-item label="应用 App ID"><el-select v-model="channelForm.appIds" multiple filterable allow-create default-first-option style="width:100%" placeholder="留空则匹配全部应用" /></el-form-item>
+      <el-form-item label="应用 App ID">
+        <el-select v-model="channelForm.appIds" multiple filterable allow-create default-first-option style="width:100%" placeholder="留空则匹配全部应用">
+          <el-option v-for="app in applications" :key="app.appId" :label="app.name === '-' ? app.appId : `${app.name}（${app.appId}）`" :value="app.appId" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="告警级别"><el-select v-model="channelForm.levels" multiple style="width:100%"><el-option label="警告" value="warning" /><el-option label="错误" value="error" /><el-option label="严重" value="critical" /></el-select></el-form-item>
       <el-form-item label="指标"><el-select v-model="channelForm.metrics" multiple style="width:100%"><el-option v-for="metric in ['error','log_error','regression','lcp','inp','cls','longtask']" :key="metric" :label="metricLabel(metric)" :value="metric" /></el-select></el-form-item>
       <el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item>
