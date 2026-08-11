@@ -29,9 +29,14 @@ export {
   extractTraceParent,
   extractTraceState,
   extractBaggage,
+  serializeBaggage,
+  parseBaggage,
+  matchesTraceOrigin,
+  canTrace,
   createTracedRequest,
   TRACE_PARENT,
   TRACE_STATE,
+  BAGGAGE,
   BAGGAGE_PREFIX
 } from './propagation.js'
 

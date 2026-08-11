@@ -10,6 +10,8 @@
  * @param {Function} opts.error - 错误上报方法
  * @param {object} [opts.tracer] - Tracer 实例（可选，用于链路追踪）
  */
+import { injectBaggage, canTrace } from '../trace/propagation.js'
+
 export function setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming, tracer }) {
   if (!originalFetch) return
 
@@ -38,12 +40,8 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error, trac
     if (spanContext) {
       const headers = new Headers(init.headers || input?.headers)
       headers.set('traceparent', `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags}`)
-      // 注入 baggage（如果有）
-      if (activeSpan?.context?.baggage?.size > 0) {
-        for (const [key, value] of activeSpan.context.baggage) {
-          headers.set('baggage-' + encodeURIComponent(key), encodeURIComponent(value))
-        }
-      }
+      // 注入 baggage（如果有）—— 标准单一 baggage Header
+      injectBaggage(activeSpan.context, headers)
       requestInit = { ...init, headers }
     }
 
@@ -123,12 +121,6 @@ function allowedRequest(value, allowlist) {
 }
 
 /**
- * 判断请求 URL 是否允许注入链路追踪 header
- * 同源请求始终允许，跨域请求仅当 origin 在 traceOrigins 白名单内才允许
- * @param {string} value          - 请求 URL
- * @param {string[]} [origins=[]] - 允许透传 traceparent 的跨域 origin 列表
- * @returns {boolean}
+ * 判断请求 URL 是否允许注入链路追踪 header：复用 propagation.canTrace
+ * （同源始终允许；跨域仅当 origin 命中 traceOrigins 规则 string/RegExp/function）。
  */
-function canTrace(value, origins = []) {
-  try { const url = new URL(value, location.href); return url.origin === location.origin || origins.includes(url.origin) } catch { return false }
-}

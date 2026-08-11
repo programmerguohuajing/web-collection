@@ -85,8 +85,9 @@ export interface EysOptions {
   collectKey?: string
   /** 是否开启链路追踪（Trace） */
   tracing?: boolean
-  /** 链路追踪的域名白名单 */
-  traceOrigins?: string[]
+  /** 允许注入链路追踪头（traceparent/tracestate/baggage）的跨域 origin 规则；同源始终允许。
+   *  支持精确字符串（如 'https://api.example.com'）、正则（测试 origin）、或自定义函数（接收 origin 返回 boolean）。 */
+  traceOrigins?: Array<string | RegExp | ((origin: string) => boolean)>
   /** 是否采集网络请求 */
   requests?: boolean
   /** 是否将 Span（页面根 / 自动请求 / 自定义）经 Processor/Exporter 批量写入 /api/spans。
@@ -482,6 +483,39 @@ export const DEFAULT_RESOURCE: Required<SpanResource>
 export class WebCollectionSpanExporter extends SpanExporter {
   constructor(options: { send?: (payload: { schemaVersion: number; resource: SpanResource; spans: ReadableSpan[] }) => Promise<unknown>; resource?: SpanResource })
 }
+
+// ============================================================================
+// W3C 标准传播（路线图 Phase 3 · U03 / SDK-205）
+// 标准单一 `baggage` Header + tracestate 规范化 + traceOrigins 匹配（string/RegExp/function）。
+// 与 OpenTelemetry / Elastic / Grafana Faro 直接互通。
+// ============================================================================
+
+/** W3C Trace Context Header 名常量 */
+export const TRACE_PARENT: 'traceparent'
+export const TRACE_STATE: 'tracestate'
+/** W3C 标准 baggage 单一 Header 名 */
+export const BAGGAGE: 'baggage'
+/** @deprecated 旧版多 header baggage 前缀，仅用于向后兼容提取 */
+export const BAGGAGE_PREFIX: 'baggage-'
+
+/** 将 baggage（Map 或普通对象）序列化为 W3C 标准 baggage Header 值（逗号分隔 `k=v`，值 URL 编码） */
+export function serializeBaggage(baggage: Map<string, string> | Record<string, string>): string
+/** 解析 W3C 标准 baggage Header 值为 Map（兼容 member 属性，只取 value） */
+export function parseBaggage(headerValue: string): Map<string, string>
+/** 规范化 tracestate 字符串（trim/去空 member/超过 512 截断） */
+export function normalizeTraceState(value: string): string
+/** 注入 traceparent + tracestate + 标准 baggage 到 headers */
+export function injectHeaders(context: TraceContext, options?: { headers?: Headers }): Headers
+/** 注入标准 baggage 单一 Header 到 headers */
+export function injectBaggage(context: TraceContext, headers?: Headers): Headers
+/** 从 headers 提取 baggage（兼容标准 baggage 与旧 baggage-* 多个头） */
+export function extractBaggage(headers: Headers | Record<string, string>): Map<string, string>
+/** 从 headers 提取完整 TraceContext（含 traceparent/tracestate/baggage） */
+export function extractContext(headers: Headers | Record<string, string>, parentContext?: TraceContext): TraceContext | null
+/** 判断 origin 是否匹配 traceOrigins 规则（string | RegExp | function） */
+export function matchesTraceOrigin(origin: string, rule: string | RegExp | ((origin: string) => boolean) | null | undefined): boolean
+/** 判断请求 URL 是否允许注入链路追踪头（同源恒真；跨域需命中 traceOrigins 规则）。baseHref 用于非浏览器环境测试。 */
+export function canTrace(value: string, origins?: Array<string | RegExp | ((origin: string) => boolean)>, baseHref?: string): boolean
 
 /** 扩展 Window 全局类型声明 */
 declare global {
