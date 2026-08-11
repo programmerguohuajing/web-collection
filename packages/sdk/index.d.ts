@@ -220,6 +220,186 @@ declare const WebCollection: {
 
 export default WebCollection
 
+// ============================================================================
+// Tracing 公共 API
+// 以下类型与 `src/trace/index.js` 运行时导出的公共成员保持一致，
+// 解决运行时可调但 TypeScript 不允许的契约漂移（路线图 U02）。
+// ============================================================================
+
+/** Span 状态码 */
+export const SpanStatusCode: {
+  /** 成功 */
+  OK: string
+  /** 错误 */
+  ERROR: string
+  /** 未设置 */
+  UNSET: string
+}
+
+/** Span 类型（跨进程 / 内部） */
+export const SpanKind: {
+  /** 服务端接收请求 */
+  SERVER: string
+  /** 客户端发送请求 */
+  CLIENT: string
+  /** 消息生产者 */
+  PRODUCER: string
+  /** 消息消费者 */
+  CONSUMER: string
+  /** 内部操作 */
+  INTERNAL: string
+}
+
+/** Span 事件（带时间戳的标注点） */
+export interface SpanEvent {
+  name: string
+  timestamp: number
+  attributes: Record<string, unknown>
+}
+
+/** Span 状态码对象 */
+export interface SpanStatus {
+  code: string
+  message: string
+}
+
+/** Span 的可序列化上下文 */
+export interface SpanContext {
+  traceId: string
+  spanId: string
+  parentSpanId: string
+  traceFlags: string
+  traceState?: string
+}
+
+/** Span 对象：链路追踪最小工作单元 */
+export class Span {
+  constructor(options: { name: string; context: TraceContext; kind?: string; attributes?: Record<string, unknown> })
+  /** 设置单个属性 */
+  setAttribute(key: string, value: unknown): Span
+  /** 批量设置属性 */
+  setAttributes(attributes: Record<string, unknown>): Span
+  /** 添加带时间戳的标注事件 */
+  addEvent(name: string, attributes?: Record<string, unknown>): void
+  /** 记录异常到 span */
+  recordException(error: unknown, attributes?: Record<string, unknown>): void
+  /** 设置 span 状态 */
+  setStatus(code: string, message?: string): void
+  /** 结束 span（幂等） */
+  end(options?: { endTime?: number }): void
+  /** 持续时间（ms），未结束返回 null */
+  duration(): number | null
+  /** 是否已结束 */
+  isEnded(): boolean
+  /** 获取上下文信息 */
+  getContext(): SpanContext
+  /** 转换为可序列化对象 */
+  toJSON(): Record<string, unknown>
+  /** span 名称 */
+  name: string
+  /** 当前状态 */
+  status: SpanStatus
+  /** 属性表 */
+  attributes: Map<string, unknown>
+  /** 事件列表 */
+  events: SpanEvent[]
+}
+
+/** W3C Trace Context 封装 */
+export class TraceContext {
+  constructor(options?: {
+    traceId?: string
+    spanId?: string
+    parentSpanId?: string
+    traceFlags?: string
+    traceState?: string
+    baggage?: Map<string, string> | Record<string, string>
+  })
+  traceId: string
+  spanId: string
+  parentSpanId: string
+  traceFlags: string
+  traceState: string
+  baggage: Map<string, string>
+  /** 从 traceparent 字符串解析 */
+  static fromTraceParent(traceparent: string): TraceContext | null
+  /** 生成 traceparent 字符串 */
+  toTraceParent(): string
+  /** 设置 baggage 条目，返回新上下文（不可变） */
+  setBaggage(key: string, value: string): TraceContext
+  /** 获取 baggage 条目 */
+  getBaggage(key: string): string | undefined
+  /** baggage 对象 */
+  getBaggageObject(): Record<string, string>
+  /** 转为纯对象 */
+  toObject(): Record<string, unknown>
+  /** 是否根 span（无父） */
+  isRoot(): boolean
+  /** 创建子 span 上下文 */
+  child(childSpanId?: string): TraceContext
+}
+
+/** Tracer 配置项 */
+export interface TracerOptions {
+  name?: string
+  version?: string
+  traceId?: string
+  sampler?: Sampler
+  baggage?: Record<string, string>
+}
+
+/** Tracer：链路追踪核心追踪器 */
+export class Tracer {
+  constructor(options?: TracerOptions)
+  /** 创建根 span（页面加载时调用一次） */
+  createRootSpan(name?: string, attributes?: Record<string, unknown>): Span
+  /** 获取根 span */
+  getRootSpan(): Span | null
+  /** 创建并激活新 span（自动设置父子关系） */
+  startSpan(name: string, options?: { parent?: Span; kind?: string; attributes?: Record<string, unknown>; traceFlags?: string }): Span
+  /** 在 span 内执行函数，自动结束 span（同步 / 异步 / 异常均恢复父上下文） */
+  withSpan<T>(name: string, fn: (span: Span) => T, options?: Record<string, unknown>): T
+  /** 创建 HTTP CLIENT span 并注入 trace 头 */
+  startSpanWithHeaders(name: string, options?: { requestInit?: RequestInit; method?: string; url?: string; attributes?: Record<string, unknown> }): { span: Span; requestInit: RequestInit }
+  /** 从响应头提取并更新 span 上下文 */
+  extractResponse(span: Span, headers: Headers | Record<string, string>): void
+  /** 结束 span 并从活动栈弹出 */
+  endSpan(span: Span): void
+  /** 获取当前活动 span */
+  getCurrentSpan(): Span | null
+  /** 获取当前 trace 上下文 */
+  getCurrentContext(): TraceContext | null
+}
+
+/** 采样器配置项 */
+export interface SamplerOptions {
+  sampleRate?: number
+  categorySampleRates?: Record<string, number>
+  traceState?: string
+}
+
+/** 采样器：head-based 采样决策 */
+export class Sampler {
+  constructor(options?: SamplerOptions)
+  /** 决策是否采样 */
+  shouldSample(category?: string): boolean
+  /** 获取 traceFlags（'01' = sampled, '00' = not sampled） */
+  getTraceFlags(category?: string): string
+  /** 链式更新配置 */
+  with(options: SamplerOptions): Sampler
+}
+
+/** 创建 Tracer 实例（同时注册为全局活跃 Tracer） */
+export function createTracer(options?: TracerOptions): Tracer
+/** 获取当前活动 span（委托给全局活跃 Tracer） */
+export function getCurrentSpan(): Span | null
+/** 获取当前 trace 上下文（委托给全局活跃 Tracer） */
+export function getCurrentContext(): TraceContext | null
+/** 创建采样器实例 */
+export function createSampler(options?: SamplerOptions): Sampler
+/** 给定采样率返回是否采样 */
+export function isSampled(rate?: number): boolean
+
 /** 扩展 Window 全局类型声明 */
 declare global {
   interface Window {

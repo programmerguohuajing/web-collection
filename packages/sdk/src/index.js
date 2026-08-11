@@ -821,4 +821,5 @@ function serialize(value) {
   try { return JSON.stringify(value) } catch { return '[Unserializable]' }
 }
 
+export * from './trace/index.js'
 export default { createEys, install }
