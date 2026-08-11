@@ -1,8 +1,21 @@
 /** 当前 SDK 版本号 */
 export const SDK_VERSION = '0.1.16'
 
-/** 默认敏感字段列表，这些 key 对应的值会被自动脱敏替换为 [REDACTED] */
-const DEFAULT_REDACT_KEYS = ['password', 'token', 'secret', 'authorization', 'cookie']
+// Privacy v2：脱敏能力统一下沉到 sanitizer.js（single source of truth）。
+// 这里 import 供本模块 sanitizeEvent 使用，并 re-export 以保持对既有调用方（platform/core.js、测试）的兼容。
+import {
+  DEFAULT_REDACT_KEYS,
+  redactObject,
+  redactText,
+  createSanitizer
+} from './sanitizer.js'
+
+export {
+  DEFAULT_REDACT_KEYS,
+  redactObject,
+  redactText,
+  createSanitizer
+}
 
 /**
  * 判断事件来源：手动上报（manual）还是自动采集（auto）
@@ -52,51 +65,14 @@ export function sampleRateFor(category, rates = {}, fallback = 1) {
 }
 
 /**
- * 递归脱敏对象/数组中的敏感字段
- * - 深度限制 4 层，防止死循环和性能问题
- * - 数组和对象最多遍历 100 项，防止超大数据结构
- * - 为字符串的 key 会转为小写后与 redactKeys 做大小写不敏感匹配
- * @param {*} value               - 待脱敏的值
- * @param {string[]} redactKeys   - 敏感字段名列表
- * @param {number} [depth=0]      - 当前递归深度
- * @returns {*} 脱敏后的值
- */
-export function redactObject(value, redactKeys = DEFAULT_REDACT_KEYS, depth = 0) {
-  if (depth > 4 || value == null) return value
-  if (Array.isArray(value)) return value.slice(0, 100).map(item => redactObject(item, redactKeys, depth + 1))
-  if (typeof value !== 'object') return value
-  // 构造小写集合实现大小写不敏感匹配，避免大小写变体导致漏脱敏
-  const keys = new Set(redactKeys.map(key => String(key).toLowerCase()))
-  return Object.fromEntries(Object.entries(value).slice(0, 100).map(([key, item]) => [key, keys.has(key.toLowerCase()) ? '[REDACTED]' : redactObject(item, redactKeys, depth + 1)]))
-}
-
-/**
- * 对事件整体做隐私清洗：props、context、breadcrumbs 及字符串 message 中的敏感字段全部脱敏
+ * 对事件整体做隐私清洗：props、context、breadcrumbs 及字符串 message 中的敏感字段全部脱敏。
+ * 兼容旧调用 `sanitizeEvent(event, privacy)`：当传入 privacy 时按 Privacy v2 策略清洗
+ * （默认 balanced：字段脱敏 + 值级 PII 文本脱敏 + 用户手机号不可逆 hash + URL query 敏感参数剥离）。
  * @param {object} event
- * @param {{ redactKeys?: string[] }} [privacy={}]
+ * @param {{ redactKeys?: string[] } | object} [privacy={}]
  * @returns {object} 脱敏后的事件副本
  */
 export function sanitizeEvent(event, privacy = {}) {
-  // 合并默认脱敏键和用户自定义键
-  const redactKeys = [...DEFAULT_REDACT_KEYS, ...(privacy.redactKeys || [])]
-  const result = { ...event }
-  if (result.props) result.props = redactObject(result.props, redactKeys)
-  if (result.context) result.context = redactObject(result.context, redactKeys)
-  if (result.breadcrumbs) result.breadcrumbs = redactObject(result.breadcrumbs, redactKeys)
-  // 字符串类型的 message 使用正则匹配脱敏（处理 key=value 或 key: value 格式）
-  if (typeof result.message === 'string') result.message = redactText(result.message, redactKeys)
-  return result
-}
-
-/**
- * 对文本中出现的敏感 key=value 模式做正则脱敏
- * 例如 "password=abc123" → "password=[REDACTED]"
- * @param {string} value
- * @param {string[]} keys
- * @returns {string}
- */
-function redactText(value, keys) {
-  // 转义正则特殊字符后拼接成 alternation 模式
-  const pattern = keys.map(key => String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-  return pattern ? value.replace(new RegExp(`(${pattern})([=: ]+)[^,; ]+`, 'gi'), '$1$2[REDACTED]') : value
+  const sanitizer = createSanitizer(privacy)
+  return sanitizer.sanitizeEvent(event)
 }

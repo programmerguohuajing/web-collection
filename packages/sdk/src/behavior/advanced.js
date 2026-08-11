@@ -13,7 +13,7 @@ import { elementInfo } from '../utils/dom.js'
  * @param {boolean}  [options.selectTracking=false]       - 是否监听 <select> 选项变更
  * @returns {Function} 返回一个清理函数，调用后可解除所有事件监听
  */
-export function setupAdvancedBehaviorMonitor({ push, formTracking = false, rageClick = false, deadClick = false, interactionTracking = false, selectTracking = false }) {
+export function setupAdvancedBehaviorMonitor({ push, sanitizer, formTracking = false, rageClick = false, deadClick = false, interactionTracking = false, selectTracking = false }) {
   // 收集所有事件解绑函数，用于最终统一清理
   const disposers = []
   // 使用 WeakMap 存储每个 DOM 元素的点击历史，元素被移除时自动 GC，避免内存泄漏
@@ -87,16 +87,27 @@ export function setupAdvancedBehaviorMonitor({ push, formTracking = false, rageC
       if (!target || target.tagName !== 'SELECT') return
       const options = target.options
       const selectedIndex = target.selectedIndex
+      const selectedText = options[selectedIndex]?.text || ''
+      const mode = sanitizer?.mode || 'balanced'
+      // Privacy v2：默认最小化采集下拉框。
+      // - off：保留原始 selectedValue / selectedText（业务显式关闭保护）
+      // - balanced：仅采 selectedIndex、选项数量与受控 label hash（不可逆），不采原文
+      // - strict：仅采 selectedIndex 与选项数量，连 hash 都不带
+      const props = {
+        ...elementInfo(target),
+        selectedIndex,
+        totalOptions: options.length
+      }
+      if (mode === 'off') {
+        props.selectedValue = target.value || ''
+        props.selectedText = selectedText
+      } else if (mode === 'balanced') {
+        props.labelHash = sanitizer.hashIdentifier(selectedText || target.value || '')
+      }
       push({
         type: 'behavior',
         name: 'select_change',
-        props: {
-          ...elementInfo(target),
-          selectedValue: target.value || '',              // 当前选中项的值
-          selectedText: options[selectedIndex]?.text || '', // 当前选中项的文本
-          selectedIndex,                                   // 当前选中项的索引
-          totalOptions: options.length                     // 可选项总数
-        }
+        props
       })
     }
     // 使用冒泡阶段（默认），因为 select 的 change 事件通常不会被阻止冒泡

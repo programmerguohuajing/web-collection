@@ -23,7 +23,8 @@ import { setupBundleMonitor } from './performance/bundle.js'
 import { addReplayEvent, setupReplayMonitor, takeReplaySnapshot } from './replay/index.js'
 import { setupServiceWorkerMonitor } from './runtime/sw.js'
 import { imageReport } from './core/report.js'
-import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, sanitizeEvent } from './core/event.js'
+import { SDK_VERSION, eventCategory, eventSource, sampleRateFor, sanitizeEvent } from './core/event.js'
+import { createSanitizer, resolveConsent } from './core/sanitizer.js'
 import { getId } from './utils/id.js'
 import { setupEnvironmentMonitor } from './utils/environment.js'
 import { setupRuntimeMonitor } from './utils/runtime.js'
@@ -171,6 +172,10 @@ export function createEys(options = {}) {
     ...options
   }
   cfg.privacy ||= {}
+  // Privacy v2 统一 sanitizer：默认模式 balanced（生产默认最小化采集）。
+  const sanitizer = createSanitizer(cfg.privacy)
+  // 解析同意分类（含 GPC / DNT 信号映射），用于按分类门控高风险采集模块（如回放、body 采样）。
+  const consentMap = resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {})
   // 采样未命中时直接返回一个空实现客户端。
   if (Math.random() > cfg.sampleRate) return noopClient()
 
@@ -291,13 +296,16 @@ export function createEys(options = {}) {
     startReplay,
     stopReplay: stopReplayRecording,
     flushReplay,
-    addReplayEvent,
+    addReplayEvent: (tag, payload = {}) => addReplayEvent(tag, sanitizer.sanitizeEvent({ props: payload }).props),
     takeReplaySnapshot,
     endReplaySegment,
     // 链路追踪公共 API
     startSpan: tracer ? (name, options) => tracer.startSpan(name, options) : noopSpan,
     withSpan: tracer ? (name, fn, options) => tracer.withSpan(name, fn, options) : (name, fn) => fn(),
-    getCurrentSpan: () => tracer?.getCurrentSpan?.() ?? null
+    getCurrentSpan: () => tracer?.getCurrentSpan?.() ?? null,
+    // 隐私与同意自查
+    getPrivacyMode: () => sanitizer.mode,
+    getConsentCategories: () => ({ ...consentMap })
   }
 
   function startCapture() {
@@ -334,15 +342,15 @@ export function createEys(options = {}) {
     }
     // 5) 内存监控
     stopMemory = safe('memory', () => setupMemoryMonitor({ metric, interval: cfg.memoryInterval }))
-    // 6) 请求 body 采样
-    stopBodySampler = safe('bodySampler', () => setupBodySampler({ metric, sampleRate: cfg.requestBodySampling }))
+    // 6) 请求 body 采样（analytics 同意被拒绝时不采集，尊重 GPC/DNT）
+    stopBodySampler = safe('bodySampler', () => consentMap.analytics ? setupBodySampler({ metric, sampleRate: cfg.requestBodySampling, sanitizer }) : () => {})
     // 7) 白屏检测
     safe('whiteScreen', () => observeWhiteScreen())
     // 8) JS 启动耗时（用双重 rAF 确保渲染完成后再计算）
     requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
     // 9) 行为监控 + 回放路由分段
-    if (cfg.behavior) stopBehavior = safe('behavior', () => setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking }))
-    else if (cfg.replay && cfg.replaySegmentByRoute) stopRoute = safe('route', () => setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') }))
+    if (cfg.behavior) stopBehavior = safe('behavior', () => setupBehaviorMonitor({ push, sanitizer, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute && consentMap.replay) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking }))
+    else if (cfg.replay && consentMap.replay && cfg.replaySegmentByRoute) stopRoute = safe('route', () => setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') }))
     // 10) 曝光采集
     if (cfg.exposure) stopExposure = safe('exposure', () => setupExposureMonitor({ push }))
     // 11) 网络状态变化 & App 前后台切换
@@ -358,8 +366,8 @@ export function createEys(options = {}) {
       removeEventListener('offline', onOffline)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-    // 12) 回放录制
-    if (cfg.replay) safe('replay', () => startReplay())
+    // 12) 回放录制（replay 同意被拒绝时不录制，尊重 GPC/DNT）
+    if (cfg.replay && consentMap.replay) safe('replay', () => startReplay())
     // 13) 可选监控模块（按需开启）
     if (cfg.keyboardTracking) stopKeyboard = safe('keyboard', () => setupKeyboardMonitor({ push, keys: cfg.keyboardTrackingKeys }))
     if (cfg.touchTracking) stopTouch = safe('touch', () => setupTouchMonitor({ push }))
@@ -444,6 +452,8 @@ export function createEys(options = {}) {
    */
   function setConsent(status) {
     cfg.consent = status === 'denied' ? 'denied' : 'granted'
+    // 重新解析同意分类，确保后续高风险采集模块的门控与新状态一致。
+    Object.assign(consentMap, resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {}))
     if (cfg.consent === 'denied') {
       stopCapture()
       queue.length = 0
@@ -528,7 +538,7 @@ export function createEys(options = {}) {
     queue.forEach(item => {
       item.userId ||= cfg.userId
       item.userName ||= cfg.userName
-      item.userPhone ||= cfg.userPhone
+      item.userPhone ||= sanitizer.userPhone(cfg.userPhone)
     })
     saveQueue()
   }
@@ -550,11 +560,11 @@ export function createEys(options = {}) {
       stats.droppedBySample++
       return
     }
-    let prepared = sanitizeEvent(item, cfg.privacy)
+    let prepared = sanitizer.sanitizeEvent(item)
     if (typeof cfg.beforeSend === 'function') {
       try { prepared = cfg.beforeSend(prepared) } catch { prepared = false }
     }
-    if (prepared && typeof prepared === 'object') prepared = sanitizeEvent(prepared, cfg.privacy)
+    if (prepared && typeof prepared === 'object') prepared = sanitizer.sanitizeEvent(prepared)
     if (!prepared || typeof prepared !== 'object') {
       stats.dropped++
       return
@@ -578,7 +588,7 @@ export function createEys(options = {}) {
       release: cfg.release,
       userId: cfg.userId,
       userName: cfg.userName,
-      userPhone: cfg.userPhone,
+      userPhone: sanitizer.userPhone(cfg.userPhone),
       sessionId,
       deviceId,
       url: location.href,
@@ -802,6 +812,8 @@ function noopClient() {
     addReplayEvent() {},
     takeReplaySnapshot() {},
     endReplaySegment() {},
+    getPrivacyMode() { return 'balanced' },
+    getConsentCategories() { return { essential: true, performance: true, analytics: true, replay: true, diagnostics: true } },
     startSpan() { return noopSpan() },
     withSpan(name, fn) { return fn() },
     getCurrentSpan() { return null }
