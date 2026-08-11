@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createPlatformEys } from '../src/platform/core.js'
+import { SDK_VERSION } from '../src/core/event.js'
 
 const reports = []
 const requests = []
@@ -21,7 +22,7 @@ await eys.flush()
 
 assert.equal(reports.length, 3)
 assert.equal(reports[0].userId, 'u1')
-assert.equal(reports[0].sdkVersion, '0.1.7')
+assert.equal(reports[0].sdkVersion, SDK_VERSION)
 assert.equal(reports[0].source, 'manual')
 assert.equal(reports[0].props.amount, 10)
 assert.equal(reports[1].name, 'pv')
