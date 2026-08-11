@@ -13,24 +13,30 @@ import { TraceContext, randomHex } from './context.js'
 import { Sampler } from './sampler.js'
 import { injectHeaders, extractContext } from './propagation.js'
 
-/** 模块级当前 span 栈（支持嵌套 span） */
-const spanStack = []
+/**
+ * 全局活跃 Tracer：模块级便捷函数 `getCurrentSpan`/`getCurrentContext` 委托给它。
+ * 每个 Tracer 实例维护自己独立的活动 span 栈（保存在实例上），多实例之间互不污染；
+ * 模块级函数只返回「最后一个 createTracer 创建的实例」的当前上下文，用于无实例引用的场景。
+ */
+let activeTracer = null
+
+/** 设置全局活跃 Tracer（由 createTracer 调用） */
+export function setActiveTracer(tracer) { activeTracer = tracer }
 
 /**
- * 获取当前活动 span
+ * 获取当前活动 span（委托给全局活跃 Tracer）
  * @returns {Span|null}
  */
 export function getCurrentSpan() {
-  return spanStack.length > 0 ? spanStack[spanStack.length - 1] : null
+  return activeTracer ? activeTracer.getCurrentSpan() : null
 }
 
 /**
- * 获取当前 trace 上下文
+ * 获取当前 trace 上下文（委托给全局活跃 Tracer）
  * @returns {TraceContext|null}
  */
 export function getCurrentContext() {
-  const span = getCurrentSpan()
-  return span ? span.context : null
+  return activeTracer ? activeTracer.getCurrentContext() : null
 }
 
 /**
@@ -54,6 +60,8 @@ export class Tracer {
 
     /** 根 span（页面加载时创建） */
     this._rootSpan = null
+    /** 实例级活动 span 栈（支持嵌套 span，与其他 Tracer 实例隔离） */
+    this._spanStack = []
   }
 
   /**
@@ -108,7 +116,7 @@ export class Tracer {
    * @returns {Span}
    */
   startSpan(name, options = {}) {
-    const parentSpan = options.parent || getCurrentSpan()
+    const parentSpan = options.parent || this.getCurrentSpan()
     const parentContext = parentSpan?.context
 
     // 创建新 context，继承父 context 的 traceId 和 baggage
@@ -143,25 +151,25 @@ export class Tracer {
    */
   withSpan(name, fn, options = {}) {
     const span = this.startSpan(name, options)
+    // 统一收尾：记录异常（如有）并结束 span（从活动栈弹出 + span.end），
+    // 保证同步、Promise resolve/reject、thenable 和异常路径都能恢复父上下文。
+    const settle = (err) => {
+      if (err) span.recordException(err)
+      this.endSpan(span)
+    }
     try {
       const result = fn(span)
-      // 同步函数：立即结束
-      if (result instanceof Promise) {
-        // 异步函数：返回 promise 链
-        return result
-          .then(v => { span.end(); return v })
-          .catch(e => {
-            span.recordException(e)
-            span.end()
-            throw e
-          })
+      if (result && typeof result.then === 'function') {
+        return result.then(
+          (value) => { settle(null); return value },
+          (err) => { settle(err); throw err }
+        )
       }
-      span.end()
+      settle(null)
       return result
-    } catch (e) {
-      span.recordException(e)
-      span.end()
-      throw e
+    } catch (err) {
+      settle(err)
+      throw err
     }
   }
 
@@ -206,21 +214,21 @@ export class Tracer {
   }
 
   /**
-   * 激活 span（压入栈顶）
+   * 激活 span（压入实例栈顶）
    * @private
    */
   _activateSpan(span) {
-    spanStack.push(span)
+    this._spanStack.push(span)
   }
 
   /**
-   * 结束当前 span 并从栈中弹出
+   * 结束当前 span 并从实例栈中弹出（连同其上方所有未关闭的子 span）
    * @param {Span} span - 要结束的 span
    */
   endSpan(span) {
-    const idx = spanStack.lastIndexOf(span)
+    const idx = this._spanStack.lastIndexOf(span)
     if (idx !== -1) {
-      spanStack.splice(idx, 1)
+      this._spanStack.splice(idx, this._spanStack.length - idx)
     }
     if (!span.isEnded()) {
       span.end()
@@ -232,7 +240,7 @@ export class Tracer {
    * @returns {Span|null}
    */
   getCurrentSpan() {
-    return getCurrentSpan()
+    return this._spanStack.length > 0 ? this._spanStack[this._spanStack.length - 1] : null
   }
 
   /**
@@ -240,7 +248,8 @@ export class Tracer {
    * @returns {TraceContext|null}
    */
   getCurrentContext() {
-    return getCurrentContext()
+    const span = this.getCurrentSpan()
+    return span ? span.context : null
   }
 
   /**
@@ -259,7 +268,9 @@ export class Tracer {
  * @returns {Tracer}
  */
 export function createTracer(options = {}) {
-  return new Tracer(options)
+  const tracer = new Tracer(options)
+  setActiveTracer(tracer)
+  return tracer
 }
 
 export default Tracer

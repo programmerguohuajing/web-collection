@@ -51,7 +51,7 @@
   },
   "scripts": {
     "build": "vite build && vite build --config vite.platform.config.js",
-    "test": "node --test test/event.test.js && node test/platform.test.js && node test/performance.test.js && node test/console.test.js && node test/click.test.js && node test/error.test.js && node --test test/fetch.test.js"
+    "test": "node --test test/event.test.js && node test/platform.test.js && node test/performance.test.js && node test/console.test.js && node test/click.test.js && node test/error.test.js && node --test test/fetch.test.js && node --test test/trace.test.js"
   },
   "devDependencies": {
     "rrweb": "2.1.0",
