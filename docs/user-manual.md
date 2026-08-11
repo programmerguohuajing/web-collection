@@ -120,6 +120,11 @@ eys.setUser({
 - SDK 是否配置了 `replay: false`。
 - 问题是否发生在回放开始前、路由切段间隙或单段最长录制时间之后。
 - 敏感区域是否使用 `.eys-block` 或 `.eys-ignore` 主动排除。
+- 回放缓冲是否因 `replay_buffer_full`（环形缓冲被容量 / 时间窗口淘汰）而压缩——长会话或高频操作可适当调大 `replayBufferSize` / `replayWindowMs`。
+- rrweb 是否内部报错（`replay_recorder_error`）——浏览器兼容性或自定义 `replayOptions` 导致录制失败，详见诊断事件。
+- 使用 IIFE 自托管时 rrweb 是否成功加载：`replayLibUrl` 指向的脚本是否可访问、是否暴露 `window.rrweb`；ESM 则由 SDK 自动按需加载，无需额外配置。
+
+> **错误触发升采样**：SDK 在页面发生错误时会自动对回放做**错误触发升采样**——把留存窗口从默认 30 秒扩展到 60 秒并升至全采样，同时打上 `replay_error_triggered` 标记。因此带来该标记的错误会话，其回放通常比普通会话更完整，排查时应优先选择这类会话还原现场。
 
 回放用于还原操作，不应录制密码、验证码、身份证、银行卡等敏感内容。
 
@@ -287,6 +292,9 @@ SourceMap 仅上传到监控服务，不要随生产静态资源公开发布。
 - 回放数据量较大，生产环境根据流量逐步降低采样率。
 - 排查紧急问题时可临时提高采样率，问题结束后恢复。
 - 需要立即停止入库时，将事件采样率和回放采样率设为 0。
+- 降低全局 `sampleRate` **不会丢失错误**：错误事件及其关联的请求链路默认强制保留（优先级保留），即使采样率很低，错误监控与链路仍能查到对应数据；只有在显式配置 `errorSampleRate` 时才会对错误做确定性子采样。
+
+**隐私保护（默认最小化采集）**：SDK 默认 `balanced` 档，已自动对 `userPhone` 做不可逆 hash、对邮箱 / 身份证 / 银行卡 / JWT 做值级脱敏、丢弃 `Authorization`/`Cookie` 等敏感请求头、剥离 URL 中的 `token`/`code`/`phone` 等参数。不要在 `baggage` 或埋点属性中放入密码、Token、手机号原文等敏感信息；强合规场景可将 `privacy.mode` 设为 `strict`（URL 丢弃整个 query、下拉框仅采索引与数量）。浏览器发出 **GPC** 或 **DNT** 信号时，未被显式授权的回放与请求体采样会自动降级关闭——如需在用户开启 DNT 时仍采集回放，应在 `privacy.consentCategories` 中显式授权 `replay`。
 
 重置采集密钥后，旧密钥失效；必须及时更新业务 SDK 的 `collectKey`，否则新的采集请求会被拒绝。
 
@@ -353,6 +361,26 @@ SourceMap 仅上传到监控服务，不要随生产静态资源公开发布。
 ### `/api/collect` 长期处于 Pending
 
 检查请求体大小、回放批次、网络代理和 Worker 日志。先关闭回放或减小回放批次验证是否与大请求有关，但不要把临时关闭当作最终修复。
+
+### 如何观测 SDK 自身的传输与回放健康
+
+通过初始化时的 `onDiagnostic` 回调监听非敏感健康事件，用于监控采集成本与异常，不在业务数据中出现：
+
+```js
+window.WebCollection.createEys({
+  endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+  appId: 'mall-web',
+  release: '1.0.0',
+  onDiagnostic: (e) => {
+    // e.type 不含业务 PII，可上报到自有监控
+    if (e.type === 'queue_full') console.warn('本地队列溢出', e)
+    if (e.type === 'replay_buffer_full') console.warn('回放窗口被压缩', e)
+    if (e.type === 'replay_recorder_error') console.warn('rrweb 录制报错', e)
+  }
+})
+```
+
+常见类型：传输侧 `queue_full`（本地队列溢出）、`dropped_by_sampling`（被采样丢弃）、`beacon_rejected` / `beacon_oversize`（退出通道失败）、`next_session_recovered`（下一会话恢复）；回放侧 `replay_buffer_full`、`replay_worker_unavailable`（压缩降级）、`replay_compressed`（压缩字节数）、`replay_error_triggered`（错误会话标记）、`replay_recorder_error`（录制内部报错）、`replay_quality`（缓冲 / 丢帧 / 页数等质量指标）。
 
 ## 10. 问题处理检查清单
 

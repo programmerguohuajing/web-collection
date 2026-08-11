@@ -399,7 +399,7 @@ createEys({ exposure: false })
 
 ### rrweb Replay
 
-rrweb session recording is enabled by default; form inputs are redacted. On each SPA route change the current recording is stopped and a new one starts after entering the new page; a single page records for up to 60 seconds by default to avoid generating large replay data from long stays.
+Session Replay records the user's DOM via rrweb to replay the steps leading to an error. It is **opt-in by cost**: rrweb is **not** bundled into the core package. When `replay: false` (default `true`), neither the ESM nor the base IIFE build downloads, parses or compiles rrweb. When `replay: true`, rrweb is loaded on demand (ESM splits it into a separate `rrweb-*.js` chunk; the IIFE build expects it via `window.rrweb` or `replayLibUrl`). Form inputs are redacted; `.eys-block` is never recorded and `.eys-ignore` inputs are skipped. On each SPA route change the current recording stops and a new one starts; a single segment records for up to `replayMaxDuration` (default 60s).
 
 ```html
 <div class="eys-block">Sensitive area that will not be recorded</div>
@@ -407,32 +407,44 @@ rrweb session recording is enabled by default; form inputs are redacted. On each
 ```
 
 ```js
-const eys = createEys({ replay: false })
-
-eys.startReplay()
-eys.addReplayEvent('checkout_step', { step: 'pay' })
-eys.takeReplaySnapshot()
-eys.stopReplay()
+const eys = createEys({
+  replay: true,
+  replayBufferSize: 1500,    // ring-buffer capacity (bounded memory)
+  replayWindowMs: 30000,     // 30s before an error is always recoverable
+  replayCompression: true    // gzip (Worker → main thread → none fallback)
+})
 ```
 
-Custom rrweb options:
+On error, replay auto **boosts to full sampling** and extends the retention window to `replayWindowMsError` (default 60s), emitting `replay_error_triggered` so the console prioritizes that session. Canvas/iframe recording are **off by default** (`replayCanvas` / `replayIframe`).
+
+Manual control (async, fire-and-forget safe):
 
 ```js
-createEys({
-  replayMaxDuration: 60000,
-  replayOptions: {
-    checkoutEveryNms: 30000,
-    recordCanvas: true,
-    blockSelector: '.privacy',
-    ignoreSelector: '.no-record'
-  }
-})
+await eys.startReplay()
+eys.addReplayEvent('checkout_step', { step: 'pay' })
+eys.takeReplaySnapshot()
+await eys.stopReplay()
 ```
 
 Disable replay:
 
 ```js
-createEys({ replay: false })
+createEys({ replay: false })   // no rrweb download at all
+```
+
+Custom rrweb options (e.g. Canvas plugin, masking):
+
+```js
+createEys({
+  replayMaxDuration: 60000,
+  replayCanvas: true,          // must enable before recordCanvas takes effect
+  replayOptions: {
+    checkoutEveryNms: 30000,
+    blockSelector: '.privacy',
+    ignoreSelector: '.no-record'
+    // full Canvas fidelity needs @rrweb/rrweb-plugin-canvas in replayOptions.plugins
+  }
+})
 ```
 
 ### Web Worker Error Monitoring
@@ -512,11 +524,33 @@ createEys({
   replaySegmentByRoute: true,
   replayMaxDuration: 60000,
   replayBatchSize: 50,
+  replayBufferSize: 1500,     // ring-buffer capacity (bounded memory)
+  replayWindowMs: 30000,      // retention window — 30s before an error
+  replayCompression: true,    // gzip payload (none fallback)
+  replayWorkerUrl: '',        // off-main-thread gzip worker
+  replayLibUrl: '',           // IIFE self-hosting: external rrweb script
+  replayPageSize: 50,         // forced-flush page size (pagination)
+  replaySampleRate: 1,        // steady-state incremental sampling
+  replayErrorTrigger: true,   // on error → full sampling + longer window
+  replayWindowMsError: 60000, // error-boost retention window
+  replayCanvas: false,        // opt-in Canvas recording
+  replayIframe: false,        // opt-in cross-origin iframe recording
   replayOptions: {},
   // The first valid content node of the homepage, used to compute white-screen time and white-screen rate
   whiteScreenSelector: '#app > *',
   // If no valid content appears within this time, it is recorded as a white screen
   whiteScreenTimeout: 5000,
+  // Reliable transport (IndexedDB cold queue + Beacon exit channel)
+  maxBatch: 50,
+  transportTimeout: 10000,
+  beaconMaxBytes: 61440,
+  onDiagnostic: null,
+  // Deterministic sampling (same ID → same decision; errors always retained)
+  traceRate: null,            // = sampleRate when null
+  categorySampleRates: {},
+  errorSampleRate: null,      // unset ⇒ errors always retained
+  // Privacy (default balanced: PII redaction + irreversible phone hash)
+  privacy: { mode: 'balanced' },
   // Advanced behavior options (all default false / opt-in)
   formTracking: false,
   rageClick: false,
