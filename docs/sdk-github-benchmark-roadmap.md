@@ -8,7 +8,7 @@
 ## 实施进度追踪
 
 > 本路线图按 P0（可信）→ P1（轻量可组合）→ P2（规模化）分阶段落地。以下勾选框反映**实际开发进度**；完成的条目同时会在第 6 节（U 表）与第 8 节（Backlog）对应行以 `✅` 标注，并注明所属阶段。
-> 最后更新：2026-08-11（Phase 1、Phase 2 完成）
+> 最后更新：2026-08-11（Phase 1、Phase 2、Phase 3、Phase 4 完成）
 
 - [x] **Phase 1 · Tracing 可信性基础**（路线图 P0 首位，已完成并通过测试）
   - [x] **U01** 自定义 Span 生命周期与异步恢复（对应 SDK-201）：`withSpan` 在同步 / 异步 resolve / reject / 异常所有路径调用 `endSpan` 弹栈；Tracer 活动栈从模块级全局改为**实例级**，修复多实例污染；`createTracer` 注册活跃 Tracer 供模块级便捷函数委托。
@@ -21,7 +21,10 @@
 - [x] **Phase 3 · 标准 W3C baggage / tracestate**（U03，SDK-205）：替换自定义 `baggage-*` Header。
   - [x] **U03** 标准 W3C 传播（对应 SDK-205）：`propagation.js` 的 `injectBaggage` 改为写入**标准单一 `baggage` Header**（`key=value` 逗号分隔、值 `encodeURIComponent`），`serializeBaggage` / `parseBaggage` 双向实现；`extractBaggage` 优先读标准 `baggage` 并向后兼容旧 `baggage-*` 多个头（过渡期）；`tracestate` 增加 `normalizeTraceState`（trim / 去空 member / 512 上限截断）。`traceOrigins` 从「仅精确字符串」扩展为支持 **string / RegExp / function** 三类匹配（`matchesTraceOrigin` + `canTrace`），非法 URL / 不匹配规则一律拒绝注入，避免配置错误向第三方泄露 baggage。`fetch.js` / `xhr.js` 复用标准 `injectBaggage` 与 `canTrace`，删除各自本地重复实现。详见 `docs/w3c-propagation.md`（含跨域 CORS 配置）。
   - [x] **互操作测试**：新增 `packages/sdk/test/propagation.test.js`（13 例），含与「OpenTelemetry 风格解析器」互操作对拍（双方都能读懂对方的标准 `baggage` 输出）、向后兼容旧头、tracestate 规范化、`traceOrigins` 三类 matcher、非法 URL 拒绝；已接入 `npm test`，全部通过。
-- [ ] **Phase 4 · Privacy v2 统一 sanitizer**（U04 / U11，SDK-206）。
+- [x] **Phase 4 · Privacy v2 统一 sanitizer**（U04 / U11，SDK-206）。
+  - [x] **U04** Privacy v2 统一 sanitizer：新增 `packages/sdk/src/core/sanitizer.js` 作为隐私清洗唯一事实来源，提供 `strict | balanced | off` 三档策略（生产默认 `balanced`）；`sanitizeEvent` 在 `balanced`/`strict` 下对事件字段键脱敏 + 值级 PII（邮箱 / 手机号 / 身份证 / 银行卡 / JWT）文本脱敏；用户手机号默认不可逆 hash（不发明文）；URL query 敏感参数剥离（strict 丢弃整个 query）；请求 / 响应头默认移除 Authorization / Cookie / Set-Cookie / Proxy-Authorization；`requestResponseSanitizer` 钩子 + body 默认脱敏；同意分类 `essential / performance / analytics / replay / diagnostics` 与 GPC / DNT 信号映射（门控回放与 body 采样）。`select` 默认仅采 `selectedIndex` / 选项数量 / 受控 `labelHash`（balanced）或仅索引与数量（strict），不采原文；点击 label / DOM 文本经同一 sanitizer 脱敏；`addReplayEvent` 自定义事件 payload 经 sanitizer 清洗。`index.d.ts` 补全 `PrivacyMode` / `ConsentCategory` / `EysPrivacyOptions` 扩展 / `getPrivacyMode` / `getConsentCategories`。详见 `docs/privacy-v2.md`。
+  - [x] **U11** 请求 Body 隐私：body 采样经 `sanitizePair` 统一清洗（JSON 字段键脱敏 + 文本 PII 脱敏 + 敏感头丢弃），支持自定义 `requestResponseSanitizer`；`index.js` / `platform/core.js` 的 `push` 全面切换为 sanitizer 实例，且 `beforeSend` 后仍二次清洗。
+  - [x] **隐私回归测试**：新增 `packages/sdk/test/privacy.test.js`（11 例），断言语料序列化后不含明文手机号 / 邮箱 / 密码 / token / 身份证 / 银行卡 / 敏感 query 参数，已接入 `npm test`，全部通过。
 - [ ] **Phase 5 · Reliable Transport v2**（U05，SDK-207 / SDK-219 / API-220）：IndexedDB 队列、退避、429/5xx、BeaconTransport、diagnostics。
 - [ ] **Phase 6 · 确定性采样**（U06，SDK-208）。
 - [ ] **Phase 7 · Core / Replay 分包与懒加载**（U07，SDK-209 / SDK-210）。
@@ -454,14 +457,14 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | U01 ✅ | 自定义 Span | 无独立导出；活动栈清理不完整；并发异步上下文不可靠（Phase 1 已修复活动栈清理与多实例隔离；Phase 2 已补齐 Processor/Exporter 导出管线，Span 经 `/api/spans` 闭环） | Processor/Exporter + Context Manager + 生命周期测试 | P0 |
 | U02 ✅ | 类型声明 | 运行时 API/配置未全部声明（Phase 1 已在 index.d.ts 补齐 tracing 公共 API 声明） | 从同一 TS source 生成 runtime 和 `.d.ts`，增加 API Extractor diff 门禁 | P0 |
 | U03 ✅ | W3C 传播 | baggage 使用非标准 Header；traceOrigins 只支持精确字符串（Phase 3 已改为标准单一 `baggage` Header，traceOrigins 支持 string/RegExp/function matcher） | 标准 `baggage`/`tracestate`，支持 string/RegExp/function matcher | P0 |
-| U04 | 隐私 | select/点击文本/用户手机号/网络体策略不一致 | Privacy v2、统一 sanitizer、默认最小化采集 | P0 |
+| U04 ✅ | 隐私 | select/点击文本/用户手机号/网络体策略不一致（Phase 4 已落地统一 sanitizer、默认 balanced、手机号不可逆 hash、select 不采原文、body 默认脱敏） | Privacy v2、统一 sanitizer、默认最小化采集 | P0 |
 | U05 | 发送队列 | localStorage 同步阻塞；无超时/退避/429；现有 sendBeacon 仅按字符长度判断，缺鉴权、ACK 语义、幂等和失败回退 | Reliable Transport v2 + BeaconTransport + 服务端 eventId 去重 | P0 |
 | U06 | 采样 | 会话和事件随机决策，Trace/Replay 关联可能断裂 | 基于 trace/session ID 的确定性采样和优先级 | P0 |
 | U07 | Replay | 默认静态打包、无错误触发保留、无质量指标 | 独立包、懒加载、环形缓冲、Worker 压缩 | P1 |
 | U08 | Web Vitals | FID 仍在核心列表；生命周期覆盖不完整 | web-vitals v5 语义、BFCache/soft nav/LoAF | P1 |
 | U09 | Resource Timing | 个别阶段值使用绝对时间，缓存/SW 归因弱 | 标准阶段差值和 attribution 测试夹具 | P1 |
 | U10 | 错误上下文 | 异常链、机制、框架信息不足 | Error v2 + Vue/React Integration | P1 |
-| U11 | 请求 Body | 有采集开关，但仅字段名脱敏无法覆盖任意文本内容 | 内容类型限制、大小限制、路径级 allowlist、自定义 sanitizer | P0 |
+| U11 ✅ | 请求 Body | 有采集开关，但仅字段名脱敏无法覆盖任意文本内容（Phase 4 已接入 `sanitizePair` 统一清洗 + 自定义 `requestResponseSanitizer`） | 内容类型限制、大小限制、路径级 allowlist、自定义 sanitizer | P0 |
 | U12 | 死点击 | 依赖 `data-track-dead-click`，不是真正自动检测 | Mutation/导航/网络/视觉反馈窗口的启发式检测，保留声明式模式 | P2 |
 | U13 | SDK 健康 | 仅在 dropped/failed 后上报聚合 metric | 结构化 diagnostics、用户回调、平台健康面板 | P1 |
 | U14 | 文档 | `capability-roadmap.md` 多处把已实现能力写成“缺失/待做” | 建立 capability manifest，并由 CI 校验文档/类型/默认值 | P0 |
@@ -506,7 +509,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | API-203 ✅ | 定义并接收 Span Envelope v2 | `apps/api` ingest/store | 4d | v1/v2 双读；非法字段 4xx；500 Span 批量写入满足性能门禁（Phase 2 已完成：POST /api/spans 支持 v2 信封 + 校验 + 硬上限） |
 | SDK-204 ✅ | 补齐 TypeScript 公共契约（Phase 1 已完成运行时 API 声明补齐） | `index.d.ts`，后续迁移 TS source | 2d | tsd/API Extractor 覆盖所有运行时公共成员 |
 | SDK-205 ✅ | 标准化 W3C baggage/tracestate | `src/trace/propagation.js`、fetch/xhr | 3d | 与 OTel/Elastic 测试服务互通；CORS 文档完整（Phase 3 已完成：标准 `baggage` 单一 Header + `traceOrigins` string/RegExp/function matcher + 互操作单测 + `docs/w3c-propagation.md`） |
-| SDK-206 | Privacy v2 与统一 sanitizer | `src/core/event.js`、behavior/network/replay | 5d | 隐私测试语料零敏感明文；默认不发送原手机号/选项文本 |
+| SDK-206 ✅ | Privacy v2 与统一 sanitizer | `src/core/sanitizer.js`、`src/core/event.js`、behavior/network/replay | 5d | 隐私测试语料零敏感明文；默认不发送原手机号/选项文本（Phase 4 已完成：统一 sanitizer + 三档策略 + GPC/DNT + 11 例回归测试） |
 | SDK-207 | IndexedDB Reliable Queue | 新 `src/transport/` | 7d | 刷新、崩溃、断网、quota、429 场景结果可预测且有诊断 |
 | SDK-208 | 确定性采样与 Replay 策略 | `src/sampling/`、trace/replay | 4d | 同 trace 决策一致；错误会话按策略保留；配置可解释 |
 | SDK-209 | Replay 动态加载与分包 | `src/replay/`、Vite config、exports | 4d | 关闭 Replay 时 ESM 和基础 IIFE 均不下载/包含 rrweb；开启后按需加载成功 |

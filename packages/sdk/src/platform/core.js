@@ -5,6 +5,7 @@
  * 与 Web 端 SDK 共享 core/event.js 中的事件分类、采样、脱敏等核心逻辑。
  */
 import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, sanitizeEvent } from '../core/event.js'
+import { createSanitizer, resolveConsent } from '../core/sanitizer.js'
 
 /** 存储队列和 deviceId 的 localStorage key */
 const QUEUE_KEY = '__web_collection_platform_queue__'
@@ -43,6 +44,10 @@ export function createPlatformEys(options = {}, adapter) {
     ...options
   }
   cfg.privacy ||= {}
+  // Privacy v2 统一 sanitizer：默认模式 balanced（生产默认最小化采集）。
+  const sanitizer = createSanitizer(cfg.privacy)
+  // 解析同意分类（含 GPC / DNT 信号映射），用于按分类门控高风险采集模块。
+  const consentMap = resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {})
   // 采样判断：随机数大于采样率则返回空操作客户端（不上报任何数据）
   if (Math.random() > cfg.sampleRate) return noopClient()
 
@@ -88,7 +93,10 @@ export function createPlatformEys(options = {}, adapter) {
     wrapRequest,
     wrapFetch,
     instrumentApp,
-    instrumentPage
+    instrumentPage,
+    // 隐私与同意自查
+    getPrivacyMode: () => sanitizer.mode,
+    getConsentCategories: () => ({ ...consentMap })
   }
 
   // ================================================================
@@ -176,7 +184,7 @@ export function createPlatformEys(options = {}, adapter) {
     queue.forEach(item => {
       item.userId ||= cfg.userId
       item.userName ||= cfg.userName
-      item.userPhone ||= cfg.userPhone
+      item.userPhone ||= sanitizer.userPhone(cfg.userPhone)
     })
     persist()
   }
@@ -204,7 +212,7 @@ export function createPlatformEys(options = {}, adapter) {
       release: cfg.release,
       userId: cfg.userId,
       userName: cfg.userName,
-      userPhone: cfg.userPhone,
+      userPhone: sanitizer.userPhone(cfg.userPhone),
       sessionId,
       deviceId,
       url: context.url || context.path || '',
@@ -225,13 +233,13 @@ export function createPlatformEys(options = {}, adapter) {
       return
     }
     // 脱敏处理
-    item = sanitizeEvent(item, cfg.privacy)
+    item = sanitizer.sanitizeEvent(item)
     // beforeSend 钩子：返回 false 拦截，返回对象替换
     if (typeof cfg.beforeSend === 'function') {
       try { item = cfg.beforeSend(item) } catch { item = false }
     }
     // 钩子处理后可能返回了含敏感数据的新对象，因此需要再次脱敏
-    if (item && typeof item === 'object') item = sanitizeEvent(item, cfg.privacy)
+    if (item && typeof item === 'object') item = sanitizer.sanitizeEvent(item)
     if (!item || typeof item !== 'object') { stats.dropped++; return }
     stats.enqueued++
     // 将非 error 事件写入面包屑
@@ -423,7 +431,7 @@ export function createPlatformEys(options = {}, adapter) {
       queue.forEach(item => {
         item.userId ||= cfg.userId
         item.userName ||= cfg.userName
-        item.userPhone ||= cfg.userPhone
+        item.userPhone ||= sanitizer.userPhone(cfg.userPhone)
       })
       if (storedDeviceId) {
         deviceId = storedDeviceId
@@ -488,5 +496,5 @@ function allowedRequest(value, allowlist = []) {
 /** 返回一个所有方法均为空操作的客户端（采样未命中或未适配时使用） */
 function noopClient() {
   const noop = () => {}
-  return { track: noop, error: noop, metric: noop, behavior: noop, setConsent: noop, setEnabled: noop, setContext: noop, addBreadcrumb: noop, startTransaction: () => ({ setData: noop, finish: noop }), pageView: noop, pageLeave: noop, markPageReady: noop, setUser: noop, flush: noop, destroy: noop, wrapRequest: request => request, wrapFetch: fetch => fetch, instrumentApp: value => value, instrumentPage: value => value }
+  return { track: noop, error: noop, metric: noop, behavior: noop, setConsent: noop, setEnabled: noop, setContext: noop, addBreadcrumb: noop, startTransaction: () => ({ setData: noop, finish: noop }), pageView: noop, pageLeave: noop, markPageReady: noop, setUser: noop, flush: noop, destroy: noop, wrapRequest: request => request, wrapFetch: fetch => fetch, instrumentApp: value => value, instrumentPage: value => value, getPrivacyMode: () => 'balanced', getConsentCategories: () => ({ essential: true, performance: true, analytics: true, replay: true, diagnostics: true }) }
 }

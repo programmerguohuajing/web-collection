@@ -9,7 +9,7 @@ import { elementInfo } from '../utils/dom.js'
  * @param {object} opts
  * @param {Function} opts.push - SDK 主实例的事件推入方法
  */
-export function setupClickMonitor({ push }) {
+export function setupClickMonitor({ push, sanitizer }) {
   const onClick = event => {
     const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement
     const target = source?.closest?.('[data-track],button,a,input,textarea,select,[role="button"],uni-button') || source
@@ -18,17 +18,19 @@ export function setupClickMonitor({ push }) {
     const label = props.tag === 'BUTTON'
       ? (props.text || props.ariaLabel || props.title || props.name || props.id || props.label)
       : (props.label || props.text || props.ariaLabel || props.alt || props.title || props.name || props.id)
+    // 点击 label / DOM 文本统一经过 sanitizer：balanced / strict 下剥离手机号、邮箱、身份证、银行卡、JWT 等 PII 文本。
+    const clean = sanitizer ? sanitizer.sanitizeText.bind(sanitizer) : (v => v)
     push({
       type: 'behavior',
       name: 'click',
       props: {
         ...props,
         action: 'click',
-        elementLabel: label,
+        elementLabel: clean(label),
         elementType: props.tag,
         elementName: props.name || '',
         elementId: props.id || '',
-        elementText: props.text || '',
+        elementText: clean(props.text || ''),
         elementRole: props.role || '',
         elementHref: props.href || '',
         x: Math.round(event.clientX),

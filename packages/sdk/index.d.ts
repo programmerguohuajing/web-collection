@@ -28,12 +28,20 @@ export interface EysUser {
 /** 隐私同意状态 */
 export type ConsentStatus = 'granted' | 'denied'
 
+/** 隐私策略档位 */
+export type PrivacyMode = 'off' | 'balanced' | 'strict'
+
+/** 同意分类（用于按分类门控高风险采集模块，并支持 GPC / DNT 映射） */
+export type ConsentCategory = 'essential' | 'performance' | 'analytics' | 'replay' | 'diagnostics'
+
 /** 数据采集分类（用于按类别控制采样率） */
 export type CaptureCategory = 'error' | 'performance' | 'requests' | 'behavior' | 'exposure' | 'replay'
 
-/** 隐私保护配置 */
+/** 隐私保护配置（Privacy v2 统一 sanitizer） */
 export interface EysPrivacyOptions {
-  /** 需要脱敏的字段名列表 */
+  /** 隐私策略档位：off=不保护；balanced=默认最小化采集（生产默认）；strict=最严格。默认 'balanced'。 */
+  mode?: PrivacyMode
+  /** 需要脱敏的字段名列表（在默认敏感字段基础上追加） */
   redactKeys?: string[]
   /** 需要屏蔽的 CSS 选择器（对应元素不上报） */
   blockSelectors?: string[]
@@ -41,6 +49,28 @@ export interface EysPrivacyOptions {
   maskSelectors?: string[]
   /** 网络请求上报白名单 */
   requestAllowlist?: string[]
+  /** 请求 / 响应头黑名单：默认移除 Authorization / Cookie / Set-Cookie / Proxy-Authorization，可在此追加 */
+  dropHeaders?: string[]
+  /** URL query 中需要剥离的敏感参数名（在默认敏感参数基础上追加） */
+  sensitiveQueryKeys?: string[]
+  /** 是否对文本做 PII 脱敏（手机号 / 邮箱 / 身份证 / 银行卡 / JWT），默认 true */
+  textRedaction?: boolean
+  /** 按同意分类的开关，覆盖默认全开；与浏览器 GPC / DNT 信号合并后决定最终门控 */
+  consentCategories?: Partial<Record<ConsentCategory, boolean>>
+  /** 自定义请求 / 响应清洗钩子：接收并清洗 { url, requestHeaders, responseHeaders, requestBody, responseBody }，异常时回退默认清洗 */
+  requestResponseSanitizer?: (pair: {
+    url?: string
+    requestHeaders?: Record<string, string>
+    responseHeaders?: Record<string, string>
+    requestBody?: unknown
+    responseBody?: unknown
+  }) => {
+    url?: string
+    requestHeaders?: Record<string, string>
+    responseHeaders?: Record<string, string>
+    requestBody?: unknown
+    responseBody?: unknown
+  }
 }
 
 /** 事务对象：用于追踪一个完整业务流程的开始和结束 */
@@ -174,6 +204,10 @@ export interface EysClient {
   setUser(user: EysUser): void
   /** 设置隐私同意状态 */
   setConsent(status: ConsentStatus): void
+  /** 获取当前隐私策略档位（'off' | 'balanced' | 'strict'） */
+  getPrivacyMode(): PrivacyMode
+  /** 获取解析后的同意分类（已合并 GPC / DNT 信号），用于自查 SDK 当前门控 */
+  getConsentCategories(): Record<ConsentCategory, boolean>
   /** 启用/禁用 SDK */
   setEnabled(enabled: boolean): void
   /** 设置全局上下文（会附加到所有上报事件中） */

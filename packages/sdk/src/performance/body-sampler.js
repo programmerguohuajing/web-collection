@@ -10,7 +10,7 @@
  * @param {number} [opts.sampleRate=0] - 成功请求的 body 采样率（0~1）
  * @param {number} [opts.maxBodySize=2048] - body 最大采集字节数
  */
-export function setupBodySampler({ metric, sampleRate = 0, maxBodySize = 2048 }) {
+export function setupBodySampler({ metric, sampleRate = 0, maxBodySize = 2048, sanitizer }) {
   if (sampleRate <= 0) return () => {}
 
   const TEXT_TYPES = ['json', 'text', 'xml', 'form', 'javascript', 'plain']
@@ -18,10 +18,10 @@ export function setupBodySampler({ metric, sampleRate = 0, maxBodySize = 2048 })
   let xhrSampler = null
 
   // fetch body 采样
-  fetchSampler = sampleFetchBody({ metric, sampleRate, maxBodySize, TEXT_TYPES })
+  fetchSampler = sampleFetchBody({ metric, sampleRate, maxBodySize, TEXT_TYPES, sanitizer })
 
   // XHR body 采样
-  xhrSampler = sampleXhrBody({ metric, sampleRate, maxBodySize, TEXT_TYPES })
+  xhrSampler = sampleXhrBody({ metric, sampleRate, maxBodySize, TEXT_TYPES, sanitizer })
 
   return () => {
     fetchSampler?.restore?.()
@@ -41,7 +41,7 @@ export function setupBodySampler({ metric, sampleRate = 0, maxBodySize = 2048 })
  * @param {string[]} opts.TEXT_TYPES  - 文本类 Content-Type 关键词列表
  * @returns {{ restore: Function } | null}
  */
-function sampleFetchBody({ metric, sampleRate, maxBodySize, TEXT_TYPES }) {
+function sampleFetchBody({ metric, sampleRate, maxBodySize, TEXT_TYPES, sanitizer }) {
   const originalFetch = window.fetch?.bind(window)
   if (!originalFetch) return null
 
@@ -59,11 +59,18 @@ function sampleFetchBody({ metric, sampleRate, maxBodySize, TEXT_TYPES }) {
         const clone = res.clone()  // clone 一份响应用于读取 body，不消费原始响应
         const text = await clone.text()
         if (text) {
+          const pair = sanitizer
+            ? sanitizer.sanitizePair({
+                url,
+                requestBody: truncate(String(init?.body || ''), maxBodySize),
+                responseBody: truncate(text, maxBodySize)
+              })
+            : { url, requestBody: truncate(String(init?.body || ''), maxBodySize), responseBody: truncate(text, maxBodySize) }
           metric('fetch_body', 1, {
-            url,
+            url: pair.url ?? url,
             status: res.status,
-            requestBody: truncate(String(init?.body || ''), maxBodySize),
-            responseBody: truncate(text, maxBodySize),
+            requestBody: pair.requestBody,
+            responseBody: pair.responseBody,
             bodySampled: res.status < 400  // 标记是否为采样（非错误强制采集）
           })
         }
@@ -81,7 +88,7 @@ function sampleFetchBody({ metric, sampleRate, maxBodySize, TEXT_TYPES }) {
  * 原理：open 时记录 URL/method/采样标记，send 时注册 load 事件处理器在完成后读取 body
  * @returns {{ restore: Function }}
  */
-function sampleXhrBody({ metric, sampleRate, maxBodySize, TEXT_TYPES }) {
+function sampleXhrBody({ metric, sampleRate, maxBodySize, TEXT_TYPES, sanitizer }) {
   const xhrOpen = XMLHttpRequest.prototype.open
   const xhrSend = XMLHttpRequest.prototype.send
 
@@ -103,12 +110,19 @@ function sampleXhrBody({ metric, sampleRate, maxBodySize, TEXT_TYPES }) {
         // 错误响应始终采集，成功响应按采样率
         const shouldSample = this.status >= 400 || info.sample
         if (shouldSample && this.responseText) {
+          const pair = sanitizer
+            ? sanitizer.sanitizePair({
+                url: info.url,
+                requestBody: truncate(String(args[0] || ''), maxBodySize),
+                responseBody: truncate(this.responseText, maxBodySize)
+              })
+            : { url: info.url, requestBody: truncate(String(args[0] || ''), maxBodySize), responseBody: truncate(this.responseText, maxBodySize) }
           metric('xhr_body', 1, {
-            url: info.url,
+            url: pair.url ?? info.url,
             method: info.method,
             status: this.status,
-            requestBody: truncate(String(args[0] || ''), maxBodySize),
-            responseBody: truncate(this.responseText, maxBodySize),
+            requestBody: pair.requestBody,
+            responseBody: pair.responseBody,
             bodySampled: this.status < 400
           })
         }
