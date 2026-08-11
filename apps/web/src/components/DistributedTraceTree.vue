@@ -1,12 +1,12 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { api, pageLoading } from '../dashboard.js'
+import DistributedTraceNode from './DistributedTraceNode.vue'
 
 const props = defineProps({
   traceId: { type: String, required: true }
 })
 
-const treeData = ref(null)
 const nodes = ref([])
 const edges = ref([])
 const errorSpans = ref([])
@@ -19,7 +19,6 @@ async function loadDistributedTrace() {
   pageLoading.value = true
   try {
     const data = await api(`/api/traces/${encodeURIComponent(props.traceId)}/distributed`)
-    treeData.value = data.root
     nodes.value = data.nodes || []
     edges.value = data.edges || []
     errorSpans.value = data.errorSpans || []
@@ -34,62 +33,26 @@ async function loadDistributedTrace() {
 
 watch(() => props.traceId, loadDistributedTrace, { immediate: true })
 
-// 构建树形结构
+// 一次性将节点和边组装成树，避免递归组件在每层重复扫描全部边。
 const tree = computed(() => {
-  if (!nodes.value.length) return null
-  const nodeMap = new Map(nodes.value.map(n => [n.id, { ...n, children: [], depth: 0 }]))
+  if (!nodes.value.length) return []
+  const nodeMap = new Map(nodes.value.map(node => [node.id, { ...node, children: [] }]))
+  const childIds = new Set()
+  const linkedEdges = new Set()
 
-  // 设置每个节点的深度
-  function setDepth(nodeId, depth) {
-    const node = nodeMap.get(nodeId)
-    if (node) {
-      node.depth = depth
-      const children = getChildren(nodeId)
-      children.forEach(child => setDepth(child.id, depth + 1))
-    }
+  for (const edge of edges.value) {
+    const parent = nodeMap.get(edge.source)
+    const child = nodeMap.get(edge.target)
+    const edgeKey = `${edge.source}->${edge.target}`
+    if (!parent || !child || parent === child || linkedEdges.has(edgeKey)) continue
+    parent.children.push(child)
+    childIds.add(child.id)
+    linkedEdges.add(edgeKey)
   }
 
-  // 找根节点
-  const roots = nodes.value.filter(n => {
-    const hasParent = edges.value.some(e => e.target === n.id)
-    return !hasParent
-  })
-
-  roots.forEach(root => setDepth(root.id, 0))
-
-  return roots
+  const roots = [...nodeMap.values()].filter(node => !childIds.has(node.id))
+  return roots.length ? roots : [...nodeMap.values()]
 })
-
-function getChildren(parentId) {
-  return nodes.value.filter(n =>
-    edges.value.some(e => e.source === parentId && e.target === n.id)
-  )
-}
-
-function isError(node) {
-  return node.hasError || errorSpans.value.includes(node.id)
-}
-
-function isCritical(node) {
-  return criticalPath.value.includes(node.id)
-}
-
-function formatDuration(ms) {
-  if (ms == null) return '-'
-  if (ms < 1000) return `${ms.toFixed(1)}ms`
-  return `${(ms / 1000).toFixed(2)}s`
-}
-
-function getServiceColor(service) {
-  const colors = { frontend: '#409EFF', gateway: '#67C23A', default: '#909399' }
-  return colors[service] || colors.default
-}
-
-function getNodeClass(node) {
-  if (isError(node)) return 'node-error'
-  if (isCritical(node)) return 'node-critical'
-  return ''
-}
 </script>
 
 <template>
@@ -103,9 +66,13 @@ function getNodeClass(node) {
 
     <!-- 调用树 -->
     <div v-if="tree && tree.length" class="trace-tree">
-      <template v-for="root in tree" :key="root.id">
-        <TraceNode :node="root" :nodes="nodes" :edges="edges" :error-spans="errorSpans" :critical-path="criticalPath" :depth="0" />
-      </template>
+      <DistributedTraceNode
+        v-for="root in tree"
+        :key="root.id"
+        :node="root"
+        :error-spans="errorSpans"
+        :critical-path="criticalPath"
+      />
     </div>
 
     <!-- 无数据 -->
@@ -119,97 +86,9 @@ function getNodeClass(node) {
   </div>
 </template>
 
-<script>
-// 递归节点组件
-const TraceNode = {
-  name: 'TraceNode',
-  props: {
-    node: { type: Object, required: true },
-    nodes: { type: Array, required: true },
-    edges: { type: Array, required: true },
-    errorSpans: { type: Array, default: () => [] },
-    criticalPath: { type: Array, default: () => [] },
-    depth: { type: Number, default: 0 }
-  },
-  setup(props) {
-    const children = computed(() =>
-      props.nodes.filter(n => props.edges.some(e => e.source === props.node.id && e.target === n.id))
-    )
-    const isError = computed(() =>
-      props.node.hasError || props.errorSpans.includes(props.node.id)
-    )
-    const isCritical = computed(() =>
-      props.criticalPath.includes(props.node.id)
-    )
-    const formatDuration = (ms) => {
-      if (ms == null) return '-'
-      if (ms < 1000) return `${ms.toFixed(1)}ms`
-      return `${(ms / 1000).toFixed(2)}s`
-    }
-    const getServiceColor = (service) => {
-      const colors = { frontend: '#409EFF', gateway: '#67C23A', default: '#909399' }
-      return colors[service] || colors.default
-    }
-    const getNodeClass = () => {
-      if (isError.value) return 'node-error'
-      if (isCritical.value) return 'node-critical'
-      return ''
-    }
-    return { children, isError, isCritical, formatDuration, getServiceColor, getNodeClass }
-  },
-  template: `
-    <div class="trace-node" :class="getNodeClass()" :style="{ marginLeft: depth * 20 + 'px' }">
-      <div class="node-row">
-        <span class="node-indent"></span>
-        <span class="node-name">{{ node.name || 'root' }}</span>
-        <el-tag size="small" :style="{ backgroundColor: getServiceColor(node.service), borderColor: getServiceColor(node.service), color: '#fff' }">
-          {{ node.service }}
-        </el-tag>
-        <span class="node-duration">{{ formatDuration(node.duration) }}</span>
-        <span class="node-id">{{ node.id }}</span>
-        <span v-if="isCritical" class="node-badge critical">关键路径</span>
-        <span v-if="isError" class="node-badge error">错误</span>
-      </div>
-      <TraceNode
-        v-for="child in children"
-        :key="child.id"
-        :node="child"
-        :nodes="nodes"
-        :edges="edges"
-        :error-spans="errorSpans"
-        :critical-path="criticalPath"
-        :depth="depth + 1"
-      />
-    </div>
-  `
-}
-
-export { TraceNode }
-</script>
-
 <style scoped>
 .distributed-trace { padding: 12px; }
 .trace-summary { display: flex; gap: 8px; margin-bottom: 16px; }
 .trace-tree { font-size: 13px; }
-.trace-node { margin: 2px 0; }
-.node-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: #fafafa;
-  border-radius: 4px;
-  border-left: 3px solid #e4e7ed;
-}
-.node-row:hover { background: #f5f7fa; }
-.node-error .node-row { background: #fef0f0; border-left-color: #f56c6c; }
-.node-critical .node-row { background: #fdf6ec; border-left-color: #e6a23c; }
-.node-indent { width: 8px; }
-.node-name { font-weight: 500; color: #303133; }
-.node-duration { color: #909399; font-size: 12px; min-width: 60px; }
-.node-id { font-family: monospace; font-size: 11px; color: #c0c4cc; }
-.node-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
-.node-badge.critical { background: #e6a23c; color: #fff; }
-.node-badge.error { background: #f56c6c; color: #fff; }
 .loading { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 40px; color: #909399; }
 </style>
