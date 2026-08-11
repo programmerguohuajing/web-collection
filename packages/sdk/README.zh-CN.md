@@ -1,4 +1,4 @@
-> 中文文档。 [English Documentation](./README.md)
+> 中文文档。 [English Documentation](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/README.md)
 
 # Web Collection SDK 指标说明
 
@@ -422,4 +422,3 @@ global.fetch = eys.wrapFetch(global.fetch)
 跨端客户端统一支持 `track`、`behavior`、`metric`、`error`、`pageView`、`pageLeave`、`setUser`、批量队列、失败重试和持久化。小程序与原生 App 没有浏览器 DOM，因此不提供 rrweb 录屏；页面轨迹、点击和业务操作应通过生命周期及 `track` 上报。
 
 平台端同样支持 `setConsent`、`setEnabled`、`setContext`、`addBreadcrumb` 和 `startTransaction`。使用 `instrumentApp` 会记录应用启动、前后台切换，并保留原有生命周期回调。
-
