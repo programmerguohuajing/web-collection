@@ -91,6 +91,121 @@ eys.setEnabled(false)
 
 `consent` 默认是 `granted`，拒绝后事件不会进入队列或发起请求。内置脱敏先于 `beforeSend` 执行，请勿在回调中恢复敏感数据。
 
+## 分布式链路追踪与调用拓扑
+
+SDK 可以把页面性能、Fetch 和 XHR 事件关联为一棵分布式调用树。拓扑图不是在 SDK 内绘制的：SDK 负责上报 `traceId`、`spanId` 和 `parentSpanId`，监控平台再把相同 `traceId` 的节点聚合起来，并按父子 ID 建立连线。
+
+### 快速接入
+
+```js
+const eys = createEys({
+  endpoint: 'https://monitor.example.com/api/collect',
+  appId: 'checkout-web',
+  release: '1.2.0',
+
+  // 采集 Fetch/XHR 的耗时和状态。
+  requests: true,
+
+  // 为请求指标添加链路 ID，并向可信请求注入 traceparent。
+  tracing: true,
+
+  // 创建页面根 Span 和具有父子关系的请求 Span。
+  distributedTracing: true,
+
+  // 同源请求默认可信；跨域 API 必须写入精确的协议、域名和端口。
+  traceOrigins: [
+    'https://api.example.com',
+    'https://payment.example.com'
+  ],
+
+  // 以 baggage-<key> 请求头传播的静态上下文。
+  // 不要放入密码、Token、Cookie、手机号或其他敏感信息。
+  baggage: {
+    tenant: 'shop',
+    region: 'cn-east'
+  },
+
+  // SDK/会话的全局采样率；高流量生产环境应降低该值。
+  sampleRate: 0.2
+})
+```
+
+所有链路开关默认均为开启。要形成完整的自动请求拓扑，需要同时保持 `requests`、`tracing` 和 `distributedTracing` 为开启状态。
+
+| 配置项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `requests` | `true` | 采集 Fetch/XHR 的耗时、方法、状态和失败信息；关闭后不再自动生成请求节点。 |
+| `tracing` | `true` | 为请求指标附加链路标识，并向可信请求注入 `traceparent`。 |
+| `distributedTracing` | `true` | 创建页面根 Span 和层级化子 Span，使平台能够根据 `parentSpanId` 还原父子关系。 |
+| `traceOrigins` | `[]` | 允许接收链路请求头的精确跨域 Origin；同源请求始终允许。 |
+| `baggage` | `{}` | 以 `baggage-<key>` 请求头传播的静态、非敏感业务上下文。 |
+| `sampleRate` | `1` | `0` 到 `1` 的全局会话采样率；当前会话未命中采样时返回空实现客户端。 |
+| `categorySampleRates` | `{}` | 可选的分类采样率覆盖，在适用场景下也参与 Trace 采样标记。 |
+
+### 拓扑是如何形成的
+
+使用上述配置时，浏览器侧会产生类似以下层级：
+
+```text
+page（根 Span）
+├─ navigation 页面性能
+├─ fetch https://api.example.com/orders
+│  └─ order-api 服务端 Span
+│     └─ 数据库或下游服务 Span
+└─ xhr https://payment.example.com/pay
+   └─ payment-api 服务端 Span
+```
+
+各链路字段的职责不同：
+
+| 字段 | 含义 |
+| --- | --- |
+| `traceId` | 同一次端到端调用中的所有节点共用。 |
+| `spanId` | 标识一次独立操作，例如页面、某个 Fetch/XHR 请求或服务端操作。 |
+| `parentSpanId` | 指向调用方的 `spanId`，用于生成父子连线。 |
+| `traceFlags` | 通过 W3C `traceparent` 请求头携带采样决策。 |
+
+SDK 会自动创建页面根上下文和请求子 Span。要让调用树从浏览器继续连接到后端，每个服务都必须：
+
+1. 读取传入的 W3C `traceparent` 请求头。
+2. 保留传入的 `traceId`。
+3. 创建新的服务端 `spanId`，并把传入的 `spanId` 作为 `parentSpanId`。
+4. 调用下游服务时继续传递更新后的 `traceparent`。
+5. 把服务端 Span 上报到同一套监控后端。
+
+如果某个服务重新生成 `traceId`、丢失 `parentSpanId`，或者没有上报自己的 Span，平台只能显示浏览器节点或一段断开的调用分支。
+
+### 跨域与 CORS 要求
+
+只有目标请求与当前页面同源，或者目标的精确 Origin 已加入 `traceOrigins` 时，SDK 才会注入链路请求头。不要配置通配或不可信域名：链路和 baggage 请求头可能暴露内部关联信息。
+
+跨域 API 必须在 CORS 预检中允许相关请求头。服务端或网关至少需要允许 `traceparent`，以及实际生成的每个 `baggage-<key>` 请求头。如果服务端返回 `traceparent` 或 `traceresponse`，并且浏览器需要读取，还应暴露这些响应头。
+
+```http
+Access-Control-Allow-Headers: Content-Type, Authorization, traceparent, baggage-tenant, baggage-region
+Access-Control-Expose-Headers: traceparent, traceresponse
+```
+
+配置 `traceOrigins` 不会绕过 `privacy.requestAllowlist`。设置了请求白名单时，目标 URL 必须同时满足隐私白名单和 Trace Origin 规则，SDK 才会注入链路请求头。
+
+### 查看与排查分布式调用树
+
+在监控平台打开 Trace 详情，然后切换到 **分布式调用树** 标签。有效且非空的拓扑要求已上报节点拥有相同的 `traceId`，并包含合法的 `spanId`/`parentSpanId` 关系。
+
+如果页面只有顶部统计信息却没有拓扑，请依次检查：
+
+1. `requests`、`tracing` 和 `distributedTracing` 没有被设置为 `false`。
+2. `sampleRate` 大于 `0`，且当前会话命中了采样。
+3. 当前请求不是 SDK 自己的采集接口。
+4. 配置 `privacy.requestAllowlist` 后，白名单包含目标请求 URL。
+5. 跨域地址与 `traceOrigins` 精确匹配，包括协议和端口。
+6. 浏览器开发者工具中存在格式为 `00-<traceId>-<spanId>-<flags>` 的合法 `traceparent` 请求头。
+7. CORS 已允许链路和 baggage 请求头。
+8. 后端服务保留传入的 `traceId`、生成新的 `spanId`、记录 `parentSpanId`，并上报服务端 Span。
+9. 监控平台筛选的是正确的应用、发布版本和时间范围。
+
+生产环境建议从较低的 `sampleRate` 开始，根据采集量、存储和查询预算逐步调整。`baggage` 会随每个链路请求发送，应保持精简且不得包含敏感信息。
+
 ## 手动埋点
 
 ```js

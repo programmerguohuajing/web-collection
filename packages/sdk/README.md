@@ -118,6 +118,122 @@ eys.setEnabled(false)
 
 `consent` defaults to `granted`; once denied, events are neither queued nor sent. Built-in redaction runs before `beforeSend`; do not restore sensitive data inside the callback.
 
+## Distributed Tracing and Call Topology
+
+The SDK can correlate page performance, Fetch and XHR events into one distributed call tree. The topology is not drawn in the SDK itself: the SDK reports `traceId`, `spanId` and `parentSpanId`, then the monitoring console groups nodes with the same `traceId` and connects each child to its parent.
+
+### Quick start
+
+```js
+const eys = createEys({
+  endpoint: 'https://monitor.example.com/api/collect',
+  appId: 'checkout-web',
+  release: '1.2.0',
+
+  // Capture Fetch/XHR timing and status.
+  requests: true,
+
+  // Add trace IDs and inject traceparent into trusted requests.
+  tracing: true,
+
+  // Create the page root span and hierarchical request spans.
+  distributedTracing: true,
+
+  // Same-origin requests are trusted automatically. List every trusted
+  // cross-origin API with its exact scheme, host and port.
+  traceOrigins: [
+    'https://api.example.com',
+    'https://payment.example.com'
+  ],
+
+  // Static context propagated as baggage-<key> request headers.
+  // Never put passwords, tokens, cookies, phone numbers or other secrets here.
+  baggage: {
+    tenant: 'shop',
+    region: 'cn-east'
+  },
+
+  // Global SDK/session sampling rate. Use a lower value in high-volume production.
+  sampleRate: 0.2
+})
+```
+
+All tracing switches default to enabled. A complete automatic request topology requires `requests`, `tracing` and `distributedTracing` to remain enabled together.
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `requests` | `true` | Captures Fetch/XHR duration, method, status and failures. Disable it to stop automatic request nodes. |
+| `tracing` | `true` | Adds trace identifiers to request metrics and injects `traceparent` into trusted requests. |
+| `distributedTracing` | `true` | Creates a page root span and hierarchical child spans so `parentSpanId` relationships can be reconstructed. |
+| `traceOrigins` | `[]` | Exact trusted cross-origin origins allowed to receive tracing headers. Same-origin requests are always allowed. |
+| `baggage` | `{}` | Static, non-sensitive business context forwarded as `baggage-<key>` headers. |
+| `sampleRate` | `1` | Global session sampling rate from `0` to `1`; a session that is not sampled returns a no-op client. |
+| `categorySampleRates` | `{}` | Optional per-category sampling override. It also contributes to tracing sample flags where applicable. |
+
+### How the topology is formed
+
+With the settings above, the browser side produces a hierarchy similar to:
+
+```text
+page (root span)
+├─ navigation performance
+├─ fetch https://api.example.com/orders
+│  └─ order-api server span
+│     └─ database or downstream service span
+└─ xhr https://payment.example.com/pay
+   └─ payment-api server span
+```
+
+The IDs have distinct responsibilities:
+
+| Field | Meaning |
+| --- | --- |
+| `traceId` | Shared by every node in the same end-to-end call. |
+| `spanId` | Identifies one operation, such as the page, one Fetch/XHR request or one server operation. |
+| `parentSpanId` | Points to the caller's `spanId` and creates the parent/child edge. |
+| `traceFlags` | Carries the sampling decision in the W3C `traceparent` header. |
+
+The SDK automatically creates the page root context and request child spans. To continue the tree beyond the browser, every backend service must:
+
+1. Read the incoming W3C `traceparent` header.
+2. Keep the incoming `traceId`.
+3. Create a new server `spanId` and use the incoming `spanId` as its `parentSpanId`.
+4. Forward the updated `traceparent` to downstream services.
+5. Send its server-side spans to the same monitoring backend.
+
+If a service generates a new `traceId`, drops `parentSpanId`, or does not report its span, the console can only display the browser node or a disconnected branch.
+
+### Cross-origin and CORS requirements
+
+Tracing headers are injected only when the target is same-origin or its exact origin appears in `traceOrigins`. Do not add wildcard or untrusted origins: tracing and baggage headers may reveal internal correlation metadata.
+
+Cross-origin APIs must allow the headers during CORS preflight. Configure the server or gateway to allow at least `traceparent` and every generated `baggage-<key>` header. If the service returns `traceparent` or `traceresponse`, expose those response headers when the browser needs to read them.
+
+```http
+Access-Control-Allow-Headers: Content-Type, Authorization, traceparent, baggage-tenant, baggage-region
+Access-Control-Expose-Headers: traceparent, traceresponse
+```
+
+Changing `traceOrigins` does not bypass `privacy.requestAllowlist`. A request must satisfy both the privacy allowlist and tracing-origin rules before the SDK injects tracing headers.
+
+### Viewing and troubleshooting the distributed tree
+
+Open the trace detail in the monitoring console and select the **Distributed Trace Tree** tab. A valid non-empty tree requires reported nodes with matching `traceId` values and valid `spanId`/`parentSpanId` relationships.
+
+If the page shows summary counters but no topology, check the following in order:
+
+1. `requests`, `tracing` and `distributedTracing` are not set to `false`.
+2. `sampleRate` is greater than `0`, and the current session was sampled.
+3. The request is not the SDK's own collection endpoint.
+4. `privacy.requestAllowlist` permits the request URL when an allowlist is configured.
+5. Cross-origin URLs use an exact `traceOrigins` match, including scheme and port.
+6. Browser DevTools shows a valid `traceparent` request header in the form `00-<traceId>-<spanId>-<flags>`.
+7. CORS allows the tracing and baggage headers.
+8. Backend services preserve the incoming `traceId`, create a new `spanId`, retain `parentSpanId`, and report their spans.
+9. The console is filtered to the correct application, release and time range.
+
+For production traffic, start with a conservative `sampleRate`, monitor ingestion volume, and increase it only when the storage and query budgets allow. Keep `baggage` small and non-sensitive because it is sent with every traced request.
+
 ## Manual Tracking
 
 ```js
