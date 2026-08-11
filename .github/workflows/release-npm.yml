@@ -33,25 +33,51 @@ jobs:
       - name: Build SDK
         run: pnpm --filter @web-collection/sdk build
 
-      - name: Verify tag matches package version
-        if: github.ref_type == 'tag'
+      # Decide whether this run should actually publish. Never exits non-zero,
+      # so a stale/old tag push no longer turns the whole job red.
+      - name: Determine publish target
+        id: target
         shell: bash
         run: |
           package_version="$(node -p "require('./packages/sdk/package.json').version")"
-          if [ "$GITHUB_REF_NAME" != "v$package_version" ]; then
-            echo "Tag name ($GITHUB_REF_NAME) does not match package version (v$package_version)";
-            exit 1;
+          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+          should_publish="false"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            if [ "$GITHUB_REF_NAME" = "v$package_version" ]; then
+              should_publish="true"
+            else
+              echo "::warning::Tag $GITHUB_REF_NAME does not match package version v$package_version — skipping publish."
+            fi
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.ref_name }}" = "main" ]; then
+            should_publish="true"
+          fi
+          echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
+
+      # Idempotency guard: if the version is already on npm, skip publish
+      # instead of failing (handles re-runs / duplicate tag pushes).
+      - name: Check npm version already published
+        id: npmcheck
+        if: steps.target.outputs.should_publish == 'true'
+        shell: bash
+        run: |
+          version="${{ steps.target.outputs.package_version }}"
+          exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk/$version" || true)"
+          if [ "$exists" = "200" ]; then
+            echo "::warning::Version $version already exists on npm — skipping publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Configure npm auth
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        if: steps.target.outputs.should_publish == 'true' && steps.npmcheck.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
         run: |
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
 
       - name: Publish SDK
-        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.ref_name == 'main')
+        if: steps.target.outputs.should_publish == 'true' && steps.npmcheck.outputs.skip != 'true'
         working-directory: packages/sdk
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
