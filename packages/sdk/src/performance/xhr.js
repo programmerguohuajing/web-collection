@@ -9,6 +9,8 @@
  * @param {Function} opts.metric - 性能指标上报方法
  * @param {object} [opts.tracer] - Tracer 实例（可选，用于链路追踪）
  */
+import { injectBaggage, canTrace } from '../trace/propagation.js'
+
 export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming, tracer }) {
   const xhrOpen = XMLHttpRequest.prototype.open
   const xhrSend = XMLHttpRequest.prototype.send
@@ -43,11 +45,12 @@ export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins
       if (this.__eys.spanContext) {
         const { traceId, spanId, traceFlags } = this.__eys.spanContext
         this.setRequestHeader('traceparent', `00-${traceId}-${spanId}-${traceFlags}`)
-        // 注入 baggage
+        // 注入 baggage（标准单一 Header）—— 通过临时 Headers 取序列化结果
         if (activeSpan?.context?.baggage?.size > 0) {
-          for (const [key, value] of activeSpan.context.baggage) {
-            this.setRequestHeader('baggage-' + encodeURIComponent(key), encodeURIComponent(value))
-          }
+          const tmp = new Headers()
+          injectBaggage(activeSpan.context, tmp)
+          const baggageHeader = tmp.get('baggage')
+          if (baggageHeader) this.setRequestHeader('baggage', baggageHeader)
         }
       } else if (traced) {
         // 降级：使用 pageTraceId 生成简单 traceparent
@@ -109,8 +112,7 @@ function allowedRequest(value, allowlist) {
   })
 }
 
-/** 判断请求 URL 是否允许注入链路追踪 header（同源或白名单内 origin） */
-function canTrace(value, origins = []) { try { const url = new URL(value, location.href); return url.origin === location.origin || origins.includes(url.origin) } catch { return false } }
+/** 判断请求 URL 是否允许注入链路追踪 header：复用 propagation.canTrace（支持 string/RegExp/function）。 */
 
 /** 生成指定字节数的安全随机十六进制字符串（用于 spanId） */
 function randomHex(bytes) { const data = new Uint8Array(bytes); crypto.getRandomValues(data); return [...data].map(value => value.toString(16).padStart(2, '0')).join('') }
