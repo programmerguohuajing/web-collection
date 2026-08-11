@@ -6,6 +6,10 @@
  */
 import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, sanitizeEvent } from '../core/event.js'
 import { createSanitizer, resolveConsent } from '../core/sanitizer.js'
+// Reliable Transport v2（平台层复用重试/退避/诊断纯逻辑；通道仍由适配器抽象）。
+import { classifyResponse, computeBackoff } from '../transport/retry.js'
+import { createEventId } from '../transport/id.js'
+import { createDiagnosticSink } from '../transport/diagnostics.js'
 
 /** 存储队列和 deviceId 的 localStorage key */
 const QUEUE_KEY = '__web_collection_platform_queue__'
@@ -41,6 +45,7 @@ export function createPlatformEys(options = {}, adapter) {
     categorySampleRates: {},
     beforeSend: null,
     privacy: {},
+    onDiagnostic: null,
     ...options
   }
   cfg.privacy ||= {}
@@ -48,6 +53,8 @@ export function createPlatformEys(options = {}, adapter) {
   const sanitizer = createSanitizer(cfg.privacy)
   // 解析同意分类（含 GPC / DNT 信号映射），用于按分类门控高风险采集模块。
   const consentMap = resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {})
+  // 传输层诊断：队列满/限流/超时/丢弃等（不含业务敏感数据）。
+  const diagnostic = createDiagnosticSink(cfg.onDiagnostic)
   // 采样判断：随机数大于采样率则返回空操作客户端（不上报任何数据）
   if (Math.random() > cfg.sampleRate) return noopClient()
 
@@ -61,6 +68,7 @@ export function createPlatformEys(options = {}, adapter) {
   let deviceId = id()
   let flushing = false          // 是否正在上报
   let flushAllRequested = false // 是否请求了全量上报
+  let retryTimer = null         // 退避重试定时器
   let destroyed = false
   let persistence = Promise.resolve()
   let lastError = { fingerprint: '', ts: 0 }  // 错误去重：相同错误 1 秒内不重复上报
@@ -205,6 +213,7 @@ export function createPlatformEys(options = {}, adapter) {
     }
     const context = adapter.getContext?.() || {}
     let item = {
+      eventId: createEventId(),
       sdkVersion: SDK_VERSION,
       environment: cfg.environment,
       source: event.source || (event.type === 'track' ? 'manual' : eventSource(event)),
@@ -230,6 +239,7 @@ export function createPlatformEys(options = {}, adapter) {
     if (Math.random() > sampleRateFor(eventCategory(item), cfg.categorySampleRates, 1)) {
       stats.dropped++
       stats.droppedBySample++
+      diagnostic.emit('dropped_by_sampling', { type: item.type, name: item.name, metric: item.metric })
       return
     }
     // 脱敏处理
@@ -281,15 +291,46 @@ export function createPlatformEys(options = {}, adapter) {
             data: { events: batch }
           })
           const status = response?.statusCode ?? response?.status ?? 200
-          if (status < 200 || status >= 300) throw new Error(`HTTP ${status}`)
-          // 成功：从队列中移除已发送的事件
-          queue.splice(0, batch.length)
-          stats.sent += batch.length
+          const verdict = classifyResponse(status)
+          if (verdict === 'success') {
+            queue.splice(0, batch.length)
+            stats.sent += batch.length
+          } else if (verdict === 'drop') {
+            // 4xx 契约错误：不可重试，永久丢弃并上报诊断。
+            queue.splice(0, batch.length)
+            stats.failed += batch.length
+            diagnostic.emit('dropped_non_retryable', { count: batch.length, status })
+            break
+          } else {
+            // 可重试（429/5xx/408 等）：递增计数，超过上限的丢弃，其余安排退避重试。
+            batch.forEach(item => item.retry++)
+            const over = batch.filter(item => item.retry > cfg.maxRetries)
+            queue.splice(0, batch.length, ...batch.filter(item => item.retry <= cfg.maxRetries))
+            stats.failed += batch.length
+            if (over.length) {
+              diagnostic.emit('dropped_non_retryable', { count: over.length, status, reason: 'max_retries' })
+            } else {
+              diagnostic.emit('retry', { count: batch.length, status })
+              // 指数退避后主动重试一次，避免长时间依赖定时器。
+              const backoff = computeBackoff(Math.min(batch[0].retry, 6), { base: 500, max: 30000 })
+              clearTimeout(retryTimer)
+              retryTimer = setTimeout(() => { void flush(false) }, backoff)
+            }
+            break
+          }
         } catch {
+          // 网络层失败：按可重试处理。
           stats.failed += batch.length
-          // 增加重试计数，超过 maxRetries 的事件会被丢弃
           batch.forEach(item => item.retry++)
+          const over = batch.filter(item => item.retry > cfg.maxRetries)
           queue.splice(0, batch.length, ...batch.filter(item => item.retry <= cfg.maxRetries))
+          if (over.length) diagnostic.emit('dropped_non_retryable', { count: over.length, status: 0, reason: 'max_retries' })
+          else {
+            diagnostic.emit('retry', { count: batch.length, status: 0 })
+            const backoff = computeBackoff(Math.min(batch[0].retry, 6), { base: 500, max: 30000 })
+            clearTimeout(retryTimer)
+            retryTimer = setTimeout(() => { void flush(false) }, backoff)
+          }
           break
         }
         await persist()

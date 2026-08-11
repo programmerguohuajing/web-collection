@@ -37,6 +37,48 @@ export type ConsentCategory = 'essential' | 'performance' | 'analytics' | 'repla
 /** 数据采集分类（用于按类别控制采样率） */
 export type CaptureCategory = 'error' | 'performance' | 'requests' | 'behavior' | 'exposure' | 'replay'
 
+/**
+ * Reliable Transport v2 诊断事件类型（SDK-215 / SDK-207）。
+ * 通过 `onDiagnostic` 回调暴露，用于观测发送健康度；不含任何业务敏感数据。
+ */
+export type DiagnosticType =
+  | 'queue_full' // 本地队列溢出，丢弃最旧事件
+  | 'rate_limited' // 收到 429，进入退避重试
+  | 'timeout' // 单次发送超过超时阈值被中止
+  | 'invalid_payload' // 服务端判定载荷非法（4xx 契约错误）
+  | 'storage_quota' // 持久化队列写入失败（IndexedDB / storage 配额）
+  | 'dropped_by_sampling' // 被采样策略丢弃
+  | 'beacon_rejected' // navigator.sendBeacon 返回 false
+  | 'beacon_oversize' // 单条事件超过 Beacon 字节上限，无法发送
+  | 'beacon_fallback' // Beacon 不可用或需鉴权，回退 fetch keepalive
+  | 'beacon_queued' // Beacon 已接受排队（不代表服务端已入库）
+  | 'beacon_attempted' // 尝试走 Beacon 通道
+  | 'next_session_recovered' // 下一会话从持久队列恢复的事件数
+  | 'flush_attempt' // 发起一次在线发送
+  | 'flush_success' // 在线发送成功入库
+  | 'flush_failed' // 在线发送失败（不可重试被丢弃）
+  | 'retry' // 可重试错误（429/5xx/超时），保留并重试
+  | 'dropped_non_retryable' // 超过最大重试次数或 4xx 契约错误，永久丢弃
+  | 'offline' // 处于离线状态，暂缓发送
+
+/** 传输诊断事件对象（随 `onDiagnostic` 回调派发） */
+export interface EysDiagnosticEvent {
+  /** 诊断事件类型 */
+  type: DiagnosticType
+  /** 关联状态码（如 HTTP 状态码） */
+  status?: number
+  /** 受影响事件计数 */
+  count?: number
+  /** 字节数（如 Beacon 批次） */
+  bytes?: number
+  /** 退避 / 重试延迟（毫秒） */
+  retryAfter?: number
+  /** 丢弃 / 重试原因补充 */
+  reason?: string
+  /** 事件时间戳（毫秒） */
+  ts: number
+}
+
 /** 隐私保护配置（Privacy v2 统一 sanitizer） */
 export interface EysPrivacyOptions {
   /** 隐私策略档位：off=不保护；balanced=默认最小化采集（生产默认）；strict=最严格。默认 'balanced'。 */
@@ -188,6 +230,12 @@ export interface EysOptions {
   workerMonitoring?: boolean
   /** 是否监控 Service Worker */
   serviceWorkerMonitoring?: boolean
+  /** 传输层诊断回调（Reliable Transport v2）。暴露队列满 / 限流 / 超时 / 丢弃 / Beacon 等事件，不含业务敏感数据。 */
+  onDiagnostic?: (event: EysDiagnosticEvent) => void
+  /** 单次在线发送超时（毫秒），超时按网络错误重试。默认 10000。 */
+  transportTimeout?: number
+  /** 页面退出阶段单个 Beacon 批次的 UTF-8 字节上限。默认 61440（60 KiB）。 */
+  beaconMaxBytes?: number
 }
 
 /** SDK 客户端实例接口 */

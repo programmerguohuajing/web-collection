@@ -30,9 +30,8 @@ import { setupEnvironmentMonitor } from './utils/environment.js'
 import { setupRuntimeMonitor } from './utils/runtime.js'
 // 链路追踪模块
 import { createTracer, createSampler, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcessor, WebCollectionSpanExporter } from './trace/index.js'
-
-/** localStorage 中持久化待上报事件队列的键名 */
-const STORE_KEY = '__web_collection_queue__'
+// Reliable Transport v2：可替换、可测试的发送通道与持久化队列（SDK-207 / SDK-219）。
+import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock } from './transport/index.js'
 
 /**
  * 由事件采集端点推导出 Span 接收端点。
@@ -169,6 +168,12 @@ export function createEys(options = {}) {
     touchTracking: false,
     workerMonitoring: false,
     serviceWorkerMonitoring: false,
+    // onDiagnostic 暴露传输层自诊断事件（队列满/限流/超时/丢弃/Beacon 等），不含业务敏感数据。
+    onDiagnostic: null,
+    // transportTimeout 单次在线发送超时（ms），超时按网络错误重试。
+    transportTimeout: 10000,
+    // beaconMaxBytes 页面退出阶段单个 Beacon 批次的 UTF-8 字节上限。
+    beaconMaxBytes: 60 * 1024,
     ...options
   }
   cfg.privacy ||= {}
@@ -182,13 +187,37 @@ export function createEys(options = {}) {
   // sessionId 标识当前页面访问会话。
   const sessionId = getId('eys_sid')
   const deviceId = getId('eys_did', true)
-  // queue 持久化待上报事件；recent/breadcrumbs 用于去重和错误上下文；replayEvents 用于临时缓存回放片段。
-  const queue = loadQueue(cfg.maxQueue)
+  // sender（ReliableSender）持久化待上报事件；recent/breadcrumbs 用于去重和错误上下文；replayEvents 用于临时缓存回放片段。
   const recent = []
   const breadcrumbs = []
   const globalContext = {}
   const stats = { enqueued: 0, dropped: 0, droppedByConsent: 0, droppedBySample: 0, sent: 0, failed: 0 }
   const originalFetch = window.fetch?.bind(window)
+  /**
+   * Reliable Transport v2：内存热队列 + IndexedDB 冷队列 + Fetch/Beacon 通道。
+   * - 冷队列保证刷新/崩溃/离线后事件可恢复；
+   * - 在线发送带超时、退避重试与 4xx 不可重试丢弃；
+   * - 页面退出走 Beacon（非破坏性，事件保留待服务端 eventId 幂等去重）。
+   */
+  const diagnostic = createDiagnosticSink((event) => {
+    if (event.type === 'retry' || event.type === 'flush_failed' || event.type === 'dropped_non_retryable') {
+      stats.failed += Number(event.count || 0)
+    }
+    if (typeof cfg.onDiagnostic === 'function') cfg.onDiagnostic(event)
+  })
+  const sender = new ReliableSender({
+    cold: new IndexedDBQueue({ maxQueue: cfg.maxQueue * 10 }),
+    transport: new FetchTransport({ endpoint: cfg.endpoint, collectKey: cfg.collectKey, fetchImpl: originalFetch, timeout: cfg.transportTimeout }),
+    beacon: new BeaconTransport({ endpoint: cfg.endpoint, collectKey: cfg.collectKey, fetchImpl: originalFetch, maxBytes: cfg.beaconMaxBytes }),
+    gif: imageReport,
+    endpoint: cfg.endpoint,
+    maxQueue: cfg.maxQueue,
+    maxRetries: cfg.maxRetries,
+    maxBatch: cfg.batchSize,
+    collectKey: cfg.collectKey,
+    diagnostic,
+    lock: createMultiTabLock(cfg.endpoint)
+  })
   const replayEvents = []
   const pageTraceId = randomHex(16)
   // 创建 Tracer 实例（当 distributedTracing 开启时）
@@ -240,7 +269,6 @@ export function createEys(options = {}) {
   /** 当前正在录制的分段结束原因，在最后一次强制 flush 时随事件一同上报。
    *  null 表示尚未触发结束（正常录制中），结束后重置。 */
   let currentSegmentEndReason = null
-  let flushing = false
   let stopReplay = null
   let replayStopTimer = 0
   let replayStartTimer = 0
@@ -456,9 +484,8 @@ export function createEys(options = {}) {
     Object.assign(consentMap, resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {}))
     if (cfg.consent === 'denied') {
       stopCapture()
-      queue.length = 0
       replayEvents.length = 0
-      saveQueue()
+      void sender.clear()
     }
     if (cfg.consent === 'granted' && cfg.enabled) startCapture()
   }
@@ -468,9 +495,8 @@ export function createEys(options = {}) {
     cfg.enabled = Boolean(enabled)
     if (!cfg.enabled) {
       stopCapture()
-      queue.length = 0
       replayEvents.length = 0
-      saveQueue()
+      void sender.clear()
     }
     if (cfg.enabled && cfg.consent !== 'denied') startCapture()
   }
@@ -535,13 +561,14 @@ export function createEys(options = {}) {
     cfg.userId = user.id || user.userId || cfg.userId || ''
     cfg.userName = user.name || user.userName || cfg.userName || ''
     cfg.userPhone = user.phone || user.userPhone || cfg.userPhone || ''
-    queue.forEach(item => {
+    sender.forEachItem(item => {
       item.userId ||= cfg.userId
       item.userName ||= cfg.userName
       item.userPhone ||= sanitizer.userPhone(cfg.userPhone)
     })
-    saveQueue()
+    sender.persist()
   }
+
 
   /**
    * 将事件推入上报队列。
@@ -572,10 +599,8 @@ export function createEys(options = {}) {
     stats.enqueued++
     remember(prepared)
     if (isDuplicate(prepared)) return
-    queue.push(prepared)
-    if (queue.length > cfg.maxQueue) queue.splice(0, queue.length - cfg.maxQueue)
-    saveQueue()
-    if (urgent || queue.length >= cfg.batchSize) flush(urgent)
+    sender.enqueue(prepared)
+    if (urgent || sender.size() >= cfg.batchSize) flush(urgent)
   }
 
   /** 为事件附加基础信息（appId、sessionId、URL、UA、时间戳等） */
@@ -619,42 +644,25 @@ export function createEys(options = {}) {
   }
 
   /**
-   * 批量上报队列中的事件。
-   * force=true 且未配置采集密钥时优先使用 sendBeacon（适合页面卸载场景），
-   * 配置 collectKey 后改用 fetch + keepalive，以便携带 x-app-key。
-   * 否则使用 fetch；两者都不可用时降级为 GIF 图片上报。
-   * 上报失败后增加 retry 计数，超过最大重试次数的事件会被丢弃。
-   * @param {boolean} [force=false] - 是否强制立即上报（页面卸载等场景）
+   * 在线批量上报队列中的事件（Reliable Transport v2）。
+   * 实际发送、超时、退避重试、4xx 丢弃与 GIF 兜底均由 `ReliableSender` 负责。
+   * @param {boolean} [force=false] - 是否连续发送直到清空（页面退出在线兜底）
    */
   async function flush(force = false) {
-    if (!cfg.enabled || cfg.consent === 'denied' || flushing || !queue.length) return
-    flushing = true
-    const batch = queue.slice(0, cfg.batchSize)
-    const body = JSON.stringify({ events: batch })
-    try {
-      if (force && !cfg.collectKey && navigator.sendBeacon && body.length < 64000) {
-        if (!navigator.sendBeacon(cfg.endpoint, new Blob([body], { type: 'application/json' }))) throw new Error('beacon failed')
-      } else if (originalFetch) {
-        const res = await originalFetch(cfg.endpoint, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', ...(cfg.collectKey ? { 'x-app-key': cfg.collectKey } : {}) },
-          body,
-          keepalive: force && body.length < 64000
-        })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      } else {
-        batch.forEach(item => imageReport(item))
-      }
-      queue.splice(0, batch.length)
-      stats.sent += batch.length
-    } catch {
-      stats.failed += batch.length
-      batch.forEach(item => item.retry++)
-      queue.splice(0, batch.length, ...batch.filter(item => item.retry <= cfg.maxRetries))
-    } finally {
-      saveQueue()
-      flushing = false
-    }
+    if (!cfg.enabled || cfg.consent === 'denied') return
+    return sender.sendBatchOnline(force)
+  }
+
+  /**
+   * 刷新所有队列（回放 + 普通事件）。
+   * force=true（页面卸载/隐藏/冻结）时先走 Beacon 尽力排队（非破坏性，服务端按
+   * eventId 幂等去重），再尝试在线 keepalive 兜底；并冲刷 Span 缓冲。
+   * @param {boolean} [force=false]
+   */
+  async function flushAll(force = false) {
+    if (force) await sender.sendExitBatch()
+    await flush(force)
+    if (force) tracer?.flushSpans?.()
   }
 
   /** 记录用户行为面包屑（最近 20 条），用于错误事件的上下文还原 */
@@ -727,17 +735,8 @@ export function createEys(options = {}) {
     if (force && currentSegmentEndReason) {
       item.segmentEndReason = currentSegmentEndReason
     }
-    queue.push(item)
-    saveQueue()
-    if (force || queue.length >= cfg.batchSize) flush(force)
-  }
-
-  /** 刷新所有队列（回放 + 普通事件） */
-  function flushAll(force = false) {
-    flushReplay(force)
-    flush(force)
-    // 强制刷新（页面退出/隐藏）时一并冲刷 Span 缓冲；keepalive 保证退出阶段仍可送达。
-    if (force) tracer?.flushSpans?.()
+    sender.enqueue(item)
+    if (force || sender.size() >= cfg.batchSize) flush(force)
   }
 
   /** 销毁 SDK 实例：清除定时器、停止录制、刷新全部队列 */
@@ -751,11 +750,6 @@ export function createEys(options = {}) {
     flushAll(true)
     // 关闭 Span 导出管线，冲刷剩余缓冲（根/未结束 Span），避免调用树丢失尾包。
     await tracer?.shutdownSpans?.()
-  }
-
-  /** 将队列持久化到 localStorage，防止页面刷新丢失 */
-  function saveQueue() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(queue.slice(-cfg.maxQueue))) } catch {}
   }
 }
 
@@ -775,15 +769,6 @@ export function install(app, options = {}) {
     previous?.(err, instance, info)
   }
   app.config.globalProperties.$eys = eys
-}
-
-/**
- * 从 localStorage 加载之前持久化的事件队列
- * @param {number} maxQueue - 最大保留条数
- * @returns {object[]} 恢复的事件数组
- */
-function loadQueue(maxQueue) {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]').slice(-maxQueue) } catch { return [] }
 }
 
 /**
