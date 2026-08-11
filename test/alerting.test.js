@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { channelMatches, decryptSecrets, encryptSecrets, normalizeChannel, publishDelivery, sendChannel } from '../packages/alerting.js'
+import { buildAlertChannelPayload, createAlertChannelForm } from '../apps/web/src/alert-channels.js'
 
 test('渠道路由按应用、级别和指标匹配', () => {
   const channel = normalizeChannel({
@@ -17,6 +18,59 @@ test('渠道路由按应用、级别和指标匹配', () => {
     () => normalizeChannel({ name: '不安全渠道', type: 'webhook', config: { headers: { Authorization: 'Bearer plaintext' } } }),
     /必须使用/
   )
+})
+
+test('告警渠道页面按后端契约提交配置、范围和密钥', () => {
+  const form = createAlertChannelForm({
+    id: 8,
+    name: '订单告警',
+    type: 'webhook',
+    enabled: true,
+    configured: true,
+    config: {
+      method: 'POST',
+      headers: { 'x-app': '{{appId}}' },
+      bodyTemplate: '{"message":"{{message}}"}',
+      authType: 'bearer'
+    },
+    appIds: ['shop-web'],
+    levels: ['error'],
+    metrics: ['error', 'regression']
+  })
+  assert.equal(form.endpoint, '')
+  assert.equal(form.endpointConfigured, true)
+  form.endpoint = 'https://example.com/alerts'
+  form.token = 'new-token'
+  const payload = buildAlertChannelPayload(form)
+  assert.deepEqual(payload.appIds, ['shop-web'])
+  assert.deepEqual(payload.levels, ['error'])
+  assert.deepEqual(payload.metrics, ['error', 'regression'])
+  assert.deepEqual(payload.config.headers, { 'x-app': '{{appId}}' })
+  assert.deepEqual(payload.secrets, { url: 'https://example.com/alerts', token: 'new-token' })
+})
+
+test('编辑告警渠道留空密钥时不覆盖服务端已加密配置', () => {
+  const form = createAlertChannelForm({ id: 9, name: '飞书群', type: 'feishu', configured: true })
+  const payload = buildAlertChannelPayload(form)
+  assert.deepEqual(payload.secrets, {})
+})
+
+test('后端兼容旧告警渠道扁平字段并转换为标准契约', () => {
+  const value = normalizeChannel({
+    name: '旧版 Webhook',
+    type: 'webhook',
+    endpoint: 'https://example.com/legacy',
+    appId: 'web',
+    levels: 'error,critical',
+    metrics: 'error,regression',
+    webhookSecret: 'legacy-token',
+    webhookHeaders: { Authorization: 'Bearer {{secret.token}}' }
+  })
+  assert.deepEqual(value.appIds, ['web'])
+  assert.deepEqual(value.levels, ['error', 'critical'])
+  assert.deepEqual(value.metrics, ['error', 'regression'])
+  assert.deepEqual(value.secrets, { url: 'https://example.com/legacy', token: 'legacy-token' })
+  assert.deepEqual(value.config.headers, { Authorization: 'Bearer {{secret.token}}' })
 })
 
 test('渠道密钥 AES-GCM 加密后可解密且不包含明文', async () => {

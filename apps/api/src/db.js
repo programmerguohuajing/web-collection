@@ -322,6 +322,22 @@ export async function ensureSchema() {
     created_at bigint not null,
     updated_at bigint not null
   )`)
+  // 早期 PostgreSQL 部署曾存在 funnels 表。启动时幂等迁移到统一表名，
+  // 保留旧表以便灰度期间回滚；确认所有实例升级后可另行清理。
+  await run(`do $migration$
+  begin
+    if to_regclass('public.funnels') is not null then
+      execute 'insert into public.funnel_definitions (id,name,app_id,steps_json,created_at,updated_at)
+        select id,name,app_id,steps_json::jsonb,created_at,updated_at from public.funnels
+        on conflict (id) do nothing';
+    end if;
+  end
+  $migration$`)
+  await run(`select setval(
+    pg_get_serial_sequence('funnel_definitions', 'id'),
+    coalesce((select max(id) from funnel_definitions), 1),
+    exists(select 1 from funnel_definitions)
+  )`)
   await run(`create table if not exists dashboard_definitions (
     id bigserial primary key,
     name varchar(128) not null,

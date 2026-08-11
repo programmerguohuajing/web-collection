@@ -1,13 +1,4 @@
--- Migration 0004: rename alerts table to alert_history.
--- The production database was already migrated manually on 2026-07-29.
--- This migration is idempotent and safe to run in CI.
-
--- Remove backward-compat view if it still exists
-DROP VIEW IF EXISTS alerts;
-
--- Create the view for backward compatibility
-CREATE VIEW IF NOT EXISTS alerts AS SELECT * FROM alert_history;
-
--- Indexes for the renamed table
+-- 线上库已在 2026-07-29 完成 alerts -> alert_history 重命名。
+-- 新环境从 0001 起直接使用统一表名，因此这里只补充索引。
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alert_history(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_trace ON alert_history(trace_id);
