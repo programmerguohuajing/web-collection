@@ -226,3 +226,34 @@ test('QStash 发布配置重试与幂等键', async () => {
   assert.equal(request.options.headers['upstash-retries'], '5')
   assert.equal(JSON.parse(request.options.body).deliveryId, 42)
 })
+
+test('邮件渠道支持用请求体模板改写请求体并展开多收件人', async () => {
+  let request
+  const result = await sendChannel(
+    {
+      type: 'email',
+      config: {
+        method: 'POST',
+        authType: 'bearer',
+        recipients: 'a@ex.com, b@ex.com',
+        subject: '告警',
+        bodyTemplate: '{"from":"alert@ex.com","to":["{{recipients}}"],"subject":"{{subject}}","text":"{{message}}"}'
+      }
+    },
+    { url: 'https://api.resend.com/emails', token: 'resend-key' },
+    { id: 1, appId: 'web', level: 'error', metric: 'error', message: '服务异常', createdAt: Date.now() },
+    async (url, options) => {
+      request = { url, options }
+      return new Response('{"messageId":"mail-1"}', { status: 200 })
+    }
+  )
+  assert.equal(request.url, 'https://api.resend.com/emails')
+  assert.equal(request.options.headers.authorization, 'Bearer resend-key')
+  assert.deepEqual(JSON.parse(request.options.body), {
+    from: 'alert@ex.com',
+    to: ['a@ex.com', 'b@ex.com'],
+    subject: '告警',
+    text: '服务异常'
+  })
+  assert.equal(result.providerMessageId, 'mail-1')
+})

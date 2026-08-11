@@ -306,7 +306,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
       <el-form-item label="告警级别"><el-select v-model="channelForm.levels" multiple style="width:100%"><el-option label="警告" value="warning" /><el-option label="错误" value="error" /><el-option label="严重" value="critical" /></el-select></el-form-item>
       <el-form-item label="指标"><el-select v-model="channelForm.metrics" multiple style="width:100%"><el-option v-for="metric in ['error','log_error','regression','lcp','inp','cls','longtask']" :key="metric" :label="metricLabel(metric)" :value="metric" /></el-select></el-form-item>
       <el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item>
-      <template v-if="channelForm.type === 'webhook'">
+      <template v-if="channelForm.type === 'webhook' || channelForm.type === 'email'">
         <el-form-item label="请求方法"><el-select v-model="channelForm.method" style="width:100%"><el-option v-for="method in ['POST','PUT','PATCH']" :key="method" :label="method" :value="method" /></el-select></el-form-item>
         <el-form-item label="认证方式"><el-select v-model="channelForm.authType" style="width:100%"><el-option label="无" value="none" /><el-option label="Bearer Token" value="bearer" /><el-option label="Basic Auth" value="basic" /></el-select></el-form-item>
         <el-form-item v-if="channelForm.authType === 'bearer'" label="Token"><el-input v-model="channelForm.token" type="password" show-password :placeholder="channelForm.endpointConfigured ? '留空表示不修改' : ''" /></el-form-item>
