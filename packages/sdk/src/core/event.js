@@ -1,5 +1,5 @@
 /** 当前 SDK 版本号 */
-export const SDK_VERSION = '0.1.7'
+export const SDK_VERSION = '0.1.13'
 
 /** 默认敏感字段列表，这些 key 对应的值会被自动脱敏替换为 [REDACTED] */
 const DEFAULT_REDACT_KEYS = ['password', 'token', 'secret', 'authorization', 'cookie']
