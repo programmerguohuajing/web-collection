@@ -1,4 +1,4 @@
-const SERVICE_COLORS = ['#2dd4bf', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#fb923c', '#a3e635']
+const SERVICE_COLORS = ['#1769e0', '#0ea765', '#6d4aff', '#d97706', '#0891b2', '#c2410c', '#64748b']
 
 export function buildTraceTree(nodes = [], edges = []) {
   if (!nodes.length) return []
