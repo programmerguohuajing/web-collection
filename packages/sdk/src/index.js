@@ -165,15 +165,21 @@ export function createEys(options = {}) {
   const replayEvents = []
   const pageTraceId = randomHex(16)
   // 创建 Tracer 实例（当 distributedTracing 开启时）
-  const tracer = cfg.distributedTracing
-    ? createTracer({
+  // 容错：链路追踪构造失败只降级关闭 tracer，不能拖垮整个 SDK 初始化。
+  let tracer = null
+  if (cfg.distributedTracing) {
+    try {
+      tracer = createTracer({
         name: 'web-eys-sdk',
         version: SDK_VERSION,
         traceId: pageTraceId,
         baggage: cfg.baggage,
         sampler: createSampler({ sampleRate: cfg.sampleRate, categorySampleRates: cfg.categorySampleRates })
       })
-    : null
+    } catch (err) {
+      console.warn('[web-collection] 初始化链路追踪失败，已降级关闭：', err)
+    }
+  }
   /** 回放分段：基础会话 ID 不变，发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
    *  每种 sessionId 对应一条独立的回放记录，不再互相叠加。 */
   const replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -249,16 +255,22 @@ export function createEys(options = {}) {
   function startCapture() {
     if (captureStarted) return
     captureStarted = true
+    // 容错包裹：任意一个子模块初始化失败，仅告警并跳过该模块，
+    // 其余采集（错误/行为/页面等）继续工作，避免「一个模块挂掉 → 整个 SDK 不初始化 → 完全无上报」。
+    const safe = (label, fn) => {
+      try { return fn() }
+      catch (err) { console.warn(`[web-collection] 初始化子模块 "${label}" 失败，已跳过：`, err); return () => {} }
+    }
     // 1) 环境与运行时信息（优先采集，供后续模块使用）
-    stopEnvironment = setupEnvironmentMonitor({ context: globalContext, enabled: cfg.environmentInfo })
-    stopRuntime = setupRuntimeMonitor({ context: globalContext, config: cfg.runtimeInfo })
+    stopEnvironment = safe('environment', () => setupEnvironmentMonitor({ context: globalContext, enabled: cfg.environmentInfo }))
+    stopRuntime = safe('runtime', () => setupRuntimeMonitor({ context: globalContext, config: cfg.runtimeInfo }))
     // 2) Console 日志拦截
-    stopConsole = cfg.console ? setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels }) : () => {}
+    stopConsole = cfg.console ? safe('console', () => setupConsoleMonitor({ remember, emit: log, levels: cfg.consoleLevels })) : () => {}
     // 3) 全局错误监控
-    stopError = setupErrorMonitor({ error, clipSize: 500 })
+    stopError = safe('error', () => setupErrorMonitor({ error, clipSize: 500 }))
     // 4) 性能监控（单例，只初始化一次）
     if (!performanceStarted) {
-      finalizePerformance = setupPerformanceMonitor({
+      finalizePerformance = safe('performance', () => setupPerformanceMonitor({
         metric,
         error,
         endpoint: cfg.endpoint,
@@ -269,22 +281,22 @@ export function createEys(options = {}) {
         pageTraceId,
         requestAllowlist: cfg.privacy.requestAllowlist,
         tracer
-      })
+      }))
       performanceStarted = true
     }
     // 5) 内存监控
-    stopMemory = setupMemoryMonitor({ metric, interval: cfg.memoryInterval })
+    stopMemory = safe('memory', () => setupMemoryMonitor({ metric, interval: cfg.memoryInterval }))
     // 6) 请求 body 采样
-    stopBodySampler = setupBodySampler({ metric, sampleRate: cfg.requestBodySampling })
+    stopBodySampler = safe('bodySampler', () => setupBodySampler({ metric, sampleRate: cfg.requestBodySampling }))
     // 7) 白屏检测
-    observeWhiteScreen()
+    safe('whiteScreen', () => observeWhiteScreen())
     // 8) JS 启动耗时（用双重 rAF 确保渲染完成后再计算）
     requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
     // 9) 行为监控 + 回放路由分段
-    if (cfg.behavior) stopBehavior = setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking })
-    else if (cfg.replay && cfg.replaySegmentByRoute) stopRoute = setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') })
+    if (cfg.behavior) stopBehavior = safe('behavior', () => setupBehaviorMonitor({ push, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking }))
+    else if (cfg.replay && cfg.replaySegmentByRoute) stopRoute = safe('route', () => setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') }))
     // 10) 曝光采集
-    if (cfg.exposure) stopExposure = setupExposureMonitor({ push })
+    if (cfg.exposure) stopExposure = safe('exposure', () => setupExposureMonitor({ push }))
     // 11) 网络状态变化 & App 前后台切换
     const onOnline = () => push({ type: 'behavior', name: 'network_change', props: { online: true } })
     const onOffline = () => push({ type: 'behavior', name: 'network_change', props: { online: false } })
@@ -299,13 +311,13 @@ export function createEys(options = {}) {
       document.removeEventListener('visibilitychange', onVisibility)
     }
     // 12) 回放录制
-    if (cfg.replay) startReplay()
+    if (cfg.replay) safe('replay', () => startReplay())
     // 13) 可选监控模块（按需开启）
-    if (cfg.keyboardTracking) stopKeyboard = setupKeyboardMonitor({ push, keys: cfg.keyboardTrackingKeys })
-    if (cfg.touchTracking) stopTouch = setupTouchMonitor({ push })
-    if (cfg.workerMonitoring) stopWorker = setupWorkerMonitor({ error })
-    if (cfg.serviceWorkerMonitoring) stopServiceWorker = setupServiceWorkerMonitor({ metric, error })
-    if (cfg.bundleMonitoring) stopBundle = setupBundleMonitor({ metric })
+    if (cfg.keyboardTracking) stopKeyboard = safe('keyboard', () => setupKeyboardMonitor({ push, keys: cfg.keyboardTrackingKeys }))
+    if (cfg.touchTracking) stopTouch = safe('touch', () => setupTouchMonitor({ push }))
+    if (cfg.workerMonitoring) stopWorker = safe('worker', () => setupWorkerMonitor({ error }))
+    if (cfg.serviceWorkerMonitoring) stopServiceWorker = safe('serviceWorker', () => setupServiceWorkerMonitor({ metric, error }))
+    if (cfg.bundleMonitoring) stopBundle = safe('bundle', () => setupBundleMonitor({ metric }))
   }
 
   /**
