@@ -1,5 +1,12 @@
 <script setup>
-import { tableConfig } from './table-tooltip.js'
+import { onBeforeUnmount, onMounted } from 'vue'
+import { installTableTooltipWidthTracking, tableConfig } from './table-tooltip.js'
+
+let stopTableTooltipWidthTracking
+onMounted(() => {
+  stopTableTooltipWidthTracking = installTableTooltipWidthTracking()
+})
+onBeforeUnmount(() => stopTableTooltipWidthTracking?.())
 </script>
 
 <template>
