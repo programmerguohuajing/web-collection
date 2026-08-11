@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { formatDuration, formatErrorLocation, formatSpanId, formatSpanStatus, readableText, scoreWebVitals, spanStatusType } from '../apps/web/src/utils/format.js'
 import { buildSummary } from '../apps/api/src/services/summary-service.js'
 import { normalizeReleaseReport } from '../apps/web/src/utils/release-report.js'
+import { buildTraceTree, countTraceNodes, filterTraceTree, formatTraceDuration, getTraceBounds, limitTraceTree, serviceColor } from '../apps/web/src/utils/distributed-trace.js'
 
 assert.equal(formatDuration(999), '999ms')
 assert.equal(formatDuration(1250), '1.3s')
@@ -29,6 +30,22 @@ assert.deepEqual(normalizeReleaseReport([{ release: '1.0.0' }]), [{ release: '1.
 assert.deepEqual(normalizeReleaseReport({ items: [{ release: '2.0.0' }] }), [{ release: '2.0.0' }])
 assert.deepEqual(normalizeReleaseReport({ results: [{ release: '3.0.0' }] }), [{ release: '3.0.0' }])
 assert.deepEqual(normalizeReleaseReport({}), [])
+
+const traceTree = buildTraceTree([
+  { id: 'root', name: 'page', service: 'frontend', startTs: 100, duration: 50 },
+  { id: 'child', name: 'GET /api', service: 'gateway', startTs: 110, duration: 20, hasError: true },
+  { id: 'legacy', name: 'metric', service: 'frontend', startTs: 105, duration: 1 }
+], [{ source: 'root', target: 'child' }])
+assert.equal(traceTree.length, 2)
+assert.equal(traceTree[0].children[0].id, 'child')
+assert.equal(countTraceNodes(traceTree), 3)
+assert.equal(filterTraceTree(traceTree, { mode: 'errors', errorSpans: ['child'] })[0].children[0].id, 'child')
+assert.equal(filterTraceTree(traceTree, { query: 'gateway' })[0].children[0].service, 'gateway')
+assert.equal(countTraceNodes(limitTraceTree(traceTree, 2)), 2)
+assert.deepEqual(getTraceBounds(traceTree.flatMap(node => [node, ...(node.children || [])])), { start: 100, end: 150, duration: 50 })
+assert.equal(getTraceBounds([{ startTs: 0, duration: 10 }, { startTs: 120000, duration: 1000000 }]).duration, 180000)
+assert.equal(formatTraceDuration(1234), '1.23s')
+assert.equal(serviceColor('frontend'), serviceColor('frontend'))
 
 const summary = buildSummary([], {}, [], [
   { type: 'perf', metric: 'lcp', value: 100 },
