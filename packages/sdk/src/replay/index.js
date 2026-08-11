@@ -1,19 +1,52 @@
-import { record } from 'rrweb'
+import { loadRrweb } from './rrweb-driver.js'
 
 /**
- * 初始化会话回放监控（基于 rrweb）。
+ * 会话回放模块 facade（SDK-209 · 懒加载）。
  *
- * 录制页面 DOM 变化、用户交互等事件，用于在后台回放用户操作路径。
- * 默认开启输入框脱敏（maskAllInputs）、密码/邮箱/电话等敏感字段遮挡，
- * 支持 `.eys-block`（遮挡）和 `.eys-ignore`（忽略）CSS 类名控制。
- * 回放分段重启时会自动生成新的全量快照。
+ * 本模块不再在顶层静态 import rrweb，而是通过 `loadRrweb()` 在回放真正启动时
+ * 按需加载。核心包（ESM/IIFE）不会包含 rrweb；`replay:false` 时根本不会触发加载。
+ *
+ * facade 持有已加载的 rrweb 驱动引用；未加载前 `addReplayEvent` / `takeReplaySnapshot`
+ * 为安全的 no-op，避免录制未启动时调用抛错。
+ */
+
+let driver = null
+let loading = null
+
+/**
+ * 加载并缓存 rrweb 驱动（幂等；并发调用共享同一 Promise）。
+ * @param {object} [opts]
+ * @param {string} [opts.replayLibUrl]
+ * @returns {Promise<object>} rrweb 模块
+ */
+export async function ensureDriver({ replayLibUrl } = {}) {
+  if (driver) return driver
+  if (!loading) loading = loadRrweb({ replayLibUrl })
+  driver = await loading
+  return driver
+}
+
+/**
+ * 是否已经加载 rrweb 驱动（用于轻量判断，不触发加载）。
+ * @returns {boolean}
+ */
+export function isDriverLoaded() {
+  return !!driver
+}
+
+/**
+ * 初始化会话回放监控（基于 rrweb）。必须先 `ensureDriver`。
  *
  * @param {object} opts
- * @param {Function} opts.emit - rrweb 事件回调，每产生一个录制事件时调用
- * @param {object} [opts.options={}] - rrweb 附加配置，会与默认配置合并
- * @returns {Function} 停止录制的函数
+ * @param {Function} opts.emit - rrweb 事件回调
+ * @param {object} [opts.options={}] - rrweb 附加配置
+ * @returns {Function} 停止录制的函数（rrweb 的 record 返回值）
  */
 export function setupReplayMonitor({ emit, options = {} }) {
+  if (!driver) {
+    throw new Error('[web-collection] setupReplayMonitor 必须在 ensureDriver 之后调用')
+  }
+  const { record } = driver
   return record({
     emit,
     maskAllInputs: true,
@@ -33,19 +66,16 @@ export function setupReplayMonitor({ emit, options = {} }) {
 
 /**
  * 向回放录制中注入自定义事件标记。
- * 可在业务关键节点调用，在回放中标注关键操作。
- *
- * @param {string} tag - 自定义事件标签
- * @param {object} [payload={}] - 附加数据
+ * @param {string} tag
+ * @param {object} [payload={}]
  */
 export function addReplayEvent(tag, payload = {}) {
-  record.addCustomEvent?.(tag, payload)
+  driver?.record?.addCustomEvent?.(tag, payload)
 }
 
 /**
  * 立即触发一次全量 DOM 快照。
- * 适用于路由切换等场景，确保回放分段边界清晰。
  */
 export function takeReplaySnapshot() {
-  record.takeFullSnapshot?.(true)
+  driver?.record?.takeFullSnapshot?.(true)
 }

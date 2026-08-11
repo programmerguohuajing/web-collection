@@ -8,7 +8,7 @@
 ## 实施进度追踪
 
 > 本路线图按 P0（可信）→ P1（轻量可组合）→ P2（规模化）分阶段落地。以下勾选框反映**实际开发进度**；完成的条目同时会在第 6 节（U 表）与第 8 节（Backlog）对应行以 `✅` 标注，并注明所属阶段。
-> 最后更新：2026-08-12（Phase 1、Phase 2、Phase 3、Phase 4、Phase 5、Phase 6 完成）
+> 最后更新：2026-08-11（Phase 1、Phase 2、Phase 3、Phase 4、Phase 5、Phase 6、Phase 7 完成）
 
 - [x] **Phase 1 · Tracing 可信性基础**（路线图 P0 首位，已完成并通过测试）
   - [x] **U01** 自定义 Span 生命周期与异步恢复（对应 SDK-201）：`withSpan` 在同步 / 异步 resolve / reject / 异常所有路径调用 `endSpan` 弹栈；Tracer 活动栈从模块级全局改为**实例级**，修复多实例污染；`createTracer` 注册活跃 Tracer 供模块级便捷函数委托。
@@ -31,7 +31,10 @@
   - [x] **API-220（SDK 侧契约）**：每条事件携带稳定 `eventId`（`e-${time}-${counter}-${rand}`），在线发送与 Beacon 均携带，支持服务端 at-least-once 幂等去重；在线 `classifyResponse` 区分 `success`/`retry`(408/425/429/5xx)/`drop`(其余 4xx)，重试走指数退避+抖动并遵守 `Retry-After`，超 `maxRetries` 永久丢弃（`dropped_non_retryable`）；`onDiagnostic` 暴露 `queue_full`/`rate_limited`/`timeout`/`invalid_payload`/`storage_quota`/`dropped_by_sampling`/`beacon_rejected`/`beacon_oversize`/`beacon_fallback` 等健康事件。服务端 `eventId` 入库去重为后端 API-220 范畴，契约已对齐。
   - [x] **传输层单元测试**：新增 `packages/sdk/test/transport.test.js`（31 例），覆盖 `createEventId`/`computeBackoff`/`parseRetryAfter`/`classifyResponse`/诊断/`IndexedDBQueue`（内存降级、容量、replaceAll 双形态）/FetchTransport（成功、500、超时、网络错误、不可用）/BeaconTransport（字节长度、成功、rejected、oversize、字节切片、fetch 回退）/ReliableSender（自动 eventId、成功出队、4xx 丢弃、5xx 退避超限、并发单活跃发送者、退出 Beacon 非破坏性、下一会话恢复）/MultiTabLock（真实 BroadcastChannel 竞争 + 无 Channel 退化），已接入 `npm test`，全部通过。
 - [x] **Phase 6 · 确定性采样**（U06，SDK-208）：新增 `src/sampling/`（哈希原语 + `DeterministicSampler`），基于 traceId/sessionId 的哈希一致性采样、优先级保留错误链路、分类子采样（不破坏 trace）、远端权重、可解释决策与 `dropped_by_sampling` 诊断、`getSamplingDecision()` 自查；浏览器/平台入口与 tracer 接入。
-- [ ] **Phase 7 · Core / Replay 分包与懒加载**（U07，SDK-209 / SDK-210）。
+- [x] **Phase 7 · Core / Replay 分包与懒加载**（U07，SDK-209 / SDK-210）。
+  - [x] **SDK-209** Replay 动态加载与分包：移除 `packages/sdk/src/replay/index.js` 顶层 `import { record } from 'rrweb'`，改为 `loadRrweb()` 按需加载（`window.rrweb` 注入 → 动态 `import('rrweb')` → `replayLibUrl` 脚本注入三策略，`rrweb-driver.js`）；`ensureDriver` 幂等且并发共享 Promise；`addReplayEvent`/`takeReplaySnapshot` 在未加载时为安全 no-op。`vite.config.js` 仅打 `es`（Vite 自动把 `import('rrweb')` 拆为独立 `rrweb-*.js` chunk）；新增 `vite.iife.config.js` 将 rrweb `external` 并 `globals: { rrweb: 'rrweb' }`，核心 IIFE 不含 rrweb。`replay:false` 时核心包（ESM/IIFE）既不下载也不包含 rrweb；`startReplay()` 升级为 `Promise<void>`（调用方无需 await 但内部排队）。
+  - [x] **SDK-210** Replay Worker/压缩/环形缓冲：新增 `ring-buffer.js`（`ReplayRingBuffer` 容量 `maxSize` + 时间窗口 `windowMs` 惰性淘汰，错误前 30 秒可恢复、常驻内存有界，`replay_buffer_full` 告警）；新增 `compress.js` + `compression.worker.js`，gzip 优先 Worker → 主线程 `CompressionStream` → `none`（base64）降级，`replay_worker_unavailable`/`replay_compressed` 诊断；`startReplay`/`stopReplayRecording`/`flushReplay` 改为异步且 fire-and-forget 安全（`disposed` 守卫，避免 `destroy()` 竞态导致 rrweb 内部定时器泄露）。`index.d.ts` 补全 `replayLibUrl`/`replayWorkerUrl`/`replayCompression`/`replayBufferSize`/`replayWindowMs` 选项与异步 replay API。
+  - [x] **Replay 单元测试**：新增 `packages/sdk/test/replay.test.js`（13 例），覆盖 `ReplayRingBuffer`（容量/时间窗口/drain/take）、压缩（gzip 往返、`none` 降级 + 诊断、Worker 优先 via MockWorker）、`loadRrweb`（`window.rrweb` 复用 / `injectScript` resolve·reject / 动态 `import` 懒加载核心路径）、`ensureDriver` 幂等、`addReplayEvent`/`takeReplaySnapshot` no-op 安全、`createEys` `replay:false|true` 构造与 API 完整；已接入 `npm test`，全部通过，且进程干净退出（修复 Node 22 `BroadcastChannel.close()` 不释放 PipeWrap 的泄漏，测试中置 `BroadcastChannel: undefined` 退化为单标签页布尔守卫）。
 - [ ] **其余 P1 / P2 与 Week 5–12 里程碑**：按计划推进（见第 7 节）。
 
 ## 0. 如何使用本文件
@@ -116,7 +119,7 @@ Web Collection SDK 已经不是“只有埋点”的早期 SDK。当前代码同
 | 结论 | 源码证据 |
 |---|---|
 | SDK 当前版本为 0.1.16 | `packages/sdk/package.json`、`packages/sdk/src/core/event.js` |
-| rrweb 为静态依赖并进入默认入口 | `packages/sdk/src/replay/index.js` 被 `packages/sdk/src/index.js` 静态导入 |
+| rrweb 已改为按需动态加载，不再进入默认入口 | `packages/sdk/src/replay/index.js` 经 `loadRrweb()` 懒加载（ESM 拆分为独立 `rrweb-*.js` chunk，IIFE 外部化 `window.rrweb`）；`replay:false` 时核心包不下载/不包含 rrweb |
 | 请求 Trace 通过 fetch/XHR 自动创建 | `packages/sdk/src/performance/fetch.js`、`xhr.js` |
 | 自定义 Span 未独立发送 | `Span.toJSON()` 存在，但 `createEys()` 的统一 `push()` 没有 Span Processor/Exporter 接入 |
 | `withSpan()` 活动栈清理不完整 | `packages/sdk/src/trace/tracer.js` 只调用 `span.end()`，没有调用 `endSpan(span)` |
@@ -126,7 +129,7 @@ Web Collection SDK 已经不是“只有埋点”的早期 SDK。当前代码同
 | 输入行为不采原始值 | `packages/sdk/src/behavior/input.js` 只采集时长、次数和值长度 |
 | 选择行为采集原始值和文本 | `packages/sdk/src/behavior/advanced.js` 上报 `selectedValue`、`selectedText` |
 | 队列使用 localStorage，重试较简单 | `packages/sdk/src/index.js` 的 `flush()`、`saveQueue()`、`loadQueue()` |
-| 测试覆盖仍偏单模块 | `packages/sdk/test/` 目前为 7 个测试文件，Trace 仅有请求链路用例，Replay 无专项用例 |
+| 测试覆盖已补齐多模块门禁 | `packages/sdk/test/` 覆盖 event/platform/performance/console/click/error/fetch/trace/exporter/propagation/privacy/sampling/transport/replay（13 个文件），Replay 有专项用例（环形缓冲/压缩/懒加载/集成） |
 
 ## 4. 能力对标矩阵
 
@@ -140,7 +143,7 @@ Web Collection SDK 已经不是“只有埋点”的早期 SDK。当前代码同
 | 请求采集 | 较强 | Datadog、Highlight | 缺 GraphQL operation、可编程 request/response sanitizer、取消请求去噪 |
 | W3C 分布式追踪 | 部分 | OpenTelemetry、Elastic、Faro | `traceparent` 已有；Context、标准 baggage/tracestate、Exporter 尚未闭环 |
 | 通用自定义 Span | 部分且有生命周期缺陷 | OpenTelemetry、Sentry | 需要 Processor/Exporter 和可靠异步上下文，不能只返回 Span 对象 |
-| Session Replay | 可用 | rrweb、Sentry、Datadog、Highlight | 需懒加载、差异化采样、压缩、Worker、Canvas/iframe 策略和回放质量指标 |
+| Session Replay | 较强（已懒加载+压缩+Worker+环形缓冲） | rrweb、Sentry、Datadog、Highlight | 已落地：按需分包、gzip（Worker/主线程/降级）、内存有界环形缓冲、错误前 30 秒可恢复；待补：差异化采样、Canvas/iframe 策略、回放质量指标 |
 | Replay 隐私 | 有输入遮盖 | Sentry、Datadog、Highlight | 需统一严格/默认/关闭分级，并覆盖文本、图片、选择框、网络体和自定义事件 |
 | 行为 Autocapture | 较强 | PostHog | 需稳定元素指纹、文本隐私、业务事件治理和版本化 schema |
 | Feature Flag/实验上下文 | 缺失 | PostHog | 建议只采集 flag key/variant，服务于错误、性能、Replay 对比 |
