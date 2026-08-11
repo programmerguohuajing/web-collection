@@ -2,6 +2,9 @@
 
 # Web Collection SDK
 
+[![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk)
+[![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/LICENSE)
+
 ## Getting Started
 
 ```js
