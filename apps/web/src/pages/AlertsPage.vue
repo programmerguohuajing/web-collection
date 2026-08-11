@@ -20,14 +20,15 @@ async function load() {
   try {
     const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/alerts?${suffix}`)
-    rows.value = data.items
-    pager.total = data.total
+    rows.value = data?.items || []
+    pager.total = data?.total || 0
   } finally { pageLoading.value = false }
 }
 
 async function loadChannels() {
   try {
-    channels.value = await api('/api/alert-channels')
+    const data = await api('/api/alert-channels')
+    channels.value = data?.items || []
   } catch { channels.value = [] }
 }
 
