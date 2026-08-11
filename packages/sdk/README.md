@@ -1,4 +1,4 @@
-> English documentation. [中文文档](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/README.zh-CN.md)
+> English documentation. [中文文档](https://unpkg.com/@web-collection/sdk@latest/README.zh-CN.md)
 
 # Web Collection SDK
 

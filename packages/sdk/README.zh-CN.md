@@ -1,4 +1,4 @@
-> 中文文档。 [English Documentation](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/README.md)
+> 中文文档。 [English Documentation](https://unpkg.com/@web-collection/sdk@latest/README.md)
 
 # Web Collection SDK 指标说明
 
