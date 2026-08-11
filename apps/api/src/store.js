@@ -88,8 +88,8 @@ export async function listEvents(limit = 100, filters = {}) {
 
 export async function listEventsPage(filters = {}) {
   await initPromise
-  const page = Math.max(1, Number(filters.page || 1))
-  const pageSize = Math.max(1, Math.min(100, Number(filters.pageSize || 10)))
+  const page = pageOf(filters).page
+  const pageSize = pageOf(filters).pageSize
   const [rows, total] = await Promise.all([
     listEventRows(pageSize, filters, (page - 1) * pageSize),
     countEventRows(filters)
@@ -155,8 +155,8 @@ export async function listIssues(filters = {}) {
 
 export async function listIssuesPage(filters = {}) {
   await initPromise
-  const page = Math.max(1, Number(filters.page || 1))
-  const pageSize = Math.max(1, Math.min(100, Number(filters.pageSize || 10)))
+  const page = pageOf(filters).page
+  const pageSize = pageOf(filters).pageSize
   const [rows, total] = await Promise.all([
     listIssueRows(filters, pageSize, (page - 1) * pageSize),
     countIssueRows(filters)
@@ -166,8 +166,8 @@ export async function listIssuesPage(filters = {}) {
 
 export async function listReplaysPage(filters = {}) {
   await initPromise
-  const page = Math.max(1, Number(filters.page || 1))
-  const pageSize = Math.max(1, Math.min(100, Number(filters.pageSize || 10)))
+  const page = pageOf(filters).page
+  const pageSize = pageOf(filters).pageSize
   const [rows, total] = await Promise.all([
     listReplaySessions(pageSize, filters, (page - 1) * pageSize),
     countReplaySessions(filters)
@@ -183,8 +183,8 @@ export async function listReplaysPage(filters = {}) {
  */
 export async function getReplay(sessionId) {
   await initPromise
-  const rows = await listReplayEventRows(safeName(sessionId))
-  return rows.flatMap(row => parseJson(row.events_json) || [])
+  const rows = await listReplayEventRows(safeName(sessionId), 500)
+  return rows.flatMap(row => parseJson(row.events_json) || []).slice(0, 100000)
 }
 
 /** 确保数据库 Schema 已初始化（供外部调用） */
@@ -275,6 +275,18 @@ function safeName(value) {
 /** 截取堆栈前 8 行，避免过长堆栈影响存储和展示 */
 function trimStack(stack = '') {
   return String(stack).split('\n').slice(0, 8).join('\n')
+}
+
+function pageOf(filters = {}) {
+  return {
+    page: safePage(filters.page, 1, 1000000),
+    pageSize: safePage(filters.pageSize, 10, 100)
+  }
+}
+
+function safePage(value, fallback, max) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(1, Math.min(max, Math.floor(number))) : fallback
 }
 
 /**

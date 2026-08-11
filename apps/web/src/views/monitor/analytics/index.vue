@@ -2,12 +2,11 @@
 import { ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
+import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading, toList } from '../../../dashboard.js'
 import AnalyticsChart from '../../../components/AnalyticsChart.vue'
 import EventInsightPanel from '../../../components/EventInsightPanel.vue'
 import PathInsightPanel from '../../../components/PathInsightPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
-import { normalizeReleaseReport } from '../../../utils/release-report.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,52 +25,70 @@ const insights = ref([])
 const capabilities = ref({ productAnalyticsV2: false })
 const dashboardResults = ref({})
 const selectedDashboardId = ref(null)
+const sessionDrawerOpen = ref(false)
+const analyticsError = ref('')
+const analyticsLoading = ref(false)
 const sessionPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const sessionEventPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const funnelPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const funnelForm = reactive({ name: '', appId: '', steps: [emptyFunnelStep(), emptyFunnelStep()] })
 const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors', 'releases'] })
 let timer = 0
+let loadRequestId = 0
 
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
 const insightOptions = computed(() => insights.value.map(item => ({ label: item.name, value: `insight:${item.id}` })))
 const funnelOptions = computed(() => funnels.value.map(item => ({ label: item.name, value: `funnel:${item.id}` })))
 
 function setPaged(target, pager, data) {
-  target.value = data.items
-  Object.assign(pager, { page: data.page, pageSize: data.pageSize, total: data.total })
+  const normalized = normalizePageResponse(data, pager)
+  target.value = normalized.items
+  Object.assign(pager, normalized)
 }
 async function loadSessions() {
-  setPaged(sessions, sessionPager, await api(`/api/analytics/sessions?${queryFromFilters({ page: sessionPager.page, pageSize: sessionPager.pageSize })}`))
+  const data = await api(`/api/analytics/sessions?${queryFromFilters({ page: sessionPager.page, pageSize: sessionPager.pageSize })}`, { requestKey: 'analytics:sessions' })
+  setPaged(sessions, sessionPager, data)
 }
 async function loadFunnels() {
-  setPaged(funnels, funnelPager, await api(`/api/funnels?page=${funnelPager.page}&pageSize=${funnelPager.pageSize}`))
+  const data = await api(`/api/funnels?page=${funnelPager.page}&pageSize=${funnelPager.pageSize}`, { requestKey: 'analytics:funnels' })
+  setPaged(funnels, funnelPager, data)
 }
 async function loadInsights() {
-  insights.value = capabilities.value.productAnalyticsV2 ? await api('/api/analytics/insights') : []
+  insights.value = capabilities.value.productAnalyticsV2 ? toList(await api('/api/analytics/insights', { requestKey: 'analytics:insights' })) : []
 }
 async function refreshInsights() {
-  await Promise.all([loadInsights(), api('/api/dashboards').then(data => { dashboards.value = data })])
+  await Promise.all([loadInsights(), api('/api/dashboards', { requestKey: 'analytics:dashboards' }).then(data => { dashboards.value = toList(data) })])
   await loadDashboardResults()
 }
 async function load() {
+  const requestId = ++loadRequestId
+  analyticsLoading.value = true
+  analyticsError.value = ''
   pageLoading.value = true
   try {
     capabilities.value = await api('/api/capabilities').catch(() => ({ productAnalyticsV2: false }))
     const query = queryFromFilters()
     const [, pathData, liveData, releaseData, eventNameData, , dashboardData, insightData] = await Promise.all([
-      loadSessions(), api(`/api/analytics/paths?${query}`), api(`/api/analytics/live?${query}`), api(`/api/analytics/releases?${query}`), api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`), loadFunnels(), api('/api/dashboards')
+      loadSessions(), api(`/api/analytics/paths?${query}`, { requestKey: 'analytics:paths' }), api(`/api/analytics/live?${query}`, { requestKey: 'analytics:live' }), api(`/api/analytics/releases?${query}`, { requestKey: 'analytics:releases' }), api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`, { requestKey: 'analytics:event-names' }), loadFunnels(), api('/api/dashboards', { requestKey: 'analytics:dashboards' })
       , capabilities.value.productAnalyticsV2 ? api('/api/analytics/insights') : []
     ])
-    paths.value = pathData
-    live.value = liveData
-    releases.value = normalizeReleaseReport(releaseData)
-    funnelEventNames.value = eventNameData
-    dashboards.value = dashboardData
-    insights.value = insightData
-    if (!selectedDashboardId.value && dashboardData[0]) selectedDashboardId.value = dashboardData[0].id
+    if (requestId !== loadRequestId) return
+    paths.value = normalizePageResponse(pathData).items
+    live.value = liveData?.data && typeof liveData.data === 'object' ? liveData.data : (liveData || {})
+    releases.value = normalizePageResponse(releaseData).items.map(normalizeReleaseRow)
+    funnelEventNames.value = toList(eventNameData)
+    dashboards.value = toList(dashboardData)
+    insights.value = toList(insightData)
+    if (!selectedDashboardId.value && dashboards.value[0]) selectedDashboardId.value = dashboards.value[0].id
     await loadDashboardResults()
-  } finally { pageLoading.value = false }
+  } catch (error) {
+    if (requestId === loadRequestId && error?.code !== 'ABORT_ERR') analyticsError.value = error.message || '分析数据加载失败'
+  } finally {
+    if (requestId === loadRequestId) {
+      analyticsLoading.value = false
+      pageLoading.value = false
+    }
+  }
 }
 
 async function saveFunnel() {
@@ -115,6 +132,23 @@ function emptyFunnelStep() {
   return { eventName: '', filterField: '', filterOperator: 'eq', filterValue: '' }
 }
 function stepName(step) { return typeof step === 'string' ? step : step?.eventName || '-' }
+function presentValue(...values) {
+  return values.find(value => value !== undefined && value !== null && value !== '') ?? '-'
+}
+function normalizeReleaseRow(row = {}) {
+  return {
+    ...row,
+    release: presentValue(row.release, row.release_name, row.releaseName, row.version),
+    events: presentValue(row.events, row.event_count, row.eventCount),
+    users: presentValue(row.users, row.user_count, row.userCount),
+    errors: presentValue(row.errors, row.error_count, row.errorCount),
+    lcp: presentValue(row.lcp, row.avg_lcp, row.avgLcp, row.average_lcp, row.averageLcp)
+  }
+}
+function replayId(row = {}) {
+  const value = row.replaySessionId ?? row.replay_session_id
+  return value === undefined || value === null || value === '' ? '' : value
+}
 function widgetKey(widget) { return typeof widget === 'string' ? widget : `${widget.type}:${widget.id}` }
 function insightById(id) { return insights.value.find(item => item.id === Number(id)) }
 function funnelById(id) { return funnels.value.find(item => item.id === Number(id)) }
@@ -146,11 +180,13 @@ async function loadDashboardResults() {
 }
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 async function loadSessionEvents() {
-  setPaged(sessionEvents, sessionEventPager, await api(`/api/analytics/sessions/${encodeURIComponent(activeSession.value.session_id)}?page=${sessionEventPager.page}&pageSize=${sessionEventPager.pageSize}`))
+  if (!activeSession.value?.session_id) return
+  setPaged(sessionEvents, sessionEventPager, await api(`/api/analytics/sessions/${encodeURIComponent(activeSession.value.session_id)}?page=${sessionEventPager.page}&pageSize=${sessionEventPager.pageSize}`, { requestKey: `analytics:session-events:${activeSession.value.session_id}` }))
 }
 async function openSession(row) {
   if (!row.session_id?.trim()) return
   activeSession.value = row
+  sessionDrawerOpen.value = true
   sessionEventPager.page = 1
   await loadSessionEvents()
 }
@@ -167,6 +203,7 @@ watch(selectedDashboardId, loadDashboardResults)
 
 <template>
   <SearchPanel :fields="['userId']" @search="() => { sessionPager.page = 1; load() }" />
+  <el-alert v-if="analyticsError" class="table-error" type="error" :title="analyticsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
   <div class="metrics section">
     <el-card><span>近 5 分钟会话</span><strong>{{ live.sessions || 0 }}</strong></el-card>
     <el-card><span>近 5 分钟用户</span><strong>{{ live.users || 0 }}</strong></el-card>
@@ -178,7 +215,7 @@ watch(selectedDashboardId, loadDashboardResults)
       <EventInsightPanel :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
     </el-tab-pane>
     <el-tab-pane label="用户会话" name="sessions">
-      <el-table :data="sessions" border @row-click="openSession">
+      <el-table :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession">
         <el-table-column prop="user_name" label="用户" width="130"><template #default="{ row }">{{ row.user_name || row.user_id || row.device_id }}</template></el-table-column>
         <el-table-column prop="session_id" label="会话" min-width="200" show-overflow-tooltip />
         <el-table-column label="开始时间" width="180"><template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template></el-table-column>
@@ -186,9 +223,9 @@ watch(selectedDashboardId, loadDashboardResults)
         <el-table-column prop="event_count" label="事件" width="80" />
         <el-table-column prop="error_count" label="错误" width="80" />
         <el-table-column prop="paths" label="访问页面" min-width="260"><template #default="{ row }">{{ row.paths?.join(' → ') }}</template></el-table-column>
-        <el-table-column label="回放" width="80"><template #default="{ row }"><el-button v-if="row.replaySessionId" link type="primary" @click="replay(row.replaySessionId)">播放</el-button></template></el-table-column>
+        <el-table-column label="回放" width="80"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><span v-else>-</span></template></el-table-column>
       </el-table>
-      <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
+      <el-pagination v-if="sessionPager.total > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
     </el-tab-pane>
     <el-tab-pane label="漏斗分析" name="funnels">
       <el-card class="funnel-builder" shadow="never">
@@ -237,13 +274,13 @@ watch(selectedDashboardId, loadDashboardResults)
         <h2 class="analysis-title">每日趋势</h2>
         <el-table :data="funnelResult.trend" border><el-table-column prop="date" label="日期" /><el-table-column prop="entered" label="进入" /><el-table-column prop="converted" label="完成" /></el-table>
         <h2 class="analysis-title">流失会话</h2>
-        <el-table :data="funnelResult.lostSessions" border><el-table-column prop="actor" label="用户" /><el-table-column prop="lastEvent" label="最后步骤" /><el-table-column prop="errors" label="错误" /><el-table-column prop="sessionId" label="会话" /><el-table-column label="回放"><template #default="{ row }"><el-button v-if="row.replaySessionId" link type="primary" @click="replay(row.replaySessionId)">播放</el-button></template></el-table-column></el-table>
+        <el-table :data="funnelResult.lostSessions" border><el-table-column prop="actor" label="用户" /><el-table-column prop="lastEvent" label="最后步骤" /><el-table-column prop="errors" label="错误" /><el-table-column prop="sessionId" label="会话" /><el-table-column label="回放"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><span v-else>-</span></template></el-table-column></el-table>
         <h2 class="analysis-title">版本 / 浏览器 / 设备维度</h2>
         <el-table v-for="dimension in funnelResult.dimensions" :key="dimension.field" :data="dimension.items" border class="section"><el-table-column :label="dimension.field" prop="name" /><el-table-column prop="entered" label="进入" /><el-table-column prop="converted" label="完成" /></el-table>
       </template>
     </el-tab-pane>
     <el-tab-pane label="版本对比" name="releases">
-      <el-table :data="releases" border><el-table-column prop="release" label="版本" /><el-table-column prop="events" label="事件" /><el-table-column prop="users" label="用户" /><el-table-column prop="errors" label="错误" /><el-table-column prop="lcp" label="平均 LCP" /></el-table>
+      <el-table :data="releases" border><el-table-column label="版本"><template #default="{ row }">{{ presentValue(row.release, row.release_name, row.releaseName, row.version) }}</template></el-table-column><el-table-column label="事件"><template #default="{ row }">{{ presentValue(row.events, row.event_count, row.eventCount) }}</template></el-table-column><el-table-column label="用户"><template #default="{ row }">{{ presentValue(row.users, row.user_count, row.userCount) }}</template></el-table-column><el-table-column label="错误"><template #default="{ row }">{{ presentValue(row.errors, row.error_count, row.errorCount) }}</template></el-table-column><el-table-column label="平均 LCP"><template #default="{ row }">{{ presentValue(row.lcp, row.avg_lcp, row.avgLcp, row.average_lcp, row.averageLcp) }}</template></el-table-column></el-table>
     </el-tab-pane>
     <el-tab-pane label="自定义仪表盘" name="dashboards">
       <el-space class="section"><el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select><el-button type="danger" plain :disabled="!selectedDashboardId" @click="removeDashboard">删除仪表盘</el-button></el-space>
@@ -271,6 +308,7 @@ watch(selectedDashboardId, loadDashboardResults)
 </template>
 
 <style scoped>
+.table-error { margin-bottom: 12px; }
 .funnel-builder { margin-bottom: 18px; }
 .funnel-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .funnel-builder-head h2 { margin: 0; color: #172033; font-size: 16px; }

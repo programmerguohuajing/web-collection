@@ -10,6 +10,8 @@ const canvasRef = ref(null)
 const bgImageUrl = ref('')
 const bgImageEl = ref(null)
 const loading = ref(false)
+const loadError = ref('')
+const imageError = ref('')
 const activeTab = ref('click')
 const heatmapData = ref({ clickPoints: [], scrollData: [], scrollAggregate: [] })
 const intensity = ref(30)
@@ -17,6 +19,7 @@ const radius = ref(40)
 const transform = ref({ scale: 1, offsetX: 0, offsetY: 0 })
 let isDragging = false
 let dragStart = { x: 0, y: 0 }
+let loadRequestId = 0
 
 const colorStops = [
   { offset: 0, color: [0, 0, 255, 0] },
@@ -28,28 +31,59 @@ const colorStops = [
 ]
 
 async function loadData() {
+  const requestId = ++loadRequestId
+  loadError.value = ''
   loading.value = true
   try {
-    const res = await api(`/api/analytics/heatmap?${queryFromFilters({}, ['appId', 'release', 'startTime', 'endTime'])}`)
-    heatmapData.value = res
+    heatmapData.value = { clickPoints: [], scrollData: [], scrollAggregate: [] }
+    const extra = props.appId ? { appId: props.appId } : {}
+    const res = await api(`/api/analytics/heatmap?${queryFromFilters(extra, ['appId', 'release', 'startTime', 'endTime'])}`, {
+      requestKey: 'analytics:heatmap',
+      timeout: 15000
+    })
+    if (requestId !== loadRequestId) return
+    const payload = res?.data && typeof res.data === 'object' ? res.data : res
+    const clickPoints = Array.isArray(payload?.clickPoints)
+      ? payload.clickPoints.filter(point => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y)))
+      : []
+    const scrollData = Array.isArray(payload?.scrollData) ? payload.scrollData : []
+    const scrollAggregate = Array.isArray(payload?.scrollAggregate)
+      ? payload.scrollAggregate.filter(item => item && typeof item === 'object')
+      : []
+    heatmapData.value = { clickPoints, scrollData, scrollAggregate }
+  } catch (error) {
+    if (requestId === loadRequestId && error?.code !== 'ABORT_ERR') {
+      heatmapData.value = { clickPoints: [], scrollData: [], scrollAggregate: [] }
+      loadError.value = error?.message || '热力图数据加载失败，请稍后重试'
+    }
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) loading.value = false
   }
 }
 
-onMounted(loadData)
-watch(() => props.appId, loadData)
+onMounted(() => { void loadData() })
+watch(() => props.appId, () => { void loadData() })
 
 function handleImageUpload(e) {
   const file = e.target.files?.[0]
   if (!file) return
+  imageError.value = ''
   const reader = new FileReader()
   reader.onload = () => {
     bgImageUrl.value = reader.result
     const img = new Image()
-    img.onload = () => { bgImageEl.value = img; render() }
+    img.onload = () => {
+      if (!img.naturalWidth || !img.naturalHeight) {
+        imageError.value = '背景图片尺寸无效，请重新选择图片'
+        return
+      }
+      bgImageEl.value = img
+      render()
+    }
+    img.onerror = () => { imageError.value = '背景图片加载失败，请重新选择图片' }
     img.src = reader.result
   }
+  reader.onerror = () => { imageError.value = '背景图片读取失败，请重新选择图片' }
   reader.readAsDataURL(file)
 }
 
@@ -83,6 +117,7 @@ function render() {
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')
+  if (!ctx) return
   const dpr = window.devicePixelRatio || 1
   const rect = canvas.getBoundingClientRect()
   if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
@@ -109,6 +144,7 @@ function render() {
 function renderClickHeatmap(ctx, rect, t) {
   const img = bgImageEl.value
   if (img) {
+    if (!img.naturalWidth || !img.naturalHeight) return
     const maxW = rect.width / t.scale
     const maxH = rect.height / t.scale
     const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight)
@@ -189,10 +225,11 @@ function renderScrollHeatmap(ctx, rect) {
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
-    const barH = (item.maxDepth / 100) * h
+    const depth = Math.min(100, Math.max(0, Number(item.maxDepth) || 0))
+    const barH = (depth / 100) * h
     const x = pad.left + i * (w / items.length) + 2
     const y = pad.top + h - barH
-    const color = gradientColor(item.maxDepth / 100)
+    const color = gradientColor(depth / 100)
     ctx.fillStyle = `rgba(${color[0]},${color[1]},${color[2]},0.85)`
     ctx.fillRect(x, y, barW, barH)
   }
@@ -225,15 +262,16 @@ function renderScrollHeatmap(ctx, rect) {
 }
 
 function gradientColor(t) {
+  const value = Math.min(1, Math.max(0, Number(t) || 0))
   let i = 0
-  while (i < colorStops.length - 2 && colorStops[i + 1][0] < t) i++
+  while (i < colorStops.length - 2 && colorStops[i + 1].offset < value) i++
   const a = colorStops[i], b = colorStops[i + 1]
-  const range = b[0] - a[0]
-  const lt = range > 0 ? (t - a[0]) / range : 0
+  const range = b.offset - a.offset
+  const lt = range > 0 ? (value - a.offset) / range : 0
   return [
-    Math.round(a[1] + (b[1] - a[1]) * lt),
-    Math.round(a[2] + (b[2] - a[2]) * lt),
-    Math.round(a[3] + (b[3] - a[3]) * lt)
+    Math.round(a.color[0] + (b.color[0] - a.color[0]) * lt),
+    Math.round(a.color[1] + (b.color[1] - a.color[1]) * lt),
+    Math.round(a.color[2] + (b.color[2] - a.color[2]) * lt)
   ]
 }
 
@@ -271,6 +309,11 @@ onBeforeUnmount(() => {})
       </div>
     </template>
 
+    <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" class="heatmap-alert">
+      <template #default><el-button link type="primary" @click="loadData">重试</el-button></template>
+    </el-alert>
+    <el-alert v-if="imageError" type="warning" :title="imageError" show-icon :closable="false" class="heatmap-alert" />
+
     <div v-if="activeTab === 'click'" style="margin-bottom:12px">
       <span style="margin-right:16px;font-size:13px">强度：<el-slider v-model="intensity" :min="5" :max="80" style="width:120px;display:inline-block;vertical-align:middle" /></span>
       <span style="font-size:13px">半径：<el-slider v-model="radius" :min="10" :max="100" style="width:120px;display:inline-block;vertical-align:middle" /></span>
@@ -304,6 +347,7 @@ onBeforeUnmount(() => {})
 
 <style scoped>
 .heatmap-card { min-height: 480px; }
+.heatmap-alert { margin-bottom: 10px; }
 .heatmap-canvas-wrap { position: relative; width: 100%; height: 420px; overflow: hidden; background: #16161a; border-radius: 6px; cursor: grab; }
 .heatmap-canvas-wrap:active { cursor: grabbing; }
 .heatmap-canvas--scroll { cursor: default; }

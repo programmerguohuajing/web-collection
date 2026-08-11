@@ -173,18 +173,39 @@ export async function processAlert(event, issue) {
 }
 
 export async function listAlerts(filters = {}) {
-  const page = Math.max(1, Number(filters.page) || 1)
-  const pageSize = Math.max(1, Math.min(100, Number(filters.pageSize) || 10))
+  const page = safePage(filters.page, 1, 1000000)
+  const pageSize = safePage(filters.pageSize, 10, 100)
+  const conditions = []
+  const values = []
+  for (const [field, value] of [['app_id', filters.appId], ['level', filters.level], ['metric', filters.metric], ['status', filters.status]]) {
+    if (value) { conditions.push(`a.${field}=?`); values.push(String(value).slice(0, 64)) }
+  }
+  if (filters.keyword) { conditions.push('(a.message ilike ? or a.app_id ilike ? or a.metric ilike ?)'); values.push(...Array(3).fill(`%${String(filters.keyword).slice(0, 200)}%`)) }
+  const where = conditions.length ? `where ${conditions.join(' and ')}` : ''
   const [items, total] = await Promise.all([
     all(`select a.*,
+      nullif(a.context_json->>'traceId','') as trace_id,
+      nullif(a.context_json->>'threshold','')::double precision as threshold,
       (select count(*) from alert_deliveries d where d.alert_id=a.id) delivery_total,
       (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status='sent') delivery_sent,
       (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('failed','dead')) delivery_failed,
       (select count(*) from alert_deliveries d where d.alert_id=a.id and d.status in ('pending','sending')) delivery_pending
-      from alert_history a order by created_at desc limit ? offset ?`, [pageSize, (page - 1) * pageSize]),
-    scalar('select count(*) count from alert_history')
+      from alert_history a ${where} order by a.created_at desc limit ? offset ?`, [...values, pageSize, (page - 1) * pageSize]),
+    scalar(`select count(*) count from alert_history a ${where}`, values)
   ])
   return { items, total, page, pageSize }
+}
+
+const alertStatuses = new Set(['pending', 'acknowledged', 'resolved', 'dismissed'])
+
+export async function updateAlertStatus(id, status) {
+  const alertId = Number(id)
+  if (!Number.isInteger(alertId) || alertId <= 0) throw httpError(400, '告警 ID 无效')
+  const nextStatus = String(status || '').trim()
+  if (!alertStatuses.has(nextStatus)) throw httpError(400, '告警状态无效')
+  const rows = await all('update alert_history set status=?,updated_at=? where id=? returning *', [nextStatus, Date.now(), alertId])
+  if (!rows.length) throw httpError(404, '告警不存在')
+  return rows[0]
 }
 
 export async function cleanupExpiredData() {
@@ -219,7 +240,21 @@ function makeTrigger(metric, value, level, event, threshold) {
 }
 
 function pageOf(filters) {
-  return { page: Math.max(1, Number(filters.page || 1)), pageSize: Math.max(1, Math.min(100, Number(filters.pageSize || 10))) }
+  return {
+    page: safePage(filters?.page, 1, 1000000),
+    pageSize: safePage(filters?.pageSize, 10, 100)
+  }
+}
+
+function safePage(value, fallback, max) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(1, Math.min(max, Math.floor(number))) : fallback
+}
+
+function httpError(status, message) {
+  const error = new Error(message)
+  error.statusCode = status
+  return error
 }
 
 function normalizeSettings(input = {}) {

@@ -103,8 +103,16 @@ function eventWhere(filters = {}) {
 }
 
 function addRange(parts, params, field, start, end) {
-  if (start) { parts.push(`${field} >= ?`); params.push(Number(start)) }
-  if (end) { parts.push(`${field} <= ?`); params.push(Number(end)) }
+  const startValue = finiteTimestamp(start)
+  const endValue = finiteTimestamp(end)
+  if (startValue != null) { parts.push(`${field} >= ?`); params.push(startValue) }
+  if (endValue != null) { parts.push(`${field} <= ?`); params.push(endValue) }
+}
+
+function finiteTimestamp(value) {
+  if (value == null || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
 }
 
 function addEq(parts, params, field, value) {

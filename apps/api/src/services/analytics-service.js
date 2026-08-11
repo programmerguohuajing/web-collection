@@ -1,6 +1,12 @@
 import { all, run } from '../db.js'
 import { mapEvent } from '../mappers/event-mapper.js'
 
+const MAX_TRACE_ROWS = 5000
+const MAX_PATH_ROWS = 50000
+const MAX_REPLAY_SEGMENTS = 500
+const MAX_SPANS_PER_REQUEST = 500
+const SPAN_INSERT_BATCH = 100
+
 const analyticsFields = {
   release: 'release_name',
   path: 'path',
@@ -85,9 +91,11 @@ export async function listTraces(filters = {}) {
 export async function getTrace(traceId, filters = {}) {
   const page = pageOf(filters)
   if (!traceId?.trim()) return { ...page, total: 0, items: [] }
+  const { where, params } = whereFor(filters, ['trace_id=?'])
+  params.unshift(traceId)
   const [rows, totalRows] = await Promise.all([
-    all('select * from events where trace_id=? order by ts asc limit ? offset ?', [traceId, page.pageSize, (page.page - 1) * page.pageSize]),
-    all('select count(*)::integer count from events where trace_id=?', [traceId])
+    all(`select * from events ${where} order by ts asc limit ? offset ?`, [...params, page.pageSize, (page.page - 1) * page.pageSize]),
+    all(`select count(*)::integer count from events ${where}`, params)
   ])
   return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(mapEvent) }
 }
@@ -95,16 +103,31 @@ export async function getTrace(traceId, filters = {}) {
 export async function getSessions(filters = {}) {
   const { where, params } = whereFor(filters, ["session_id<>''"])
   const page = pageOf(filters)
+  const replayScope = `${filters.appId ? ' and r.app_id=?' : ''}${filters.release ? ' and r.release=?' : ''}`
+  const replayParams = [...params]
+  if (filters.appId) replayParams.push(filters.appId)
+  if (filters.release) replayParams.push(filters.release)
   const [rows, totalRows] = await Promise.all([
-    all(`select session_id, max(user_id) user_id, max(user_name) user_name, max(device_id) device_id,
-      min(ts) started_at, max(ts) ended_at, count(*)::integer event_count,
-      count(*) filter(where type='error')::integer error_count,
-      array_agg(distinct path) filter(where path is not null) paths
-      from events ${where} group by session_id order by ended_at desc limit ? offset ?`, [...params, page.pageSize, (page.page - 1) * page.pageSize]),
+    all(`with session_summary as (
+        select session_id, max(user_id) user_id, max(user_name) user_name, max(device_id) device_id,
+          min(ts) started_at, max(ts) ended_at, count(*)::integer event_count,
+          count(*) filter(where type='error')::integer error_count,
+          array_agg(distinct path) filter(where path is not null) paths
+        from events ${where} group by session_id
+      )
+      select s.*, replay.session_id replay_session_id
+      from session_summary s
+      left join lateral (
+        select r.session_id
+        from replay_events r
+        where r.session_id like s.session_id || '%'${replayScope}
+        order by r.created_at desc
+        limit 1
+      ) replay on true
+      order by s.ended_at desc limit ? offset ?`, [...replayParams, page.pageSize, (page.page - 1) * page.pageSize]),
     all(`select count(*)::integer count from (select 1 from events ${where} group by session_id) sessions`, params)
   ])
-  const replays = await all('select distinct session_id from replay_events order by session_id')
-  return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(row => ({ ...row, started_at: Number(row.started_at), ended_at: Number(row.ended_at), duration: Number(row.ended_at) - Number(row.started_at), replaySessionId: replays.find(item => item.session_id.startsWith(row.session_id))?.session_id })) }
+  return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(row => ({ ...row, started_at: Number(row.started_at), ended_at: Number(row.ended_at), duration: Number(row.ended_at) - Number(row.started_at), replaySessionId: row.replay_session_id || undefined })) }
 }
 
 export async function getTraceTopology(traceId, filters = {}) {
@@ -214,9 +237,10 @@ export async function getClickPaths(filters = {}) {
 export async function getSessionEvents(sessionId, filters = {}) {
   const page = pageOf(filters)
   if (!sessionId?.trim()) return { ...page, total: 0, items: [] }
+  const { where, params } = whereFor({ ...filters, sessionId }, [])
   const [rows, totalRows] = await Promise.all([
-    all('select * from events where session_id=? order by ts asc limit ? offset ?', [sessionId, page.pageSize, (page.page - 1) * page.pageSize]),
-    all('select count(*)::integer count from events where session_id=?', [sessionId])
+    all(`select * from events ${where} order by ts asc limit ? offset ?`, [...params, page.pageSize, (page.page - 1) * page.pageSize]),
+    all(`select count(*)::integer count from events ${where}`, params)
   ])
   return { ...page, total: Number(totalRows[0]?.count || 0), items: rows.map(mapEvent) }
 }
@@ -224,7 +248,9 @@ export async function getSessionEvents(sessionId, filters = {}) {
 export async function getPaths(filters = {}) {
   const page = pageOf(filters)
   const { where, params } = whereFor(filters, ["type='behavior'", "name in ('pv','pushState','replaceState','popstate','hashchange')"])
-  const rows = await all(`select session_id, path, ts from events ${where} order by session_id, ts`, params)
+  const rows = await all(`select session_id, path, ts from events ${where} order by session_id, ts limit ?`, [...params, MAX_PATH_ROWS + 1])
+  const truncated = rows.length > MAX_PATH_ROWS
+  if (truncated) rows.length = MAX_PATH_ROWS
   const counts = new Map()
   for (const events of Object.values(groupBy(rows, row => row.session_id || ''))) {
     const path = events.map(item => item.path).filter((value, index, list) => value && value !== list[index - 1]).slice(0, 8).join(' → ')
@@ -233,7 +259,7 @@ export async function getPaths(filters = {}) {
   const sorted = [...counts].map(([path, count]) => ({ path, count })).sort((a, b) => b.count - a.count)
   const total = sorted.length
   const start = (page.page - 1) * page.pageSize
-  return { ...page, total, items: sorted.slice(start, start + page.pageSize) }
+  return { ...page, total, items: sorted.slice(start, start + page.pageSize), truncated }
 }
 
 export async function getLive(filters = {}) {
@@ -248,8 +274,10 @@ export async function getReleaseComparison(filters = {}) {
   const joinConditions = []
   const whereConditions = []
   const params = []
-  if (filters.startTime) { joinConditions.push('e.ts>=?'); params.push(Number(filters.startTime)) }
-  if (filters.endTime) { joinConditions.push('e.ts<=?'); params.push(Number(filters.endTime)) }
+  const startTime = finiteTime(filters.startTime)
+  const endTime = finiteTime(filters.endTime)
+  if (startTime) { joinConditions.push('e.ts>=?'); params.push(startTime) }
+  if (endTime) { joinConditions.push('e.ts<=?'); params.push(endTime) }
   if (filters.appId) { whereConditions.push('r.app_id=?'); params.push(filters.appId) }
   if (filters.release) { whereConditions.push('r.release_name=?'); params.push(filters.release) }
   const join = joinConditions.length ? ` and ${joinConditions.join(' and ')}` : ''
@@ -263,7 +291,14 @@ export async function getReleaseComparison(filters = {}) {
 }
 
 export async function getReleaseDetailComparison(appId, fromRelease, toRelease) {
-  const baseWhere = (rels) => `app_id=? and release_name in (${rels.map(() => '?').join(',')})`
+  if (!String(appId || '').trim()) {
+    return {
+      errors: { from: 0, to: 0, delta: 0 },
+      affectedUsers: { from: 0, to: 0, delta: 0 },
+      perf: { from: { lcp: null }, to: { lcp: null } },
+      recommendation: null
+    }
+  }
   const [fromData, toData] = await Promise.all([
     fromRelease ? all(`select count(*)::integer events, count(*) filter(where type='error')::integer errors, count(distinct coalesce(nullif(user_id,''), device_id))::integer users from events where app_id=? and release_name=?`, [appId, fromRelease]) : [{ events: 0, errors: 0, users: 0 }],
     toRelease ? all(`select count(*)::integer events, count(*) filter(where type='error')::integer errors, count(distinct coalesce(nullif(user_id,''), device_id))::integer users, round(avg(value) filter(where type='perf' and metric='lcp')::numeric, 2) lcp from events where app_id=? and release_name=?`, [appId, toRelease]) : [{ events: 0, errors: 0, users: 0, lcp: null }]
@@ -322,7 +357,7 @@ export async function queryPaths(input = {}) {
 }
 
 export async function listInsights() {
-  return (await all('select * from analytics_insights order by updated_at desc')).map(publicInsight)
+  return (await all('select * from analytics_insights order by updated_at desc limit ?', [1000])).map(publicInsight)
 }
 
 export async function saveInsight(input = {}, id = null) {
@@ -341,7 +376,7 @@ export async function saveInsight(input = {}, id = null) {
 }
 
 export async function deleteInsight(id) {
-  const dashboards = await all('select id,widgets_json from dashboard_definitions')
+  const dashboards = await all('select id,widgets_json from dashboard_definitions order by updated_at desc limit ?', [1000])
   for (const dashboard of dashboards) {
     const widgets = normalizeDashboardWidgets(dashboard.widgets_json).filter(item => !(typeof item === 'object' && item.type === 'insight' && item.id === Number(id)))
     if (widgets.length !== normalizeDashboardWidgets(dashboard.widgets_json).length) {
@@ -393,7 +428,10 @@ export async function runFunnel(id, filters = {}) {
   const { where, params } = whereFor({ ...filters, appId: filters.appId || def.app_id })
   const rows = await all(`select session_id, coalesce(nullif(user_id,''), nullif(device_id,'')) actor, name, type, ts, release_name, browser, device, props_json
     from events ${where} ${where ? 'and' : 'where'} session_id<>'' and (name = any(?::text[]) or type='error') order by session_id,ts limit 50000`, [...params, names])
-  const replayRows = await all('select distinct session_id from replay_events')
+  const replayAppId = def.app_id || filters.appId
+  const replayWhere = replayAppId ? 'where app_id=?' : ''
+  const replayParams = replayAppId ? [replayAppId, MAX_REPLAY_SEGMENTS] : [MAX_REPLAY_SEGMENTS]
+  const replayRows = await all(`select distinct session_id from replay_events ${replayWhere} limit ?`, replayParams)
   return { definition: def, ...computeFunnel(rows, steps, replayRows) }
 }
 
@@ -417,7 +455,7 @@ export function computeFunnel(rows, steps, replayRows = []) {
   }
 }
 
-export async function listDashboards() { return all('select * from dashboard_definitions order by updated_at desc') }
+export async function listDashboards() { return all('select * from dashboard_definitions order by updated_at desc limit ?', [1000]) }
 export async function deleteDashboard(id) { await run('delete from dashboard_definitions where id=?', [id]); return { ok: true } }
 export async function saveDashboard(input) {
   const name = String(input.name || '').trim().slice(0, 128)
@@ -676,7 +714,17 @@ function groupBy(items, keyOf) {
   return items.reduce((groups, item) => ((groups[keyOf(item)] ||= []).push(item), groups), {})
 }
 
-function pageOf(filters) { return { page: Math.max(1, Number(filters.page || 1)), pageSize: Math.max(1, Math.min(100, Number(filters.pageSize || 20))) } }
+function pageOf(filters = {}) {
+  return {
+    page: safePage(filters.page, 1, 1000000),
+    pageSize: safePage(filters.pageSize, 20, 100)
+  }
+}
+
+function safePage(value, fallback, max) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(1, Math.min(max, Math.floor(number))) : fallback
+}
 
 export function whereFor(filters = {}, fixed = []) {
   const parts = [...fixed]
@@ -684,8 +732,10 @@ export function whereFor(filters = {}, fixed = []) {
   for (const [field, value] of [['app_id', filters.appId], ['release_name', filters.release], ['type', filters.type], ['name', filters.name], ['user_id', filters.userId], ['session_id', filters.sessionId]]) if (value) { parts.push(`${field}=?`); params.push(value) }
   if (filters.traceId) { parts.push('trace_id ilike ?'); params.push(`%${filters.traceId}%`) }
   if (filters.path) { parts.push('(path ilike ? or url ilike ?)'); params.push(...Array(2).fill(`%${filters.path}%`)) }
-  if (filters.startTime) { parts.push('ts>=?'); params.push(Number(filters.startTime)) }
-  if (filters.endTime) { parts.push('ts<=?'); params.push(Number(filters.endTime)) }
+  const startTime = finiteTime(filters.startTime)
+  const endTime = finiteTime(filters.endTime)
+  if (startTime) { parts.push('ts>=?'); params.push(startTime) }
+  if (endTime) { parts.push('ts<=?'); params.push(endTime) }
   if (filters.keyword) { parts.push('(name ilike ? or message ilike ? or props_json::text ilike ? or trace_id ilike ?)'); params.push(...Array(4).fill(`%${filters.keyword}%`)) }
   return { where: parts.length ? `where ${parts.join(' and ')}` : '', params }
 }
@@ -697,14 +747,22 @@ export function whereFor(filters = {}, fixed = []) {
  */
 export async function recordSpans(spans) {
   if (!Array.isArray(spans) || spans.length === 0) {
-    return { ok: true, count: 0 }
+    return { ok: true, count: 0, received: 0, rejected: 0 }
   }
   const now = Date.now()
-  for (const span of spans) {
-    const id = span.id || `${span.trace_id || span.traceId}-${span.span_id || span.spanId}-${now}`
+  const received = spans.length
+  const accepted = spans.slice(0, MAX_SPANS_PER_REQUEST).map((span, index) => normalizeSpan(span, now, index)).filter(Boolean)
+  for (let offset = 0; offset < accepted.length; offset += SPAN_INSERT_BATCH) {
+    const batch = accepted.slice(offset, offset + SPAN_INSERT_BATCH)
+    const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)').join(', ')
+    const values = batch.flatMap(span => [
+      span.id, span.traceId, span.spanId, span.parentSpanId, span.serviceName,
+      span.operationName, span.kind, span.startTs, span.duration, span.statusCode,
+      span.statusMessage, JSON.stringify(span.attributes), now
+    ])
     await run(
       `insert into spans(id, trace_id, span_id, parent_span_id, service_name, operation_name, kind, start_ts, duration, status_code, status_message, attributes_json, ts)
-       values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
+       values ${placeholders}
        on conflict (id) do update set
          trace_id=excluded.trace_id,
          parent_span_id=excluded.parent_span_id,
@@ -714,24 +772,42 @@ export async function recordSpans(spans) {
          status_code=excluded.status_code,
          status_message=excluded.status_message,
          attributes_json=excluded.attributes_json`,
-      [
-        id,
-        span.traceId || span.trace_id || '',
-        span.spanId || span.span_id || '',
-        span.parentSpanId || span.parent_span_id || '',
-        span.serviceName || span.service_name || 'unknown',
-        span.operationName || span.operation_name || '',
-        span.kind || 'INTERNAL',
-        span.startTime || span.start_ts || now,
-        span.duration ?? 0,
-        span.status?.code || span.status_code || 'UNSET',
-        span.status?.message || span.status_message || '',
-        JSON.stringify(span.attributes || span.attributes_json || {}),
-        now
-      ]
+      values
     )
   }
-  return { ok: true, count: spans.length }
+  return { ok: true, count: accepted.length, received, rejected: received - accepted.length }
+}
+
+function normalizeSpan(span = {}, now = Date.now(), index = 0) {
+  if (!span || typeof span !== 'object') return null
+  const traceId = clipSpanId(span.traceId || span.trace_id)
+  if (!traceId) return null
+  const suppliedSpanId = clipSpanId(span.spanId || span.span_id).slice(0, 32)
+  const spanId = suppliedSpanId || `ingest-${now}-${index}`.slice(0, 32)
+  const parentSpanId = clipSpanId(span.parentSpanId || span.parent_span_id).slice(0, 32)
+  const startTs = finiteNumber(span.startTime ?? span.start_ts, now)
+  const duration = Math.max(0, finiteNumber(span.duration, 0))
+  const attributes = structuredObject(span.attributes || span.attributes_json)
+  return {
+    id: String(span.id || `${traceId}-${spanId}-${now}-${index}`).slice(0, 64),
+    traceId,
+    spanId,
+    parentSpanId,
+    serviceName: String(span.serviceName || span.service_name || 'unknown').slice(0, 128),
+    operationName: String(span.operationName || span.operation_name || 'span').slice(0, 256),
+    kind: String(span.kind || 'INTERNAL').slice(0, 16),
+    startTs,
+    duration,
+    statusCode: String(span.status?.code || span.status_code || 'UNSET').slice(0, 16),
+    statusMessage: String(span.status?.message || span.status_message || '').slice(0, 2000),
+    attributes
+  }
+}
+
+function clipSpanId(value) { return String(value || '').trim().slice(0, 64) }
+function finiteNumber(value, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
 }
 
 /**
@@ -744,14 +820,19 @@ export async function recordSpans(spans) {
  */
 export async function getDistributedTrace(traceId, filters = {}) {
   if (!traceId?.trim()) {
-    return { root: null, nodes: [], edges: [], criticalPath: [], errorSpans: [] }
+    return { root: null, nodes: [], edges: [], criticalPath: [], errorSpans: [], truncated: false }
   }
+  const { where, params } = whereFor(filters, ['trace_id=?'])
+  params.unshift(traceId)
   // 并行查询前端 events 和后端 spans
   const [events, backendSpans] = await Promise.all([
-    all('select * from events where trace_id=? order by ts asc', [traceId]),
-    all('select * from spans where trace_id=? order by start_ts asc', [traceId])
+    all(`select * from events ${where} order by ts asc limit ?`, [...params, MAX_TRACE_ROWS + 1]),
+    all('select * from spans where trace_id=? order by start_ts asc limit ?', [traceId, MAX_TRACE_ROWS + 1])
   ])
-  return buildDistributedTrace(events, backendSpans)
+  const truncated = events.length > MAX_TRACE_ROWS || backendSpans.length > MAX_TRACE_ROWS
+  if (events.length > MAX_TRACE_ROWS) events.length = MAX_TRACE_ROWS
+  if (backendSpans.length > MAX_TRACE_ROWS) backendSpans.length = MAX_TRACE_ROWS
+  return { ...buildDistributedTrace(events, backendSpans), truncated }
 }
 
 /**
@@ -842,7 +923,10 @@ function cleanId(value) {
 }
 
 function spanHasError(span) {
-  if (String(span.statusCode || '').toUpperCase() === 'ERROR') return true
+  const status = String(span.statusCode || '').toUpperCase()
+  if (status === 'ERROR' || status === 'FAILED') return true
+  const numericStatus = Number(span.statusCode)
+  if (Number.isFinite(numericStatus) && numericStatus >= 400) return true
   return Object.values(span.attributes || {}).some(value => String(value).toLowerCase().includes('error'))
 }
 

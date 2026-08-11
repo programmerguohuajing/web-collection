@@ -10,7 +10,7 @@ import { elementInfo } from '../utils/dom.js'
  * @param {Function} opts.push - SDK 主实例的事件推入方法
  */
 export function setupInputMonitor({ push }) {
-  const focusMap = new WeakMap() // element -> { startTime, changeCount }
+  let focusMap = new WeakMap() // element -> { startTime, changeCount }
 
   const onFocusIn = event => {
     const target = event.target
