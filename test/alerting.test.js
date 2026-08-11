@@ -55,6 +55,22 @@ test('编辑告警渠道留空密钥时不覆盖服务端已加密配置', () =>
   assert.deepEqual(payload.secrets, {})
 })
 
+test('飞书智能体渠道提交 App 凭证并校验必填', () => {
+  const form = createAlertChannelForm({
+    name: '飞书智能体',
+    type: 'feishu_app',
+    config: { appId: 'cli-id', chatId: 'oc_abc', receiveIdType: 'chat_id' }
+  })
+  form.appSecret = 'cli-secret'
+  const payload = buildAlertChannelPayload(form)
+  assert.equal(payload.type, 'feishu_app')
+  assert.equal(payload.config.appId, 'cli-id')
+  assert.equal(payload.config.chatId, 'oc_abc')
+  assert.equal(payload.secrets.appSecret, 'cli-secret')
+  assert.equal(payload.secrets.url, undefined)
+  assert.throws(() => buildAlertChannelPayload(createAlertChannelForm({ name: 'x', type: 'feishu_app' })), /App Secret/)
+})
+
 test('后端兼容旧告警渠道扁平字段并转换为标准契约', () => {
   const value = normalizeChannel({
     name: '旧版 Webhook',
@@ -78,6 +94,71 @@ test('渠道密钥 AES-GCM 加密后可解密且不包含明文', async () => {
   assert.equal(ciphertext.includes('secret-token'), false)
   assert.deepEqual(await decryptSecrets(ciphertext, 'master-key'), { url: 'https://example.com/hook', token: 'secret-token' })
   await assert.rejects(() => decryptSecrets(ciphertext, 'wrong-key'))
+})
+
+test('飞书智能体渠道通过 OpenAPI 获取 token 并发送文本消息', async () => {
+  const requests = []
+  const result = await sendChannel(
+    { type: 'feishu_app', config: { appId: 'cli-app-id', chatId: 'oc_xyz' } },
+    { appSecret: 'cli-secret' },
+    { id: 1, appId: 'web', level: 'error', metric: 'error', message: '告警内容', createdAt: Date.now() },
+    async (url, options) => {
+      requests.push({ url, options })
+      if (url.includes('/auth/v3/tenant_access_token')) {
+        return new Response(JSON.stringify({ code: 0, msg: 'success', tenant_access_token: 't-abc', expire: 7200 }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 0, msg: 'success', data: { message_id: 'om_123' } }), { status: 200 })
+    }
+  )
+  assert.equal(requests.length, 2)
+  assert.equal(requests[0].url, 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/')
+  assert.deepEqual(JSON.parse(requests[0].options.body), { app_id: 'cli-app-id', app_secret: 'cli-secret' })
+  assert.equal(requests[1].url, 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id')
+  assert.equal(requests[1].options.headers.authorization, 'Bearer t-abc')
+  assert.equal(JSON.parse(requests[1].options.body).receive_id, 'oc_xyz')
+  assert.equal(result.providerMessageId, 'om_123')
+})
+
+test('飞书智能体 tenant_access_token 在有效期内缓存复用', async () => {
+  let tokenCalls = 0
+  const fetcher = async (url) => {
+    if (url.includes('/auth/v3/tenant_access_token')) {
+      tokenCalls++
+      return new Response(JSON.stringify({ code: 0, tenant_access_token: 't-xyz', expire: 7200 }), { status: 200 })
+    }
+    return new Response(JSON.stringify({ code: 0, data: { message_id: 'm' } }), { status: 200 })
+  }
+  const channel = { type: 'feishu_app', config: { appId: 'cache-app-id', chatId: 'oc_c' } }
+  const secrets = { appSecret: 's' }
+  const alert = { id: 1, message: 'x', createdAt: Date.now() }
+  await sendChannel(channel, secrets, alert, fetcher)
+  await sendChannel(channel, secrets, alert, fetcher)
+  assert.equal(tokenCalls, 1)
+})
+
+test('飞书智能体缺少 App Secret 或目标 ID 时报错', async () => {
+  await assert.rejects(
+    () => sendChannel({ type: 'feishu_app', config: { appId: 'a', chatId: 'c' } }, {}, { message: 'x', createdAt: Date.now() }, async () => new Response('{}')),
+    /App ID \/ App Secret/
+  )
+  await assert.rejects(
+    () => sendChannel({ type: 'feishu_app', config: { appId: 'a' } }, { appSecret: 's' }, { message: 'x', createdAt: Date.now() }, async () => new Response('{}')),
+    /目标群组/
+  )
+})
+
+test('飞书智能体接口返回非 0 code 时抛出错误', async () => {
+  await assert.rejects(
+    () => sendChannel(
+      { type: 'feishu_app', config: { appId: 'a', chatId: 'c' } },
+      { appSecret: 's' },
+      { id: 1, message: 'x', createdAt: Date.now() },
+      async (url) => url.includes('/auth')
+        ? new Response(JSON.stringify({ code: 0, tenant_access_token: 't', expire: 7200 }), { status: 200 })
+        : new Response(JSON.stringify({ code: 19001, msg: 'permission denied' }), { status: 200 })
+    ),
+    /permission denied/
+  )
 })
 
 test('通用 HTTP 渠道安全渲染变量并应用 Bearer 认证', async () => {
