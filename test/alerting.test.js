@@ -71,6 +71,19 @@ test('飞书智能体渠道提交 App 凭证并校验必填', () => {
   assert.throws(() => buildAlertChannelPayload(createAlertChannelForm({ name: 'x', type: 'feishu_app' })), /App Secret/)
 })
 
+test('飞书智能体渠道 normalizeChannel 保留 appId/chatId/receiveIdType', () => {
+  const channel = normalizeChannel({
+    name: '飞书智能体',
+    type: 'feishu_app',
+    config: { appId: 'cli-id', chatId: 'oc_abc', receiveIdType: 'chat_id' },
+    secrets: { appSecret: 'cli-secret' }
+  })
+  assert.equal(channel.config.appId, 'cli-id')
+  assert.equal(channel.config.chatId, 'oc_abc')
+  assert.equal(channel.config.receiveIdType, 'chat_id')
+  assert.equal(channel.secrets.appSecret, 'cli-secret')
+})
+
 test('后端兼容旧告警渠道扁平字段并转换为标准契约', () => {
   const value = normalizeChannel({
     name: '旧版 Webhook',

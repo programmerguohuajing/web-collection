@@ -50,7 +50,15 @@ export function normalizeChannel(input = {}) {
       recipients: String(config.recipients || '').slice(0, 4000),
       subject: String(config.subject || 'Web Collection 告警').slice(0, 256),
       templateId: String(config.templateId || '').slice(0, 256),
-      authType: ['none', 'bearer', 'basic'].includes(config.authType) ? config.authType : 'none'
+      authType: ['none', 'bearer', 'basic'].includes(config.authType) ? config.authType : 'none',
+      ...(type === 'feishu_app'
+        ? {
+            appId: String(config.appId || '').slice(0, 128),
+            chatId: String(config.chatId || '').slice(0, 256),
+            receiveIdType: String(config.receiveIdType || 'chat_id').slice(0, 32),
+            ...(config.feishuDomain ? { feishuDomain: String(config.feishuDomain).slice(0, 256) } : {})
+          }
+        : {})
     },
     appIds: strings(input.appIds ?? input.appId, 100, 64),
     levels: strings(input.levels, 3, 16).filter(value => alertLevels.includes(value)),
