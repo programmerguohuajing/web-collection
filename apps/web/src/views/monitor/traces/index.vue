@@ -3,6 +3,7 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { api, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
 import SearchPanel from '../../../components/SearchPanel.vue'
 import DistributedTraceTree from '../../../components/DistributedTraceTree.vue'
+import { formatSpanId, formatSpanStatus, spanStatusType } from '../../../utils/format.js'
 
 const traces = ref([])
 const spans = ref([])
@@ -61,9 +62,9 @@ watch(refreshVersion, () => { pager.page = 1; load() })
           <el-table-column label="时间" width="140"><template #default="{ row }">{{ new Date(row.ts).toLocaleTimeString() }}</template></el-table-column>
           <el-table-column prop="metric" label="Span" width="120" />
           <el-table-column label="耗时(ms)" width="110"><template #default="{ row }">{{ Number(Number(row.value || 0).toFixed(2)) }}</template></el-table-column>
-          <el-table-column prop="span_id" label="Span ID" width="150" />
+          <el-table-column label="Span ID" width="150"><template #default="{ row }">{{ formatSpanId(row) }}</template></el-table-column>
           <el-table-column label="请求" min-width="260"><template #default="{ row }">{{ row.props?.method }} {{ row.props?.url || row.url }}</template></el-table-column>
-          <el-table-column label="状态" width="90"><template #default="{ row }">{{ row.props?.status || '-' }}</template></el-table-column>
+          <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag size="small" :type="spanStatusType(row)">{{ formatSpanStatus(row) }}</el-tag></template></el-table-column>
         </el-table>
         <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="spanPager.page" :page-size="spanPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="spanPager.total" @current-change="value => { spanPager.page = value; loadSpans() }" @size-change="value => { spanPager.page = 1; spanPager.pageSize = value; loadSpans() }" />
       </el-tab-pane>

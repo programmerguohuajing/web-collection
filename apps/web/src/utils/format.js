@@ -51,6 +51,34 @@ export function scoreWebVitals(perf = {}) {
   return measured ? { score: Math.round(score), grade: score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 50 ? 'C' : score >= 25 ? 'D' : 'F', measured } : null
 }
 
+export function formatSpanId(event = {}) {
+  return firstPresent(event.spanId, event.span_id) || '-'
+}
+
+export function formatSpanStatus(event = {}) {
+  const props = event.props && typeof event.props === 'object' ? event.props : {}
+  const status = firstPresent(props.status, props.statusCode, props.status_code, event.status, event.statusCode, event.status_code)
+  const numericStatus = Number(status)
+  const failed = event.type === 'error'
+    || props.failed === true
+    || props.failed === 'true'
+    || props.statusClass === 'network_error'
+    || String(status).toUpperCase() === 'ERROR'
+    || (Number.isFinite(numericStatus) && numericStatus >= 400)
+
+  if (failed && (!status || numericStatus === 0)) return 'ERROR'
+  return status == null ? 'OK' : String(status)
+}
+
+export function spanStatusType(event = {}) {
+  const status = formatSpanStatus(event)
+  const numericStatus = Number(status)
+  if (status === 'ERROR' || status === 'FAILED' || (Number.isFinite(numericStatus) && numericStatus >= 400)) return 'danger'
+  if (Number.isFinite(numericStatus) && numericStatus >= 300) return 'warning'
+  if (status === 'UNSET' || status === '-') return 'info'
+  return 'success'
+}
+
 function formatPercent(value) {
   const number = Number(value)
   return Number.isFinite(number) ? `${Math.round(number)}%` : '-'
@@ -72,4 +100,8 @@ function firstReadable(values) {
     return String(value)
   }
   return ''
+}
+
+function firstPresent(...values) {
+  return values.find(value => value != null && value !== '')
 }
