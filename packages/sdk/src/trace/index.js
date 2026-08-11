@@ -12,6 +12,13 @@
 export { TraceContext, randomHex } from './context.js'
 export { Span, SpanKind, SpanStatusCode } from './span.js'
 export { Tracer, createTracer, getCurrentSpan, getCurrentContext } from './tracer.js'
+export {
+  SpanProcessor,
+  BatchSpanProcessor,
+  SpanExporter,
+  WebCollectionSpanExporter,
+  DEFAULT_RESOURCE
+} from './processor.js'
 export { Sampler, createSampler, isSampled } from './sampler.js'
 export {
   injectHeaders,

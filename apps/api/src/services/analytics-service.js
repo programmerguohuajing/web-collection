@@ -6,6 +6,8 @@ const MAX_PATH_ROWS = 50000
 const MAX_REPLAY_SEGMENTS = 500
 const MAX_SPANS_PER_REQUEST = 500
 const SPAN_INSERT_BATCH = 100
+/** 单次请求允许的最大 Span 数量（超出返回 413，避免恶意/错误客户端压垮写入）。 */
+export const SPANS_HARD_LIMIT = MAX_SPANS_PER_REQUEST * 2
 
 const analyticsFields = {
   release: 'release_name',

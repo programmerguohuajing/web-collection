@@ -8,13 +8,16 @@
 ## 实施进度追踪
 
 > 本路线图按 P0（可信）→ P1（轻量可组合）→ P2（规模化）分阶段落地。以下勾选框反映**实际开发进度**；完成的条目同时会在第 6 节（U 表）与第 8 节（Backlog）对应行以 `✅` 标注，并注明所属阶段。
-> 最后更新：2026-08-11（Phase 1 完成）
+> 最后更新：2026-08-11（Phase 1、Phase 2 完成）
 
 - [x] **Phase 1 · Tracing 可信性基础**（路线图 P0 首位，已完成并通过测试）
   - [x] **U01** 自定义 Span 生命周期与异步恢复（对应 SDK-201）：`withSpan` 在同步 / 异步 resolve / reject / 异常所有路径调用 `endSpan` 弹栈；Tracer 活动栈从模块级全局改为**实例级**，修复多实例污染；`createTracer` 注册活跃 Tracer 供模块级便捷函数委托。
   - [x] **U02** TypeScript 公共契约补齐（对应 SDK-204）：`src/index.js` 通过 `export * from './trace/index.js'` 导出 tracing 公共 API；`index.d.ts` 补齐 `Span` / `Tracer` / `createTracer` / `getCurrentSpan` / `getCurrentContext` / `TraceContext` / `Sampler` 等声明，消除 runtime ↔ `.d.ts` 漂移。
   - [x] **Trace/Span 生命周期单元测试**（U15 子集）：新增 `packages/sdk/test/trace.test.js`，覆盖同步 / 异步 / 异常 / 嵌套 / 多实例 / 幂等，已接入 `npm test`，10/10 通过。
-- [ ] **Phase 2 · Span Processor / Exporter 闭环**（U01 导出落地，SDK-202 / API-203）：自定义 Span 经 Processor/Exporter 批量写入 `/api/spans`，页面调用树可见。
+- [x] **Phase 2 · Span Processor / Exporter 闭环**（SDK-202 / API-203，已完成并通过测试）
+  - [x] **SDK-202** Span Processor / Exporter：新增 `packages/sdk/src/trace/processor.js`（`BatchSpanProcessor` + `WebCollectionSpanExporter`，接口对齐 OpenTelemetry）；`Span.toExport()` 产出与后端 `normalizeSpan` 对齐的 v2 记录（epoch 时间戳、`id` 幂等去重）；`Tracer` 接入 `addSpanProcessor` / `endSpan` 通知 / `flushSpans` / `shutdownSpans`；`createEys` 新增 `spanExport` 配置（默认 `false`，0.1.x 不破坏后端），启用时派生 `/api/spans` 端点并带 `x-app-key` 鉴权；页面根 Span 在 `finalizePerformance` 经 `tracer.endSpan` 结束并导出（此前从未结束）；`flushAll(force)` / `destroy()` 冲刷 Span 缓冲。自定义 Span、自动请求 Span、根 Span 现经同一管线导出，后端调用树不再依赖 perf event「猜」Span。
+  - [x] **API-203** Span Envelope v2 接收：`POST /api/spans` 兼容 v1 数组与 v2 信封 `{ schemaVersion:2, resource, spans }` 双读；非法顶层结构返回 `400 invalid_payload`、未知 `schemaVersion` 返回 `400 unsupported_schema_version`、空返回 `400 empty_payload`、超硬上限返回 `413 too_many_spans`；逐 Span 非法字段由 `normalizeSpan` 过滤并计入 `rejected`。
+  - [x] **导出管线单元测试**：新增 `packages/sdk/test/exporter.test.js`，10 例覆盖 `toExport` 字段、`WebCollectionSpanExporter` v2 信封 / 错误隔离 / 空批、`BatchSpanProcessor` 达量触发 / `forceFlush` / `shutdown` / 异常不抛出、`Tracer` 经 Processor 导出自定义 Span（父子正确）、自动请求 Span 经同一 Processor 导出，已接入 `npm test`，全部通过。
 - [ ] **Phase 3 · 标准 W3C baggage / tracestate**（U03，SDK-205）：替换自定义 `baggage-*` Header。
 - [ ] **Phase 4 · Privacy v2 统一 sanitizer**（U04 / U11，SDK-206）。
 - [ ] **Phase 5 · Reliable Transport v2**（U05，SDK-207 / SDK-219 / API-220）：IndexedDB 队列、退避、429/5xx、BeaconTransport、diagnostics。
@@ -446,7 +449,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 
 | 编号 | 现有能力 | 具体问题 | 升级方案 | 优先级 |
 |---|---|---|---|---|
-| U01 ✅ | 自定义 Span | 无独立导出；活动栈清理不完整；并发异步上下文不可靠（Phase 1 已修复活动栈清理与多实例隔离） | Processor/Exporter + Context Manager + 生命周期测试 | P0 |
+| U01 ✅ | 自定义 Span | 无独立导出；活动栈清理不完整；并发异步上下文不可靠（Phase 1 已修复活动栈清理与多实例隔离；Phase 2 已补齐 Processor/Exporter 导出管线，Span 经 `/api/spans` 闭环） | Processor/Exporter + Context Manager + 生命周期测试 | P0 |
 | U02 ✅ | 类型声明 | 运行时 API/配置未全部声明（Phase 1 已在 index.d.ts 补齐 tracing 公共 API 声明） | 从同一 TS source 生成 runtime 和 `.d.ts`，增加 API Extractor diff 门禁 | P0 |
 | U03 | W3C 传播 | baggage 使用非标准 Header；traceOrigins 只支持精确字符串 | 标准 `baggage`/`tracestate`，支持 string/RegExp/function matcher | P0 |
 | U04 | 隐私 | select/点击文本/用户手机号/网络体策略不一致 | Privacy v2、统一 sanitizer、默认最小化采集 | P0 |
@@ -497,8 +500,8 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | ID | 任务 | 主要文件/模块 | 估算 | 验收标准 |
 |---|---|---|---:|---|
 | SDK-201 ✅ | 修复 Span 生命周期和异步恢复（Phase 1 已完成） | `src/trace/tracer.js`、`span.js` | 2d | 同步/异步/嵌套/异常后 current span 均恢复正确 |
-| SDK-202 | 增加 Span Processor/Exporter | `src/trace/`、`src/index.js` | 5d | 自定义 Span 批量发送，页面调用树可见且无重复 |
-| API-203 | 定义并接收 Span Envelope v2 | `apps/api` ingest/store | 4d | v1/v2 双读；非法字段 4xx；500 Span 批量写入满足性能门禁 |
+| SDK-202 ✅ | 增加 Span Processor/Exporter | `src/trace/`、`src/index.js` | 5d | 自定义 Span 批量发送，页面调用树可见且无重复（Phase 2 已完成：BatchSpanProcessor + WebCollectionSpanExporter，spanExport 配置默认关） |
+| API-203 ✅ | 定义并接收 Span Envelope v2 | `apps/api` ingest/store | 4d | v1/v2 双读；非法字段 4xx；500 Span 批量写入满足性能门禁（Phase 2 已完成：POST /api/spans 支持 v2 信封 + 校验 + 硬上限） |
 | SDK-204 ✅ | 补齐 TypeScript 公共契约（Phase 1 已完成运行时 API 声明补齐） | `index.d.ts`，后续迁移 TS source | 2d | tsd/API Extractor 覆盖所有运行时公共成员 |
 | SDK-205 | 标准化 W3C baggage/tracestate | `src/trace/propagation.js`、fetch/xhr | 3d | 与 OTel/Elastic 测试服务互通；CORS 文档完整 |
 | SDK-206 | Privacy v2 与统一 sanitizer | `src/core/event.js`、behavior/network/replay | 5d | 隐私测试语料零敏感明文；默认不发送原手机号/选项文本 |

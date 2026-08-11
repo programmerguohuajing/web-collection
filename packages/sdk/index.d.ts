@@ -89,6 +89,9 @@ export interface EysOptions {
   traceOrigins?: string[]
   /** 是否采集网络请求 */
   requests?: boolean
+  /** 是否将 Span（页面根 / 自动请求 / 自定义）经 Processor/Exporter 批量写入 /api/spans。
+   *  默认 false：0.1.x 不破坏现有后端与存储成本；0.2.0-beta 起可默认开启（配合采样）。 */
+  spanExport?: boolean
   /** 是否采集曝光埋点 */
   exposure?: boolean
   /** 是否开启回放录制 */
@@ -182,6 +185,8 @@ export interface EysClient {
   markPageReady(): void
   /** 立即刷新上报队列 */
   flush(force?: boolean): Promise<void> | void
+  /** 立即冲刷 Span 导出管线缓冲（将已结束 Span 发送到 /api/spans） */
+  flushSpans(): Promise<void> | void
   /** 销毁 SDK 实例，清理所有监听和资源 */
   destroy(): void
   /** 开始回放录制 */
@@ -399,6 +404,84 @@ export function getCurrentContext(): TraceContext | null
 export function createSampler(options?: SamplerOptions): Sampler
 /** 给定采样率返回是否采样 */
 export function isSampled(rate?: number): boolean
+
+// ============================================================================
+// Span Processor / Exporter（路线图 Phase 2 · SDK-202）
+// 让页面根 Span、自动请求 Span、自定义 Span 经同一管线批量写入 /api/spans，
+// 后端分布式调用树不再依赖 perf event「猜」Span。
+// ============================================================================
+
+/** 资源信息（随 Span 一起上报，标识来源服务） */
+export interface SpanResource {
+  /** 服务名，前端 Span 统一为 'frontend' */
+  serviceName?: string
+  /** SDK 名称 */
+  sdkName?: string
+  /** SDK 版本 */
+  sdkVersion?: string
+}
+
+/** 后端 Span Envelope v2 中的单条 Span 记录（由 Span.toExport 生成） */
+export interface ReadableSpan {
+  /** 幂等去重键，通常为 `${traceId}-${spanId}` */
+  id: string
+  traceId: string
+  spanId: string
+  parentSpanId: string
+  serviceName: string
+  operationName: string
+  kind: string
+  /** epoch 毫秒 */
+  startTime: number
+  duration: number
+  statusCode: string
+  statusMessage: string
+  attributes: Record<string, unknown>
+}
+
+/** Exporter 导出结果 */
+export interface ExportResult {
+  ok: boolean
+  count: number
+  error?: string
+  result?: unknown
+}
+
+/** Span Processor 接口（Span 生命周期钩子） */
+export abstract class SpanProcessor {
+  onStart(span: Span): void
+  onEnd(span: Span): void
+  forceFlush(): Promise<void>
+  shutdown(): Promise<void>
+}
+
+/** 批量 Span 处理器配置项 */
+export interface BatchSpanProcessorOptions {
+  /** 缓冲达到该数量立即触发导出（默认 64） */
+  maxExportBatchSize?: number
+  /** 定时刷新间隔（毫秒，默认 5000） */
+  scheduledDelayMillis?: number
+  /** 缓冲上限，超出丢弃最旧（默认 512） */
+  maxQueueSize?: number
+}
+
+/** 批量 Span 处理器：缓冲 Span，达到批量上限或定时后批量导出 */
+export class BatchSpanProcessor extends SpanProcessor {
+  constructor(exporter: SpanExporter, options?: BatchSpanProcessorOptions)
+}
+
+/** Span Exporter 接口（抽象） */
+export abstract class SpanExporter {
+  export(spans: Span[]): Promise<ExportResult>
+}
+
+/** 前端 Span 统一资源信息（serviceName 默认为 'frontend'） */
+export const DEFAULT_RESOURCE: Required<SpanResource>
+
+/** Web Collection Span Exporter：批量写入本平台 /api/spans（Span Envelope v2） */
+export class WebCollectionSpanExporter extends SpanExporter {
+  constructor(options: { send?: (payload: { schemaVersion: number; resource: SpanResource; spans: ReadableSpan[] }) => Promise<unknown>; resource?: SpanResource })
+}
 
 /** 扩展 Window 全局类型声明 */
 declare global {

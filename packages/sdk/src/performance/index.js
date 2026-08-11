@@ -84,6 +84,9 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
   return () => {
     if (finalized) return
     finalized = true
+    // 结束页面根 Span：必须走 tracer.endSpan（而非 span.end）以通知 SpanProcessor 导出，
+    // 否则分布式调用树会缺少根节点。
+    if (rootSpan && tracer?.endSpan) tracer.endSpan(rootSpan)
     if (lcpEntry) {
       const props = { element: lcpEntry.element?.tagName, elementPath: elementPath(lcpEntry.element) }
       metric('lcp', lcpEntry.startTime, props)
