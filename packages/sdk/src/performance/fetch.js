@@ -34,7 +34,7 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error, trac
     }
 
     // 构建请求头
-    const requestInit = init
+    let requestInit = init
     if (spanContext) {
       const headers = new Headers(init.headers || input?.headers)
       headers.set('traceparent', `00-${spanContext.traceId}-${spanContext.spanId}-${spanContext.traceFlags}`)
