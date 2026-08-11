@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import worker, { alertMessage, filters, issueFilters, issueKey, replayFilters } from '../cloudflare/worker.js'
+import worker, { alertMessage, buildDistributedTrace, filters, issueFilters, issueKey, replayFilters } from '../cloudflare/worker.js'
 
 const result = filters(new URL('https://example.com/api/events?type=error&path=%2Flogin%2Flogin'))
 
@@ -122,6 +122,29 @@ const tracesResponse = await worker.fetch(new Request('https://example.com/api/t
 assert.deepEqual(await tracesResponse.json(), { items: [], total: 51, page: 2, pageSize: 25 })
 assert.ok(traceQueries.some(([sql]) => /trace_id<>''/.test(sql)))
 assert.ok(traceQueries.some(([sql, values]) => /limit \? offset \?/.test(sql) && values.at(-2) === 25 && values.at(-1) === 25))
+
+const workerTree = buildDistributedTrace([
+  { id: 'child-event', span_id: 'child', props_json: '{"__parentSpanId":"root","status":200}', type: 'perf', metric: 'fetch', ts: 20, value: 10 },
+  { id: 'root-event', span_id: 'root', props_json: '{}', type: 'perf', metric: 'page_load', ts: 10, value: 5 },
+  { id: 'legacy-event', span_id: null, props_json: '{}', type: 'behavior', name: 'pv', ts: 5 }
+])
+assert.deepEqual(workerTree.edges, [{ source: 'root', target: 'child' }])
+assert.ok(workerTree.nodes.some(node => node.id === 'event-legacy-event'))
+
+let distributedTraceId = ''
+const distributedResponse = await worker.fetch(new Request('https://example.com/api/traces/trace-1/distributed'), {
+  DB: {
+    prepare(sql) {
+      assert.match(sql, /where trace_id=\? order by ts/)
+      return {
+        bind(value) { distributedTraceId = value; return this },
+        async all() { return { results: [{ id: 'event-1', trace_id: 'trace-1', span_id: 'span-1', type: 'perf', metric: 'fetch', ts: 1, value: 12, props_json: '{}' }] } }
+      }
+    }
+  }
+})
+assert.equal(distributedTraceId, 'trace-1')
+assert.equal((await distributedResponse.json()).nodes.length, 1)
 
 const emptyTraceResponse = await worker.fetch(new Request('https://example.com/api/traces/'), {
   DB: { prepare() { throw new Error('空 Trace ID 不应查询数据库') } }

@@ -21,6 +21,7 @@ export function mapEvent(row) {
     deviceId: row.device_id,
     traceId: row.trace_id,
     spanId: row.span_id,
+    parentSpanId: row.parent_span_id,
     url: row.url,
     path: row.path,
     title: row.title,

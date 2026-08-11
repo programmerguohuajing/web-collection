@@ -59,7 +59,8 @@ async function record(env, event, application) {
     return true
   }
   const id = crypto.randomUUID()
-  await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(event.props||null),JSON.stringify(event.breadcrumbs||null)])
+  const storedProps = event.parentSpanId ? { ...(event.props || {}), __parentSpanId: event.parentSpanId } : event.props
+  await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(storedProps||null),JSON.stringify(event.breadcrumbs||null)])
   const issue = event.type === 'error' ? await upsertIssue(env, event) : null
   if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event, issue)
   return true
@@ -99,7 +100,9 @@ async function adminApi(request, env, url) {
   if (path === '/api/replays') return replayList(env, url)
   if (/^\/api\/replays\//.test(path)) return replayEvents(env, decodeURIComponent(path.split('/').at(-1)))
   if (path === '/api/traces') return traces(env, url)
-  if (/^\/api\/traces\//.test(path)) return traceEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
+  if (path === '/api/traces/') return traceEvents(env, '', url)
+  if (/^\/api\/traces\/[^/]+\/distributed$/.test(path)) return distributedTrace(env, decodeURIComponent(path.split('/').at(-2)))
+  if (/^\/api\/traces\/[^/]+$/.test(path)) return traceEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
   if (path === '/api/analytics/sessions') return sessions(env, url)
   if (/^\/api\/analytics\/sessions\//.test(path)) return sessionEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
   if (path === '/api/analytics/paths') return paths(env, url)
@@ -196,6 +199,81 @@ async function releaseList(env,appId,url){const page=Math.max(1,Number(url.searc
 async function replayEvents(env,id){const rows=(await env.DB.prepare('select events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;return json(rows.flatMap(row=>parse(row.events_json,[])))}
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
 async function traceEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where trace_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
+async function distributedTrace(env,id){if(!id?.trim())return json({root:null,nodes:[],edges:[],criticalPath:[],errorSpans:[]});const rows=(await env.DB.prepare('select * from events where trace_id=? order by ts').bind(id).all()).results;return json(buildDistributedTrace(rows))}
+export function buildDistributedTrace(events = []) {
+  const spanMap = new Map()
+  for (const [index, event] of events.entries()) {
+    const attributes = parse(event.props_json, {}) || {}
+    const span = {
+      spanId: String(event.span_id || '').trim() || `event-${event.id || index}`,
+      parentSpanId: String(event.parent_span_id || attributes.__parentSpanId || '').trim(),
+      serviceName: 'frontend',
+      operationName: event.metric || event.name || event.type || 'event',
+      kind: 'CLIENT',
+      startTs: Number(event.ts) || 0,
+      duration: event.type === 'perf' ? Number(event.value) || 0 : 0,
+      statusCode: event.type === 'error' || attributes.failed === true || attributes.failed === 'true' || Number(attributes.status) >= 400 ? 'ERROR' : 'OK',
+      attributes
+    }
+    const existing = spanMap.get(span.spanId)
+    spanMap.set(span.spanId, existing ? {
+      ...existing,
+      parentSpanId: existing.parentSpanId || span.parentSpanId,
+      startTs: Math.min(existing.startTs || Infinity, span.startTs || Infinity),
+      duration: Math.max(existing.duration, span.duration),
+      statusCode: traceSpanHasError(existing) || traceSpanHasError(span) ? 'ERROR' : existing.statusCode,
+      attributes: { ...existing.attributes, ...span.attributes }
+    } : span)
+  }
+
+  const ids = new Set(spanMap.keys())
+  const spans = [...spanMap.values()]
+  const nodes = spans.map(span => ({
+    id: span.spanId,
+    name: span.operationName,
+    service: span.serviceName,
+    kind: span.kind,
+    startTs: Number.isFinite(span.startTs) ? span.startTs : 0,
+    duration: span.duration,
+    status: span.statusCode,
+    hasError: traceSpanHasError(span)
+  }))
+  const edges = spans
+    .filter(span => span.parentSpanId && span.parentSpanId !== span.spanId && ids.has(span.parentSpanId))
+    .map(span => ({ source: span.parentSpanId, target: span.spanId }))
+  const errorSpans = spans.filter(traceSpanHasError).map(span => span.spanId)
+  const roots = nodes.filter(node => !edges.some(edge => edge.target === node.id))
+  return { root: roots[0] || null, nodes, edges, criticalPath: traceCriticalPath(roots, spanMap), errorSpans }
+}
+
+function traceSpanHasError(span) {
+  if (String(span.statusCode || '').toUpperCase() === 'ERROR') return true
+  return Object.values(span.attributes || {}).some(value => String(value).toLowerCase().includes('error'))
+}
+
+function traceCriticalPath(roots, spanMap) {
+  const childrenByParent = new Map()
+  for (const span of spanMap.values()) {
+    if (!span.parentSpanId) continue
+    const children = childrenByParent.get(span.parentSpanId) || []
+    children.push(span)
+    childrenByParent.set(span.parentSpanId, children)
+  }
+  let longest = { path: [], duration: 0 }
+  function visit(spanId, path, duration, visited) {
+    if (visited.has(spanId)) return
+    visited.add(spanId)
+    path.push(spanId)
+    const total = duration + (spanMap.get(spanId)?.duration || 0)
+    const children = childrenByParent.get(spanId) || []
+    if (!children.length && (total > longest.duration || (total === longest.duration && path.length > longest.path.length))) longest = { path: [...path], duration: total }
+    for (const child of children) visit(child.spanId, path, total, visited)
+    path.pop()
+    visited.delete(spanId)
+  }
+  for (const root of roots) visit(root.id, [], 0, new Set())
+  return longest.path
+}
 async function sessions(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["session_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select session_id,max(user_id) user_id,max(user_name) user_name,max(device_id) device_id,min(ts) started_at,max(ts) ended_at,count(*) event_count,sum(case when type='error' then 1 else 0 end) error_count,group_concat(distinct path) paths from events ${where} group by session_id order by ended_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by session_id)`).bind(...values).first()]),replayIds=(await env.DB.prepare('select distinct session_id from replays').all()).results;return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at,paths:(r.paths||'').split(',').filter(Boolean),replaySessionId:replayIds.find(x=>x.session_id.startsWith(r.session_id))?.session_id})),total:Number(total.count),page,pageSize})}
 async function sessionEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where session_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where session_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
 async function paths(env,url){const {where,values}=filters(url,'behavior',[`name in ('pv','pushState','replaceState','popstate','hashchange')`]);const rows=(await env.DB.prepare(`select session_id,path,ts,user_id,user_name from events ${where} order by session_id,ts limit 20000`).bind(...values).all()).results;const grouped=group(rows,r=>r.session_id),counts={};for(const events of Object.values(grouped)){const value=events.map(e=>e.path).filter((v,i,a)=>v&&v!==a[i-1]).slice(0,8).join(' → ');if(value){const existing=counts[value]||{path:value,count:0,users:[]};existing.count++;const userId=events[0]?.user_id?.trim(),userName=events[0]?.user_name?.trim();if(userId&&!existing.users.find(u=>u.id===userId))existing.users.push({id:userId,name:userName||userId});counts[value]=existing}}return json(Object.entries(counts).map(([,v])=>({path:v.path,count:v.count,users:v.users})).sort((a,b)=>b.count-a.count).slice(0,50))}
@@ -396,7 +474,7 @@ async function exportCsv(env,kind,url){const filter=kind==='issues'?issueFilters
 export function filters(url,forcedType,fixed=[],fixedValues=[]){const p=url.searchParams,parts=[...fixed],values=[...fixedValues];for(const [field,key,value] of [['app_id','appId'],['release_name','release'],['type','type',forcedType],['name','name'],['user_id','userId'],['session_id','sessionId']]){const v=value||p.get(key);if(v){const items=field==='type'?String(v).split(',').filter(Boolean):[v];parts.push(items.length>1?`${field} in (${items.map(()=>'?').join(',')})`:`${field}=?`);values.push(...items)}}if(p.get('traceId')){parts.push('trace_id like ?');values.push(`%${p.get('traceId')}%`)}if(p.get('path')){parts.push('(path like ? or url like ?)');values.push(...Array(2).fill(`%${p.get('path')}%`))}if(p.get('startTime')){parts.push('ts>=?');values.push(Number(p.get('startTime')))}if(p.get('endTime')){parts.push('ts<=?');values.push(Number(p.get('endTime')))}if(p.get('keyword')){parts.push('(name like ? or message like ? or props_json like ? or trace_id like ?)');values.push(...Array(4).fill(`%${p.get('keyword')}%`))}return{where:parts.length?`where ${parts.join(' and ')}`:'',values}}
 export function issueFilters(url){const p=url.searchParams,parts=[],values=[];for(const[field,key]of[['app_id','appId'],['release_name','release'],['status','status']]){if(p.get(key)){parts.push(`${field}=?`);values.push(p.get(key))}}if(p.get('path')){parts.push('url like ?');values.push(`%${p.get('path')}%`)}if(p.get('startTime')){parts.push('last_seen>=?');values.push(Number(p.get('startTime')))}if(p.get('endTime')){parts.push('last_seen<=?');values.push(Number(p.get('endTime')))}if(p.get('keyword')){parts.push('(name like ? or message like ? or stack like ? or props_json like ?)');values.push(...Array(4).fill(`%${p.get('keyword')}%`))}return{where:parts.length?`where ${parts.join(' and ')}`:'',values}}
 export function replayFilters(url){const p=url.searchParams,parts=[],values=[];for(const[field,key]of[['app_id','appId'],['release_name','release'],['user_id','userId']]){if(p.get(key)){parts.push(`${field}=?`);values.push(p.get(key))}}for(const[field,key]of[['user_name','userName'],['user_phone','userPhone'],['url','path']]){if(p.get(key)){parts.push(`${field} like ?`);values.push(`%${p.get(key)}%`)}}if(p.get('startTime')){parts.push('created_at>=?');values.push(Number(p.get('startTime')))}if(p.get('endTime')){parts.push('created_at<=?');values.push(Number(p.get('endTime')))}if(p.get('keyword')){parts.push('(session_id like ? or url like ? or events_json like ?)');values.push(...Array(3).fill(`%${p.get('keyword')}%`))}return{where:parts.length?`where ${parts.join(' and ')}`:'',values}}
-function sanitize(event){const type=event.type==='performance'?'perf':String(event.type||'');if(!['track','perf','behavior','error','replay','log','trace'].includes(type))throw new Error('bad event type');const base={type,appId:clip(event.appId||'default',64),release:clip(event.release||'unknown',64),userId:clip(event.userId||'',128),userName:clip(event.userName||'',128),userPhone:clip(event.userPhone||'',32),sessionId:clip(event.sessionId||'',128)||null,deviceId:clip(event.deviceId||'',128),traceId:clip(event.traceId||'',64)||null,spanId:clip(event.spanId||'',32)||null,url:cleanUrl(event.url),path:clip(event.path||'',512),title:clip(event.title||'',256),referrer:cleanUrl(event.referrer),userAgent:clip(event.userAgent||'',512),sdkVersion:clip(event.sdkVersion||'',32),environment:clip(event.environment||'',64),source:clip(event.source||'',32),context:cleanObject(event.context),ts:Number(event.ts)||Date.now(),name:clip(event.name||'',160),metric:clip(event.metric||'',32),value:Number.isFinite(Number(event.value))?Number(event.value):null,message:redact(clip(event.message||'',500)),stack:clip(event.stack||'',4000),props:cleanObject(event.props),breadcrumbs:Array.isArray(event.breadcrumbs)?event.breadcrumbs.slice(0,20).map(cleanObject):null};if(type==='replay')return{...base,events:Array.isArray(event.events)?event.events.slice(0,200):[],segmentEndReason:clip(event.segmentEndReason||'',32)};return base}
+function sanitize(event){const type=event.type==='performance'?'perf':String(event.type||'');if(!['track','perf','behavior','error','replay','log','trace'].includes(type))throw new Error('bad event type');const base={type,appId:clip(event.appId||'default',64),release:clip(event.release||'unknown',64),userId:clip(event.userId||'',128),userName:clip(event.userName||'',128),userPhone:clip(event.userPhone||'',32),sessionId:clip(event.sessionId||'',128)||null,deviceId:clip(event.deviceId||'',128),traceId:clip(event.traceId||'',64)||null,spanId:clip(event.spanId||'',32)||null,parentSpanId:clip(event.parentSpanId||'',32)||null,url:cleanUrl(event.url),path:clip(event.path||'',512),title:clip(event.title||'',256),referrer:cleanUrl(event.referrer),userAgent:clip(event.userAgent||'',512),sdkVersion:clip(event.sdkVersion||'',32),environment:clip(event.environment||'',64),source:clip(event.source||'',32),context:cleanObject(event.context),ts:Number(event.ts)||Date.now(),name:clip(event.name||'',160),metric:clip(event.metric||'',32),value:Number.isFinite(Number(event.value))?Number(event.value):null,message:redact(clip(event.message||'',500)),stack:clip(event.stack||'',4000),props:cleanObject(event.props),breadcrumbs:Array.isArray(event.breadcrumbs)?event.breadcrumbs.slice(0,20).map(cleanObject):null};if(type==='replay')return{...base,events:Array.isArray(event.events)?event.events.slice(0,200):[],segmentEndReason:clip(event.segmentEndReason||'',32)};return base}
 function mapEvent(r){return{id:r.id,ts:r.ts,type:r.type,appId:r.app_id,release:r.release_name,userId:r.user_id,userName:r.user_name,userPhone:maskPhone(r.user_phone),sessionId:r.session_id,deviceId:r.device_id,traceId:r.trace_id,spanId:r.span_id,sdkVersion:r.sdk_version,environment:r.environment,source:r.source,context:parse(r.context_json,null),url:r.url,path:r.path,title:r.title,referrer:r.referrer,userAgent:r.user_agent,name:r.name,metric:r.metric,value:r.value,message:r.message,stack:r.stack,props:parse(r.props_json,null),breadcrumbs:parse(r.breadcrumbs_json,null)}}
 function mapIssue(r){return{fingerprint:r.fingerprint,status:r.status,appId:r.app_id,release:r.release_name,name:r.name,message:r.message,stack:r.stack,url:r.url,props:parse(r.props_json,null),breadcrumbs:parse(r.breadcrumbs_json,null),original:parse(r.original_json,null),count:r.count,firstSeen:r.first_seen,lastSeen:r.last_seen,resolvedAt:r.resolved_at,affectedUsers:Number(r.affected_users||0)}}
 function mapAlert(r){return{id:r.id,appId:r.app_id,metric:r.metric,level:r.level,value:r.value,message:r.message,threshold:r.threshold,status:r.status||'pending',fingerprint:r.fingerprint,traceId:r.trace_id,url:r.url,releaseName:r.release_name,userId:r.user_id,deviceId:r.device_id,sessionId:r.session_id,path:r.path,context:parse(r.context_json,null),notified:!!r.notified,resolvedAt:r.resolved_at,created_at:r.created_at,deliveryTotal:r.delivery_total,deliverySent:r.delivery_sent,deliveryFailed:r.delivery_failed,deliveryPending:r.delivery_pending}}
