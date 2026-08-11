@@ -118,6 +118,42 @@ eys.setEnabled(false)
 
 `consent` defaults to `granted`; once denied, events are neither queued nor sent. Built-in redaction runs before `beforeSend`; do not restore sensitive data inside the callback.
 
+## Privacy & Data Protection
+
+The SDK minimizes collected sensitive data by default. A unified sanitizer (`privacy.mode`) runs on every event **before** it is queued and **again after** `beforeSend`, so sensitive values are never transmitted even if a custom hook re-introduces them.
+
+| Mode | Behavior | Use |
+| --- | --- | --- |
+| `off` | No privacy protection beyond the legacy `redactKeys` field redaction | Explicitly disabled, trusted internal networks |
+| `balanced` (**default**) | Field-key redaction + value-level PII redaction + irreversible phone hash + sensitive URL-query stripping + header dropping + body sanitization | Production default, minimal collection |
+| `strict` | Like `balanced`, plus: entire URL query dropped (hash kept), `<select>` keeps only index/count (no label hash) | Strong-compliance scenarios |
+
+What `balanced` does automatically:
+
+- **Field-key redaction**: keys matching `password`/`token`/`secret`/`authorization`/`cookie`/`apikey`… are replaced with `[REDACTED]`.
+- **Value-level PII redaction**: emails, mainland-China phone numbers, ID cards (18-digit), bank cards (16–19 digit) and JWTs are redacted on string leaf values.
+- **Irreversible user-phone hash**: under `balanced`/`strict`, `userPhone` becomes an `h_*` alias (FNV-1a + length); the server cannot reverse it.
+- **Header dropping**: `Authorization`/`Cookie`/`Set-Cookie`/`Proxy-Authorization` are removed by default; extend via `dropHeaders`.
+- **URL query stripping**: sensitive params (`token`/`code`/`phone`/`idcard`…) are stripped; `strict` drops the entire query.
+- **Request/response body sanitization**: JSON bodies are recursively field-redacted, text bodies are PII-redacted; provide `requestResponseSanitizer` for custom rules.
+
+```js
+createEys({
+  privacy: {
+    mode: 'balanced',                 // default; can be declared explicitly
+    redactKeys: ['mySecret'],         // merged onto the default sensitive-key list
+    dropHeaders: ['x-api-secret'],
+    textRedaction: true,              // default on
+    consentCategories: { replay: true }, // explicit grant overrides GPC/DNT
+    requestResponseSanitizer: (pair) => ({ ...pair, requestBody: 'REDACTED' })
+  }
+})
+```
+
+**Consent & GPC/DNT.** `consent` defaults to `granted`; when denied, only `essential` is collected. If the browser sends **GPC** (`navigator.globalPrivacyControl === true`) or **DNT** (`navigator.doNotTrack` in `1/yes/true`), un-granted `analytics`/`replay`/`diagnostics` categories are downgraded to denied. Inspect with `getPrivacyMode()` and `getConsentCategories()`.
+
+Replay masking still honors `.eys-block` (never recorded) and `.eys-ignore` (input not recorded) in the DOM.
+
 ## Distributed Tracing and Call Topology
 
 The SDK can correlate page performance, Fetch and XHR events into one distributed call tree. The topology is not drawn in the SDK itself: the SDK reports `traceId`, `spanId` and `parentSpanId`, then the monitoring console groups nodes with the same `traceId` and connects each child to its parent.
@@ -146,7 +182,7 @@ const eys = createEys({
     'https://payment.example.com'
   ],
 
-  // Static context propagated as baggage-<key> request headers.
+  // Static, non-sensitive business context propagated as the standard W3C `baggage` header.
   // Never put passwords, tokens, cookies, phone numbers or other secrets here.
   baggage: {
     tenant: 'shop',
@@ -165,8 +201,8 @@ All tracing switches default to enabled. A complete automatic request topology r
 | `requests` | `true` | Captures Fetch/XHR duration, method, status and failures. Disable it to stop automatic request nodes. |
 | `tracing` | `true` | Adds trace identifiers to request metrics and injects `traceparent` into trusted requests. |
 | `distributedTracing` | `true` | Creates a page root span and hierarchical child spans so `parentSpanId` relationships can be reconstructed. |
-| `traceOrigins` | `[]` | Exact trusted cross-origin origins allowed to receive tracing headers. Same-origin requests are always allowed. |
-| `baggage` | `{}` | Static, non-sensitive business context forwarded as `baggage-<key>` headers. |
+| `traceOrigins` | `[]` | Trusted cross-origin origins allowed to receive tracing headers, as exact strings, `RegExp`, or a `(origin) => boolean` matcher. Same-origin requests are always allowed. |
+| `baggage` | `{}` | Static, non-sensitive business context forwarded as the single standard W3C `baggage` header. |
 | `sampleRate` | `1` | Global session sampling rate from `0` to `1`; a session that is not sampled returns a no-op client. |
 | `categorySampleRates` | `{}` | Optional per-category sampling override. It also contributes to tracing sample flags where applicable. |
 
@@ -207,10 +243,10 @@ If a service generates a new `traceId`, drops `parentSpanId`, or does not report
 
 Tracing headers are injected only when the target is same-origin or its exact origin appears in `traceOrigins`. Do not add wildcard or untrusted origins: tracing and baggage headers may reveal internal correlation metadata.
 
-Cross-origin APIs must allow the headers during CORS preflight. Configure the server or gateway to allow at least `traceparent` and every generated `baggage-<key>` header. If the service returns `traceparent` or `traceresponse`, expose those response headers when the browser needs to read them.
+Cross-origin APIs must allow the headers during CORS preflight. Configure the server or gateway to allow at least `traceparent` and the `baggage` header. If the service returns `traceparent` or `traceresponse`, expose those response headers when the browser needs to read them.
 
 ```http
-Access-Control-Allow-Headers: Content-Type, Authorization, traceparent, baggage-tenant, baggage-region
+Access-Control-Allow-Headers: Content-Type, Authorization, traceparent, baggage
 Access-Control-Expose-Headers: traceparent, traceresponse
 ```
 
@@ -408,37 +444,94 @@ try {
 }
 ```
 
+## Sampling & Cost Control
+
+Sampling is **deterministic** and **explainable**: the same `traceId` or `sessionId` always yields the same keep/drop decision, so a distributed trace is never split across the keep/drop boundary and error-linked data is never lost to sampling.
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `sampleRate` | `1` | Base session/global sampling rate (`0`–`1`) |
+| `traceRate` | `= sampleRate` | Trace (`traceId`)-level base rate |
+| `categorySampleRates` | `{}` | Per-category rates (`error`/`performance`/`requests`/`behavior`/`exposure`/`replay`); narrows session-level only, never breaks a trace |
+| `errorSampleRate` | unset | Deterministic sub-sampling of error links/events; unset ⇒ errors always retained |
+
+Key guarantees:
+
+- **Same ID, same decision**: `rate=1` always keeps, `rate=0` always drops, intermediate values are stable per key.
+- **Errors are always retained by default**: an error marks its `traceId` as priority, so the error and its associated request spans are kept even when `sampleRate` is low. Set `errorSampleRate` only if you must cap error volume.
+- **Explainable**: dropped events emit `onDiagnostic('dropped_by_sampling')` with `rule`/`rate`/`unit`/`key`; `getSamplingDecision()` returns the most recent decision.
+
+```js
+const eys = createEys({
+  sampleRate: 0.2,
+  categorySampleRates: { behavior: 0.5, replay: 0.1 }
+})
+// Inspect the latest sampling decision while debugging:
+console.log(eys.getSamplingDecision())
+```
+
 ## Session Replay
 
-Enabled by default via `replay: true`, based on rrweb.
+Session Replay records the user's DOM via rrweb so you can replay the steps leading to an error. It is **opt-in by cost**: rrweb is **not** bundled into the core package. When `replay: false` (the default is `true`), neither the ESM nor the base IIFE build downloads, parses or compiles rrweb. When `replay: true`, rrweb is loaded on demand — ESM splits it into a separate `rrweb-*.js` chunk; the IIFE build expects rrweb to be provided externally via `window.rrweb` (or `replayLibUrl`).
+
 ```js
 const eys = createEys({
   replay: true,
-  replaySegmentByRoute: true,
-  replayMaxDuration: 60000,
-  replayBatchSize: 50
+  replaySegmentByRoute: true,   // start a new segment on SPA route change
+  replayMaxDuration: 60000,     // max recording per segment
+  replayBufferSize: 1500,       // ring-buffer capacity (events)
+  replayWindowMs: 30000,        // retention window — the 30s before an error
+  replayCompression: true       // gzip (Worker → main thread → none fallback)
 })
 ```
 
-| Config | Description |
-| --- | --- |
-| `replaySegmentByRoute` | End the current recording and start a new one on route change |
-| `replayMaxDuration` | Maximum recording duration per segment |
-| `replayBatchSize` | Replay event batch upload size |
-| `replayOptions` | Pass-through to rrweb `record()` options |
+### Cost & performance controls (SDK-209 / SDK-210)
 
-Sensitive areas:
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `replay` | `true` | Enable replay; `false` ⇒ no rrweb download at all |
+| `replayLibUrl` | `''` | IIFE self-hosting: external rrweb script that exposes `window.rrweb` |
+| `replayWorkerUrl` | `''` | Compression Worker URL; when set, gzip runs off the main thread |
+| `replayCompression` | `true` | gzip the replay payload (`none` fallback if no `CompressionStream`) |
+| `replayBufferSize` | `1500` | Ring-buffer capacity; bounds resident memory on long sessions |
+| `replayWindowMs` | `30000` | Retention window; guarantees the 30s before an error is recoverable |
+| `replayBatchSize` | `50` | Incremental-flush page size |
+
+- **Bounded memory**: events live in a ring buffer (capacity + time window). Old events are evicted lazily; `replay_buffer_full` warns when the window is compressed.
+- **Compression**: gzip in a Worker (preferred), else main-thread `CompressionStream`, else base64 UTF-8. `replay_compressed` reports payload bytes; `replay_worker_unavailable` warns once on fallback.
+
+### Error-triggered up-sampling & quality (SDK-214)
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `replaySampleRate` | `1` | Steady-state incremental sampling rate to cut cost (`<1` drops high-frequency events) |
+| `replayErrorTrigger` | `true` | On error, switch to full sampling and extend the retention window |
+| `replayWindowMsError` | `60000` | Retention window during error boost (2× the steady-state `replayWindowMs`) |
+| `replayPageSize` | `50` | Forced-flush page size; large segments are split into pages (`page`/`pageCount`) |
+| `replayCanvas` | `false` | Opt-in Canvas recording (passes rrweb `recordCanvas`; full fidelity needs the `@rrweb/rrweb-plugin-canvas` plugin in `replayOptions.plugins`) |
+| `replayIframe` | `false` | Opt-in cross-origin iframe recording (`recordCrossOriginIframes` + `inlineIframes`) |
+
+When an error occurs, the SDK boosts replay to **full sampling** and extends the retention window to `replayWindowMsError` (default 60s), emitting `replay_error_triggered` so the console can prioritize that session. Canvas/iframe recording are **off by default** to avoid needless overhead — enable explicitly only where needed.
+
+Replay quality is observable via `replay_quality` (buffered, evictedTotal ≈ dropped frames, sampledDrops, pages, compression, sampleRate, errorBoosted) and `replay_recorder_error` (internal rrweb errors, message truncated, no PII).
+
+### Manual control
+
+```js
+await eys.startReplay()                       // async, fire-and-forget safe
+eys.addReplayEvent('checkout_step', { step: 'pay' })
+eys.takeReplaySnapshot()
+await eys.stopReplay()                        // async
+await eys.flushReplay(true)                   // force-flush the pre-error window
+```
+
+`startReplay`/`stopReplay`/`flushReplay` are async but do **not** require `await` (calls are queued, never dropped). If `destroy()` races an in-flight load, recording stops immediately to avoid leaks.
+
+### Sensitive areas
+
 ```html
 <div class="eys-block">This area will not be recorded</div>
 <input class="eys-ignore" />
-```
-
-Manual control:
-```js
-eys.startReplay()
-eys.addReplayEvent('checkout_step', { step: 'pay' })
-eys.takeReplaySnapshot()
-eys.stopReplay()
 ```
 
 ## Common Fields
@@ -460,19 +553,45 @@ Every event carries:
 | `userAgent` | Browser UA |
 | `ts` | Event timestamp |
 
-## Queue and Reporting
+## Queue, Transport & Reporting
+
+Events are buffered in a memory **hot queue** that is mirrored to an **IndexedDB cold queue**, so they survive page refresh, crashes and offline periods and are recovered on the next session (`next_session_recovered` diagnostic). When the tab is hidden or the page is unloading, a **Beacon** exit channel flushes remaining events (UTF-8 byte-sliced, non-destructive — the server deduplicates by `eventId`).
+
 | Config | Default | Description |
 | --- | --- | --- |
 | `batchSize` | `10` | Batch size for normal event reporting |
+| `maxBatch` | `50` | Max events per transport batch |
 | `flushInterval` | `5000` | Interval for scheduled reporting |
-| `maxQueue` | `200` | Max local queue cache |
-| `maxRetries` | `3` | Retry count on failure |
-| `sampleRate` | `1` | Sample rate |
+| `maxQueue` | `200` | Max local queue cache (oldest dropped + `queue_full` when exceeded) |
+| `maxRetries` | `3` | Online-send retry attempts before permanent drop |
+| `transportTimeout` | `10000` | Per online-send timeout (ms) |
+| `beaconMaxBytes` | `61440` | Beacon per-batch UTF-8 byte cap |
+| `sampleRate` | `1` | Session/global sampling rate (see Sampling & Cost Control) |
+| `onDiagnostic` | `null` | Health-event callback (see Diagnostics) |
+
+Sending is reliable: exponential backoff with equal jitter, `Retry-After` honored, `408/425/429/5xx` retried while `4xx` payload errors are dropped permanently. A cross-tab lock ensures at most one tab per origin actively sends.
 
 Manual flush:
 ```js
 eys.flush()
 ```
+
+## Diagnostics (`onDiagnostic`)
+
+Pass `onDiagnostic` to observe non-sensitive SDK health events. The callback never throws and never carries business PII, so it is safe to leave enabled in production for monitoring transport and replay cost:
+
+```js
+createEys({
+  onDiagnostic: (e) => {
+    if (e.type === 'queue_full') console.warn('local queue overflow', e)
+    if (e.type === 'replay_buffer_full') console.warn('replay window compressed', e)
+  }
+})
+```
+
+Transport events: `queue_full`, `rate_limited`, `timeout`, `invalid_payload`, `storage_quota`, `dropped_by_sampling`, `beacon_rejected`, `beacon_oversize`, `beacon_fallback`, `next_session_recovered`, `dropped_non_retryable`, `flush_success`, `flush_failed`, `retry`.
+
+Replay events: `replay_buffer_full`, `replay_worker_unavailable`, `replay_compressed`, `replay_error_triggered`, `replay_recorder_error`, `replay_quality`.
 
 ## Mini Program and App Integration
 
