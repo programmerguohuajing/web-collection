@@ -55,29 +55,22 @@ export async function countReplaySessions(filters = {}) {
 }
 
 /**
- * 按创建时间正序查询指定会话的所有回放事件详情。
- * @param {string} sessionId - 会话 ID
- * @returns {Promise<Array>} 包含 events_json 的行数组
+ * 按创建时间正序查询指定分段会话的所有回放事件详情（含分页产生的多行）。
+ * SDK 按 page/pageCount 分页上报，同一分段共享 sessionId，每行是该分段的一页事件；
+ * 此处一次性取回全部行，由 reassembleReplayEvents 按事件时间重组并从首个全量快照截取。
+ * @param {string|number} idOrSessionId - 数字 ID 时先解析出其 session_id；否则直接按 session_id 匹配
+ * @returns {Promise<Array>} 包含 events_json 的行数组（created_at, id 升序）
  */
 export async function listReplayEventRows(idOrSessionId, limit = 500) {
-  const rowLimit = safeLimit(limit, 500, 1, 5000)
+  const rowLimit = safeLimit(limit, 500, 1, 100000)
   if (/^\d+$/.test(String(idOrSessionId))) {
     return all(
       `select events_json
        from replay_events
        where session_id = (select session_id from replay_events where id = ?)
-         and id >= ?
-         and id < coalesce((
-           select id from replay_events
-           where session_id = (select session_id from replay_events where id = ?)
-             and id > ?
-             and ${fullSnapshotWhere}
-           order by id asc
-           limit 1
-         ), 9223372036854775807)
        order by created_at asc, id asc
        limit ?`,
-      [idOrSessionId, idOrSessionId, idOrSessionId, idOrSessionId, rowLimit]
+      [idOrSessionId, rowLimit]
     )
   }
   // 优先精确匹配；若精确匹配无结果，再用 ILIKE 前缀匹配（兼容分段扩展 sessionId）。
