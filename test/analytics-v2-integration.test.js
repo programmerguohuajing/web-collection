@@ -2,13 +2,15 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { ensureSchema, run } from '../apps/api/src/db.js'
-import { deleteDashboard, deleteInsight, listDashboards, listEventProperties, listInsights, queryEventInsight, queryPaths, saveDashboard, saveInsight } from '../apps/api/src/services/analytics-service.js'
+import { deleteDashboard, deleteInsight, getReleaseComparison, listDashboards, listEventProperties, listInsights, queryEventInsight, queryPaths, saveDashboard, saveInsight } from '../apps/api/src/services/analytics-service.js'
 
 test('Analytics V2 queries PostgreSQL and keeps dashboard references consistent', async () => {
   await ensureSchema()
   const suffix = randomUUID()
   const appId = `analytics-${suffix}`
   const now = Date.now()
+  await run(`insert into applications(app_id,name,created_at,updated_at) values(?,?,?,?)`, [appId, appId, now, now])
+  await run(`insert into releases(app_id,release_name,status,created_at) values(?,?,'active',?),(?,?,'active',?)`, [appId, 'test', now, appId, 'manual-only', now + 1])
   const events = [
     ['u1', 'd1', 's1', 'checkout_submit', '/home', { plan: 'pro' }, now],
     ['u1', 'd1', 's1', 'checkout_submit', '/pay', { plan: 'pro' }, now + 1],
@@ -35,6 +37,10 @@ test('Analytics V2 queries PostgreSQL and keeps dashboard references consistent'
     const path = await queryPaths({ appId, startPath: '/home', maxDepth: 3 })
     assert.equal(path.edges[0].users, 1)
 
+    const releaseReport = await getReleaseComparison({ appId })
+    assert.equal(releaseReport.find(item => item.release === 'test').events, 5)
+    assert.equal(releaseReport.find(item => item.release === 'manual-only').events, 0)
+
     insightId = (await saveInsight({ name: `订单趋势-${suffix}`, kind: 'eventTrend', definition: { appId, eventName: 'checkout_submit' } })).id
     assert.ok((await listInsights()).some(item => item.id === insightId))
     dashboardId = (await saveDashboard({ name: `分析看板-${suffix}`, widgets: ['live', { type: 'insight', id: insightId }] })).id
@@ -47,5 +53,6 @@ test('Analytics V2 queries PostgreSQL and keeps dashboard references consistent'
     if (insightId) await deleteInsight(insightId)
     if (dashboardId) await deleteDashboard(dashboardId)
     await run('delete from events where app_id=?', [appId])
+    await run('delete from applications where app_id=?', [appId])
   }
 })

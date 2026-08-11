@@ -7,6 +7,7 @@ import AnalyticsChart from '../../../components/AnalyticsChart.vue'
 import EventInsightPanel from '../../../components/EventInsightPanel.vue'
 import PathInsightPanel from '../../../components/PathInsightPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
+import { normalizeReleaseReport } from '../../../utils/release-report.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -64,7 +65,7 @@ async function load() {
     ])
     paths.value = pathData
     live.value = liveData
-    releases.value = releaseData
+    releases.value = normalizeReleaseReport(releaseData)
     funnelEventNames.value = eventNameData
     dashboards.value = dashboardData
     insights.value = insightData

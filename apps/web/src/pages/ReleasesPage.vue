@@ -2,10 +2,10 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, queryFromFilters, pageLoading } from '../dashboard.js'
+import { normalizeReleaseReport } from '../utils/release-report.js'
 
 const route = useRoute()
 const rows = ref([])
-const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
 
 async function load() {
@@ -13,8 +13,8 @@ async function load() {
   try {
     const suffix = queryFromFilters({ page: pager.page, pageSize: pager.pageSize })
     const data = await api(`/api/analytics/releases?${suffix}`)
-    rows.value = Array.isArray(data) ? data : []
-    pager.total = rows.value.length
+    rows.value = normalizeReleaseReport(data)
+    pager.total = Number(data?.total ?? rows.value.length)
   } finally { pageLoading.value = false }
 }
 
@@ -32,7 +32,7 @@ onMounted(load)
   <el-card shadow="never" class="section panel">
     <template #header>
       <div class="panel-head">
-        <div><b>版本列表</b><small style="margin-left:8px">共 {{ total }} 个版本</small></div>
+        <div><b>版本列表</b><small style="margin-left:8px">共 {{ pager.total }} 个版本</small></div>
         <el-button @click="load">刷新</el-button>
       </div>
     </template>
