@@ -522,7 +522,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | SDK-208 ✅ | 确定性采样与 Replay 策略 | `src/sampling/`、trace/replay | 4d | 同 trace 决策一致；错误会话按策略保留；配置可解释（Phase 6 已完成：`DeterministicSampler` + 哈希原语、20 例单测全绿；Replay 独立采样归入 Phase 7 / SDK-209） |
 | SDK-209 | Replay 动态加载与分包 | `src/replay/`、Vite config、exports | 4d | 关闭 Replay 时 ESM 和基础 IIFE 均不下载/包含 rrweb；开启后按需加载成功 |
 | SDK-210 | Replay Worker/压缩/环形缓冲 | replay transport | 7d | 错误前 30 秒可恢复；长任务增量满足预算 |
-| SDK-214 | Replay 增强（P2 规模化能力） | `src/replay/`、`src/index.js`、`index.d.ts` | 4d | 错误触发升采样（窗口扩展 + 全采样）、Canvas/iframe 显式 opt-in、录制质量与丢帧指标（replay_quality/replay_recorder_error）、分页加载（page/pageCount） |
+| SDK-214 | Replay 增强（P2 规模化能力） | `src/replay/`、`src/index.js`、`index.d.ts` | 4d | 错误触发升采样（窗口扩展 + 全采样）、Canvas/iframe 显式 opt-in、录制质量与丢帧指标（replay_quality/replay_recorder_error）、分页加载（page/pageCount）。**平台侧同步**：`apps/api` 入库按 `compression` 解 gzip、按分段重组分页事件（`replay-ingest.js` 的 `decompressReplayEvents`/`reassembleReplayEvents`），默认配置下回放不再静默丢空 |
 | SDK-211 | Web Vitals 与页面生命周期 v2 | `src/performance/` | 6d | BFCache/prerender/pagehide/INP/CLS 对照用例通过 |
 | SDK-212 | SPA Route Transaction | performance + Vue/React integration | 6d | 路由、数据请求、渲染完成形成稳定父子链路 |
 | SDK-213 | Error v2 异常链和 Stack Frame | `src/error/`、API issue grouping | 6d | cause/AggregateError/DOMException/扩展噪音测试通过 |

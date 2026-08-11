@@ -15,6 +15,7 @@ import { run, ensureSchema } from './db.js'
 import { mapEvent } from './mappers/event-mapper.js'
 import { mapIssue } from './mappers/issue-mapper.js'
 import { mapReplay } from './mappers/replay-mapper.js'
+import { decompressReplayEvents, reassembleReplayEvents } from './replay-ingest.js'
 import { buildSummary } from './services/summary-service.js'
 import { fingerprint, percentile, scorePerf } from './utils/domain.js'
 import { parseJson } from './utils/json.js'
@@ -183,8 +184,8 @@ export async function listReplaysPage(filters = {}) {
  */
 export async function getReplay(sessionId) {
   await initPromise
-  const rows = await listReplayEventRows(safeName(sessionId), 500)
-  return rows.flatMap(row => parseJson(row.events_json) || []).slice(0, 100000)
+  const rows = await listReplayEventRows(safeName(sessionId), 100000)
+  return reassembleReplayEvents(rows, 100000)
 }
 
 /** 确保数据库 Schema 已初始化（供外部调用） */
@@ -233,7 +234,7 @@ async function upsertIssue(event) {
  * @param {object} event - 回放事件（包含 events 数组和可选的 segmentEndReason）
  */
 async function recordReplay(event) {
-  const events = Array.isArray(event.events) ? event.events.slice(0, 200) : []
+  const events = decompressReplayEvents(event)
   if (!event.sessionId || !events.length) return
   const sessionId = safeName(event.sessionId)
   await insertReplayEventRow({
@@ -246,7 +247,7 @@ async function recordReplay(event) {
     url: event.url || null,
     release: event.release || null,
     endReason: event.segmentEndReason || undefined,
-    eventsJson: JSON.stringify(events)
+    eventsJson: JSON.stringify(events.slice(0, 5000))
   })
 }
 
