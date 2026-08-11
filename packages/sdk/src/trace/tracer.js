@@ -62,6 +62,27 @@ export class Tracer {
     this._rootSpan = null
     /** 实例级活动 span 栈（支持嵌套 span，与其他 Tracer 实例隔离） */
     this._spanStack = []
+    /** 实例级 Span Processor 列表（Span 结束时会通知它们，用于导出） */
+    this._processors = []
+  }
+
+  /**
+   * 注册一个 SpanProcessor（如 BatchSpanProcessor），Span 结束时会通知它。
+   * @param {import('./processor.js').SpanProcessor} processor
+   */
+  addSpanProcessor(processor) {
+    if (processor && typeof processor.onEnd === 'function') {
+      this._processors.push(processor)
+    }
+    return this
+  }
+
+  /**
+   * 获取已注册的 SpanProcessor 列表
+   * @returns {import('./processor.js').SpanProcessor[]}
+   */
+  getSpanProcessors() {
+    return this._processors.slice()
   }
 
   /**
@@ -214,15 +235,19 @@ export class Tracer {
   }
 
   /**
-   * 激活 span（压入实例栈顶）
+   * 激活 span（压入实例栈顶），并通知所有 Processor 的 onStart。
    * @private
    */
   _activateSpan(span) {
     this._spanStack.push(span)
+    for (const p of this._processors) {
+      try { p.onStart(span) } catch {}
+    }
   }
 
   /**
-   * 结束当前 span 并从实例栈中弹出（连同其上方所有未关闭的子 span）
+   * 结束当前 span 并从实例栈中弹出（连同其上方所有未关闭的子 span），
+   * 结束后通知所有 Processor 的 onEnd（用于导出）。
    * @param {Span} span - 要结束的 span
    */
   endSpan(span) {
@@ -233,6 +258,25 @@ export class Tracer {
     if (!span.isEnded()) {
       span.end()
     }
+    for (const p of this._processors) {
+      try { p.onEnd(span) } catch {}
+    }
+  }
+
+  /**
+   * 刷新所有 SpanProcessor 的缓冲（不关闭它们）。
+   * @returns {Promise<void>}
+   */
+  async flushSpans() {
+    await Promise.all(this._processors.map((p) => p.forceFlush().catch(() => {})))
+  }
+
+  /**
+   * 关闭所有 SpanProcessor（刷新剩余缓冲后停止接收）。
+   * @returns {Promise<void>}
+   */
+  async shutdownSpans() {
+    await Promise.all(this._processors.map((p) => p.shutdown().catch(() => {})))
   }
 
   /**

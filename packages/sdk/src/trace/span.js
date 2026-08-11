@@ -51,7 +51,10 @@ export class Span {
     this.events = []
     this.status = { code: SpanStatusCode.UNSET, message: '' }
     this.startTime = performance.now()
+    // 绝对时间戳（epoch ms）：后端 spans 表 start_ts 使用 epoch，与 performance.now() 页面相对值区分。
+    this.startEpoch = Date.now()
     this.endTime = null
+    this.endEpoch = null
     this._ended = false
   }
 
@@ -125,6 +128,7 @@ export class Span {
     if (this._ended) return
     this._ended = true
     this.endTime = options.endTime ?? performance.now()
+    this.endEpoch = options.endTimeEpoch ?? Date.now()
   }
 
   /**
@@ -174,6 +178,34 @@ export class Span {
       startTime: this.startTime,
       endTime: this.endTime,
       duration: this.duration()
+    }
+  }
+
+  /**
+   * 转换为后端 Span Envelope v2 的记录（供 SpanExporter 批量写入 `/api/spans`）。
+   * 字段名与 `apps/api` 的 `normalizeSpan` 一一对齐：后端按 `traceId`/`spanId`/`parentSpanId`/
+   * `serviceName`/`operationName`/`kind`/`startTime`(epoch ms)/`duration`/`statusCode`/
+   * `statusMessage`/`attributes` 读取，`id` 用于服务端幂等去重。
+   *
+   * @param {object} [resource] - 资源信息，通常来自 Exporter 的 `resource`
+   * @param {string} [resource.serviceName='frontend'] - 服务名，前端 Span 统一为 `frontend`
+   * @returns {object}
+   */
+  toExport(resource = {}) {
+    const duration = this.endEpoch != null ? Math.max(0, this.endEpoch - this.startEpoch) : 0
+    return {
+      id: `${this.context.traceId}-${this.context.spanId}`,
+      traceId: this.context.traceId,
+      spanId: this.context.spanId,
+      parentSpanId: this.context.parentSpanId || '',
+      serviceName: resource.serviceName || 'frontend',
+      operationName: this.name,
+      kind: this.kind,
+      startTime: this.startEpoch,
+      duration,
+      statusCode: this.status.code,
+      statusMessage: this.status.message,
+      attributes: Object.fromEntries(this.attributes)
     }
   }
 }

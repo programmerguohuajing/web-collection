@@ -28,10 +28,29 @@ import { getId } from './utils/id.js'
 import { setupEnvironmentMonitor } from './utils/environment.js'
 import { setupRuntimeMonitor } from './utils/runtime.js'
 // 链路追踪模块
-import { createTracer, createSampler, Tracer, getCurrentSpan, Span, SpanKind } from './trace/index.js'
+import { createTracer, createSampler, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcessor, WebCollectionSpanExporter } from './trace/index.js'
 
 /** localStorage 中持久化待上报事件队列的键名 */
 const STORE_KEY = '__web_collection_queue__'
+
+/**
+ * 由事件采集端点推导出 Span 接收端点。
+ * 例：`/api/collect` → `/api/spans`；`https://host/api/collect` → `https://host/api/spans`。
+ * @param {string} endpoint
+ * @returns {string}
+ */
+function deriveSpansUrl(endpoint) {
+  try {
+    const url = new URL(endpoint, location.href)
+    const suffix = '/api/collect'
+    url.pathname = url.pathname.endsWith(suffix)
+      ? url.pathname.slice(0, -suffix.length) + '/api/spans'
+      : url.pathname.replace(/\/$/, '') + '/api/spans'
+    return url.toString()
+  } catch {
+    return endpoint
+  }
+}
 
 /**
  * 创建 SDK 实例。
@@ -108,6 +127,9 @@ export function createEys(options = {}) {
     traceOrigins: [],
     // distributedTracing 开启链路追踪的层级 span 功能
     distributedTracing: true,
+    // spanExport 控制是否将 Span（根/自动请求/自定义）经 Processor/Exporter 批量写入 /api/spans。
+    // 默认关闭：0.1.x 不破坏现有后端与存储成本；0.2.0-beta 起可默认开启（配合采样）。
+    spanExport: false,
     // baggage 静态业务属性，会透传到所有 span
     baggage: {},
     // requests 控制是否开启请求性能采集。
@@ -180,6 +202,31 @@ export function createEys(options = {}) {
       console.warn('[web-collection] 初始化链路追踪失败，已降级关闭：', err)
     }
   }
+  /** Span 导出管线：开启 spanExport 时，将根/自动请求/自定义 Span 经 Processor 批量写入 /api/spans。 */
+  let spanProcessor = null
+  if (cfg.spanExport && tracer) {
+    try {
+      const spansUrl = deriveSpansUrl(cfg.endpoint)
+      const exporter = new WebCollectionSpanExporter({
+        send: async (payload) => {
+          if (!originalFetch) throw new Error('no fetch available for span export')
+          const res = await originalFetch(spansUrl, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...(cfg.collectKey ? { 'x-app-key': cfg.collectKey } : {}) },
+            body: JSON.stringify(payload),
+            // keepalive：页面退出/隐藏时仍能尽力送达（spans 体积小，远未达 64KB 上限）。
+            keepalive: true
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          return res.json().catch(() => ({}))
+        }
+      })
+      spanProcessor = new BatchSpanProcessor(exporter, { maxExportBatchSize: 64, scheduledDelayMillis: 5000 })
+      tracer.addSpanProcessor(spanProcessor)
+    } catch (err) {
+      console.warn('[web-collection] 初始化 Span 导出管线失败，已降级关闭：', err)
+    }
+  }
   /** 回放分段：基础会话 ID 不变，发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
    *  每种 sessionId 对应一条独立的回放记录，不再互相叠加。 */
   const replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -240,6 +287,7 @@ export function createEys(options = {}) {
     markPageReady: () => metric('data_ready', performance.now()),
     flush,
     destroy,
+    flushSpans: () => tracer?.flushSpans?.(),
     startReplay,
     stopReplay: stopReplayRecording,
     flushReplay,
@@ -678,10 +726,12 @@ export function createEys(options = {}) {
   function flushAll(force = false) {
     flushReplay(force)
     flush(force)
+    // 强制刷新（页面退出/隐藏）时一并冲刷 Span 缓冲；keepalive 保证退出阶段仍可送达。
+    if (force) tracer?.flushSpans?.()
   }
 
   /** 销毁 SDK 实例：清除定时器、停止录制、刷新全部队列 */
-  function destroy() {
+  async function destroy() {
     clearInterval(timer)
     clearTimeout(replayStartTimer)
     finalizePerformance()
@@ -689,6 +739,8 @@ export function createEys(options = {}) {
     stopReplayRecording()
     if (stats.dropped || stats.failed) push({ type: 'perf', metric: 'sdk_health', value: stats.enqueued, props: { ...stats }, source: 'auto' })
     flushAll(true)
+    // 关闭 Span 导出管线，冲刷剩余缓冲（根/未结束 Span），避免调用树丢失尾包。
+    await tracer?.shutdownSpans?.()
   }
 
   /** 将队列持久化到 localStorage，防止页面刷新丢失 */
