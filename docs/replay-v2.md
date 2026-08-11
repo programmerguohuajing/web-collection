@@ -118,7 +118,13 @@
 | `replayCompression` | `true` | 是否对回放 payload 做 gzip（无 `CompressionStream` 自动降级 `none`） |
 | `replayBufferSize` | `1500` | 环形缓冲容量（条） |
 | `replayWindowMs` | `30000` | 环形缓冲时间窗口（ms），保证错误前 30 秒可恢复 |
-| `replayBatchSize` | `50` | 回放事件批量上报数量 |
+| `replayBatchSize` | `50` | 回放事件批量上报数量（增量刷新时单页上限） |
+| `replayPageSize` | `50` | 强制刷新（错误/分段结束/页面卸载）时单页回放事件上限，超出拆多页 →「分页加载」 |
+| `replaySampleRate` | `1` | 常态回放增量采样率 `[0,1]`；`<1` 时对高频事件降采样以降本（默认 1 全保留，无回归） |
+| `replayErrorTrigger` | `true` | 错误触发升采样：错误发生后升至全采样并扩展留存窗口 |
+| `replayWindowMsError` | `60000` | 错误升采样期间的留存窗口（ms，常态 30s 的两倍） |
+| `replayCanvas` | `false` | Canvas 录制显式 opt-in：开启后透传 rrweb `recordCanvas`（完整保真度需在 `replayOptions.plugins` 提供 `@rrweb/rrweb-plugin-canvas`） |
+| `replayIframe` | `false` | 跨域 iframe 录制显式 opt-in：开启后透传 rrweb `recordCrossOriginIframes` 与 `inlineIframes` |
 | `replayMaxDuration` | `60000` | 单路由页面最多录制时长（ms），`0` 表示不限制 |
 | `replaySegmentByRoute` | `true` | 路由切换时自动分段 |
 | `replayOptions` | `{}` | 透传给 rrweb `record` 的附加配置 |
@@ -132,16 +138,20 @@
 | `replay_buffer_full` | 环形缓冲因容量/窗口淘汰事件 | 回放窗口被压缩，提示 `replayBufferSize`/`replayWindowMs` 是否需调大 |
 | `replay_worker_unavailable` | 无 `CompressionStream` 且退化为 `none` | 压缩降级，关注主线程开销 |
 | `replay_compressed` | 压缩成功 | payload 字节数，用于评估压缩收益 |
+| `replay_error_triggered` | 发生错误触发升采样 | 携带 `windowMs`（错误升采样窗口），标识「错误会话」便于回放侧优先保留 |
+| `replay_recorder_error` | rrweb 录制内部报错 | 携带截断后的 `message`（≤200 字符，不含 PII），用于录制质量观测 |
+| `replay_quality` | 强制刷新或节流周期（≥5s） | 录制质量与丢帧指标：`buffered`（当前缓冲）、`evictedTotal`（累计窗口/容量淘汰≈丢帧）、`sampledDrops`（降采样丢弃）、`compression`、`compressedPages`、`pages`（本次分页页数）、`sampleRate`、`errorBoosted`、`windowMs` |
 
 ## 10. 测试
 
-新增 `packages/sdk/test/replay.test.js`（13 例），已接入 `npm test` 并全部通过、进程干净退出：
+新增 `packages/sdk/test/replay.test.js`（19 例），已接入 `npm test` 并全部通过、进程干净退出：
 
 - `ReplayRingBuffer`：容量超限淘汰 + `evictedTotal`、时间窗口惰性淘汰、`drain` 取全部 / `take` 取前 N。
 - 压缩：gzip 主线程往返一致、`none` 降级 + `replay_worker_unavailable` 诊断、Worker 优先（via `MockWorker`）。
 - `loadRrweb`：`window.rrweb` 复用（不触发动态 import）、`injectScript` resolve/reject、`window.rrweb` 缺失时动态 `import` 懒加载核心路径。
 - `ensureDriver` 幂等且仅加载一次；`addReplayEvent` / `takeReplaySnapshot` 未加载时为安全 no-op。
 - `createEys` `replay:false` 与 `replay:true` 均可构造且回放 API 完整。
+- SDK-214 新增：`replayShouldKeep`（升采样采样决策，确定性 rng）、`paginate`（分页）、`RingBuffer.setWindow`（错误扩展窗口）、`setupReplayMonitor` 透传 `recordCanvas`/`recordCrossOriginIframes`/`inlineIframes`、以及 `createEys` 集成验证错误触发升采样扩展窗口 + 分页（3 页）+ `replay_error_triggered`/`replay_quality` 诊断。
 
 > 测试环境注意：Node 22 暴露全局 `BroadcastChannel`，但其 `close()` **不会释放底层 PipeWrap**（实测仍泄漏）。集成测试在 DOM mock 中置 `BroadcastChannel: undefined`，使跨标签页锁退化为单标签页布尔守卫（SDK 既定降级路径），保证 `node --test` 干净退出。这属于测试环境适配，不改动浏览器侧行为。
 
@@ -155,3 +165,30 @@
 
 - **SDK-209**：`replay:false` 时 ESM 与基础 IIFE 均不下载/包含 rrweb（核心包 0 处 rrweb 录制内部逻辑，ES 拆分为独立 `rrweb-*.js` chunk，IIFE 仅引用外部 `rrweb` 全局）；`replay:true` 时按需加载成功（三策略均可解析）。
 - **SDK-210**：错误前 30 秒可恢复（环形缓冲容量 + 30s 窗口）；长任务增量满足预算（gzip Worker 优先、主线程回退、`none` 降级，主线程零阻塞或可控）；内存有界（容量 + 窗口淘汰，`replay_buffer_full` 可观测）。
+
+## 13. Replay 增强（SDK-214 · P2 规模化能力）
+
+在 Phase 7 的懒加载 / 环形缓冲 / 压缩骨架上，补齐路线图 5.3 的 4 项 Replay 增强：错误触发升采样、Canvas/iframe 显式 opt-in、录制质量与丢帧指标、分页加载。
+
+### 13.1 错误触发升采样（Error-triggered up-sampling）
+
+- 常态下可对高频回放增量事件按 `replaySampleRate`（默认 1，全保留）降采样降本；`replaySampleRate<1` 时 `queueReplay` 以该概率丢弃增量事件（累计计入 `sampledDrops`）。
+- 发生错误（`error()`）时 `triggerErrorBoost()`：将 `errorBoosted` 置真、`errorBoostUntil = now + replayWindowMsError`，并把环形缓冲窗口扩展为 `replayWindowMsError`（默认 60s，常态 30s 的两倍），同时发出 `replay_error_triggered` 诊断。升采样期间 `replayShouldKeep` 忽略 `sampleRate` 全保留，保证错误前后上下文完整。
+- 窗口过期（`queueReplay` 中 `now > errorBoostUntil`）后自动退出升采样并恢复常态窗口与采样率 —— 升采样是「临时升档」而非永久放大成本。
+- 纯函数 `replayShouldKeep(rate, boosted, rng)` 便于单测（注入确定性 rng）。
+
+### 13.2 Canvas / iframe 显式 opt-in
+
+- `replayCanvas`（默认 `false`）→ 透传 rrweb `recordCanvas`；`replayIframe`（默认 `false`）→ 透传 `recordCrossOriginIframes` 与 `inlineIframes`。二者默认关闭，避免无谓的性能/内存开销（与 rrweb 默认行为一致）。
+- 完整 Canvas 保真度需在 `replayOptions.plugins` 中提供 `@rrweb/rrweb-plugin-canvas` 实例（SDK 不强制依赖该插件，保持核心包轻量）。
+- 录制质量：`setupReplayMonitor` 的 `errorHandler` 透传为 `replay_recorder_error` 诊断（消息截断 ≤200 字符，不含 PII）。
+
+### 13.3 录制质量与丢帧指标
+
+- `replay_quality` 诊断（强制刷新必发、周期 ≥5s 节流）：`buffered`（当前缓冲水位）、`evictedTotal`（累计因容量/窗口淘汰 ≈ 丢帧代理）、`sampledDrops`（降采样丢弃）、`compression`/`compressedPages`、`pages`（本次分页页数）、`sampleRate`、`errorBoosted`、`windowMs`。
+- `replay_buffer_full` 提示窗口压缩；`replay_recorder_error` 提示 rrweb 内部异常；三者共同构成回放健康度可观测性。
+
+### 13.4 分页加载（Pagination）
+
+- `flushReplay` 按 `replayPageSize`（强制）/ `replayBatchSize`（增量）将事件数组 `paginate()` 为多页，每页独立 `replay` 记录并携带 `page` / `pageCount`（从 1 计数）；强制刷新的最后一页附带 `segmentEndReason`。
+- 效果：无论错误强制刷新有多少留存事件，回放 payload 都被拆成有界页，服务端/回放播放器可渐进加载，避免单条巨型 blob；与现有分段 `sessionId` 正交（分段 = 时间/路由维度，分页 = 单次刷新维度）。

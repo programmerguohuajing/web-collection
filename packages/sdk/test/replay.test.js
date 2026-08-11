@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import { ReplayRingBuffer } from '../src/replay/ring-buffer.js'
 import { createReplayCompressor, hasCompressionStream } from '../src/replay/compress.js'
 import { loadRrweb, injectScript } from '../src/replay/rrweb-driver.js'
-import { ensureDriver, isDriverLoaded, addReplayEvent, takeReplaySnapshot } from '../src/replay/index.js'
+import { ensureDriver, isDriverLoaded, addReplayEvent, takeReplaySnapshot, __setDriver, setupReplayMonitor } from '../src/replay/index.js'
+import { replayShouldKeep, paginate } from '../src/replay/sampler.js'
 import { createEys } from '../src/index.js'
 
 // ---------------------------------------------------------------------------
@@ -287,6 +288,161 @@ test('createEys replay:false 与 replay:true 均可构造且客户端 API 完整
     if (typeof globalThis.cancelAnimationFrame !== 'function') {
       globalThis.cancelAnimationFrame = () => {}
     }
+  }
+})
+
+// ---------------------------------------------------------------------------
+// SDK-211 · 错误触发升采样（采样决策纯函数）
+// ---------------------------------------------------------------------------
+
+test('replayShouldKeep：升采样窗口内全保留，rate 边界正确', () => {
+  // 错误升采样期间：无论 rate 多少都全保留
+  assert.equal(replayShouldKeep(0, true), true)
+  assert.equal(replayShouldKeep(0.3, true), true)
+  // rate 边界
+  assert.equal(replayShouldKeep(1, false), true)
+  assert.equal(replayShouldKeep(0, false), false)
+})
+
+test('replayShouldKeep：rate<1 按概率取舍（确定性 rng）', () => {
+  // rng 交替 0.1/0.9 → 偶数次(<0.5 保留)、奇数次(>=0.5 丢弃)
+  const alt = (() => { let i = 0; return () => (i++ % 2 === 0 ? 0.1 : 0.9) })()
+  assert.equal(replayShouldKeep(0.5, false, alt), true)
+  assert.equal(replayShouldKeep(0.5, false, alt), false)
+  assert.equal(replayShouldKeep(0.5, false, alt), true)
+})
+
+// ---------------------------------------------------------------------------
+// SDK-211 · 分页加载（分页纯函数）
+// ---------------------------------------------------------------------------
+
+test('paginate：空数组、整除、余数、单页', () => {
+  assert.deepEqual(paginate([], 10), [])
+  assert.equal(paginate(Array(100).fill(0), 50).length, 2)
+  const p = paginate(Array(120).fill(0), 50)
+  assert.deepEqual(p.map((x) => x.length), [50, 50, 20])
+  // pageSize >= 长度 → 单页
+  assert.equal(paginate(Array(3).fill(0), 10).length, 1)
+  // pageSize <= 0 → 按 1 处理
+  assert.equal(paginate(Array(3).fill(0), 0).length, 3)
+})
+
+// ---------------------------------------------------------------------------
+// SDK-211 · 环形缓冲窗口动态调整（错误升采样扩展窗口）
+// ---------------------------------------------------------------------------
+
+test('RingBuffer setWindow 改变留存窗口并影响惰性淘汰', () => {
+  const rb = new ReplayRingBuffer({ maxSize: 1000, windowMs: 1000 })
+  const now = 1_000_000
+  rb.push({ t: 'old' }, now - 800) // 在 1s 窗口内
+  assert.equal(rb.windowMs, 1000)
+  rb.setWindow(500) // 收缩到 0.5s → old 超出窗口
+  assert.equal(rb.windowMs, 500)
+  assert.deepEqual(rb.take(10, now).map((e) => e.t), []) // 被惰性淘汰
+  // 错误升采样扩展窗口：重新写入并扩展窗口
+  rb.push({ t: 'new' }, now - 400)
+  rb.setWindow(60000)
+  assert.equal(rb.windowMs, 60000)
+  assert.deepEqual(rb.take(10, now).map((e) => e.t), ['new'])
+})
+
+// ---------------------------------------------------------------------------
+// SDK-211 · facade 选项透传（Canvas / iframe 显式 opt-in）
+// ---------------------------------------------------------------------------
+
+test('setupReplayMonitor 透传 recordCanvas / recordCrossOriginIframes / inlineIframes', async () => {
+  let captured = null
+  __setDriver({
+    record: (opts) => { captured = opts; return () => {} }
+  })
+  try {
+    await ensureDriver()
+    setupReplayMonitor({
+      emit: () => {},
+      options: { recordCanvas: true, recordCrossOriginIframes: true, inlineIframes: true }
+    })
+    // 必须不被静态默认值（recordCanvas:false）覆盖
+    assert.equal(captured.recordCanvas, true)
+    assert.equal(captured.recordCrossOriginIframes, true)
+    assert.equal(captured.inlineIframes, true)
+    // errorHandler 可被覆盖（默认是空函数）
+    assert.equal(typeof captured.errorHandler, 'function')
+  } finally {
+    __setDriver(null)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// SDK-211 · 集成：错误升采样 + 分页加载 + 质量指标（mock rrweb 避免 Node 泄漏）
+// ---------------------------------------------------------------------------
+
+test('createEys 错误触发升采样扩展窗口并发出 replay_error_triggered', async () => {
+  const props = {
+    window: globalThis,
+    location: { href: 'https://example.com/', pathname: '/', referrer: '' },
+    document: {
+      title: '', hidden: false,
+      addEventListener() {}, removeEventListener() {}, querySelector: () => null,
+      head: { appendChild() {} },
+      createElement: () => ({ dataset: {}, addEventListener() {}, style: {} })
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    requestAnimationFrame: (cb) => setTimeout(() => cb(Date.now()), 0),
+    cancelAnimationFrame: () => {},
+    BroadcastChannel: undefined,
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({}) })
+  }
+  const originals = {}
+  for (const k of Object.keys(props)) {
+    originals[k] = Object.getOwnPropertyDescriptor(globalThis, k)
+    Object.defineProperty(globalThis, k, { value: props[k], configurable: true, writable: true })
+  }
+  // mock rrweb：捕获 emit 回调（用于模拟录制产生事件），record 不真正启动录制，避免 Node 泄漏。
+  let capturedEmit = null
+  __setDriver({
+    record: (opts) => { capturedEmit = opts.emit; return () => {} }
+  })
+  const diags = []
+  let client
+  try {
+    const base = {
+      distributedTracing: false, replaySegmentByRoute: false, behavior: false, exposure: false,
+      requests: false, performance: false, console: false, whiteScreen: false, memory: false,
+      runtime: false, environment: false, runtimeInfo: false, replayMaxDuration: 0,
+      replay: true, replayErrorTrigger: true, replayWindowMs: 30000, replayWindowMsError: 60000,
+      replaySampleRate: 1, replayCompression: false, replayBatchSize: 100000, // 关闭压缩、抑制增量刷新，聚焦升采样/分页/质量
+      onDiagnostic: (e) => diags.push(e)
+    }
+    client = createEys({ ...base, appId: 't', endpoint: '/api/collect' })
+    await client.startReplay()
+    assert.ok(capturedEmit, 'record 应被调用并提供 emit 回调')
+
+    // 模拟 rrweb 持续产出 120 个增量事件（sampleRate=1 → 全部保留）
+    for (let i = 0; i < 120; i++) capturedEmit({ type: 5, data: { i } })
+
+    // 强制刷新（错误/分段结束语义）→ 分页：ceil(120/50)=3 页
+    await client.flushReplay(true)
+    const quality = diags.filter((d) => d.type === 'replay_quality')
+    assert.ok(quality.length >= 1, '应发出 replay_quality')
+    assert.equal(quality[quality.length - 1].pages, 3)
+    assert.equal(quality[quality.length - 1].errorBoosted, false)
+
+    // 触发错误 → 升采样：窗口扩展为 60s + 发出 replay_error_triggered
+    client.error(new Error('boom'))
+    const triggered = diags.filter((d) => d.type === 'replay_error_triggered')
+    assert.ok(triggered.length >= 1, '应发出 replay_error_triggered')
+    assert.equal(triggered[triggered.length - 1].windowMs, 60000)
+    // 错误后写入的事件处于升采样窗口（全保留，即便 rate<1）
+  } finally {
+    await client?.destroy?.()
+    __setDriver(null)
+    for (const k of Object.keys(props)) {
+      if (originals[k]) Object.defineProperty(globalThis, k, originals[k])
+      else delete globalThis[k]
+    }
+    if (typeof globalThis.requestAnimationFrame !== 'function') globalThis.requestAnimationFrame = () => 0
+    if (typeof globalThis.cancelAnimationFrame !== 'function') globalThis.cancelAnimationFrame = () => {}
   }
 })
 

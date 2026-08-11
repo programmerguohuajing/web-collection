@@ -21,10 +21,12 @@ import { setupBodySampler } from './performance/body-sampler.js'
 import { setupServerTimingMonitor } from './performance/server-timing.js'
 import { setupBundleMonitor } from './performance/bundle.js'
 // Phase 7 · Replay 分包与懒加载（SDK-209）：rrweb 唯一动态边界在 rrweb-driver.js。
-import { ensureDriver, setupReplayMonitor, addReplayEvent, takeReplaySnapshot } from './replay/index.js'
+import { ensureDriver, setupReplayMonitor, addReplayEvent, takeReplaySnapshot, __setDriver } from './replay/index.js'
 // Phase 7 · Replay 环形缓冲与压缩（SDK-210）：内存护栏 + gzip（Worker/主线程/降级）。
 import { ReplayRingBuffer } from './replay/ring-buffer.js'
 import { createReplayCompressor } from './replay/compress.js'
+// SDK-211 · Replay 增强：错误触发升采样 + 分页加载纯函数。
+import { replayShouldKeep, paginate } from './replay/sampler.js'
 import { setupServiceWorkerMonitor } from './runtime/sw.js'
 import { imageReport } from './core/report.js'
 import { SDK_VERSION, eventCategory, eventSource, sanitizeEvent } from './core/event.js'
@@ -167,6 +169,20 @@ export function createEys(options = {}) {
     // 超出窗口或容量的旧事件被淘汰，保证错误前 30 秒可恢复且内存有界。
     replayBufferSize: 1500,
     replayWindowMs: 30000,
+    // SDK-211 · Replay 增强：
+    // replayPageSize：强制刷新（错误/分段结束/页面卸载）时单页回放事件上限，超出拆多页 → 分页加载。
+    replayPageSize: 50,
+    // replaySampleRate：常态回放增量采样率 [0,1]，<1 时对高频事件降本；默认 1（全保留，无回归）。
+    replaySampleRate: 1,
+    // replayErrorTrigger：开启后，发生错误时升至全采样并将留存窗口扩展到 replayWindowMsError（错误前更多上下文）。
+    replayErrorTrigger: true,
+    // replayWindowMsError：错误升采样期间的留存窗口（默认 60s，是常态 30s 的两倍）。
+    replayWindowMsError: 60000,
+    // replayCanvas / replayIframe：Canvas 与跨域 iframe 录制显式 opt-in（默认关闭），
+    // 开启后传入 rrweb 的 recordCanvas / recordCrossOriginIframes / inlineIframes。
+    // 完整 Canvas 保真度需在 replayOptions.plugins 中提供 @rrweb/rrweb-plugin-canvas 实例。
+    replayCanvas: false,
+    replayIframe: false,
     whiteScreenSelector: '#app > *',
     whiteScreenTimeout: 5000,
     enabled: true,
@@ -319,6 +335,12 @@ export function createEys(options = {}) {
   let replayStopTimer = 0
   let replayStartTimer = 0
   let whiteScreenTimer = 0
+  /** SDK-211 · 错误触发升采样状态：错误后进入全采样窗口，窗口结束后恢复常态采样率与窗口。 */
+  let errorBoosted = false
+  let errorBoostUntil = 0
+  /** SDK-211 · 录制质量指标：累计因常态降采样丢弃的回放事件数、上次质量诊断时间（节流）。 */
+  let replaySampledDrops = 0
+  let lastQualityEmit = 0
   let stopConsole = () => {}
   let stopBehavior = () => {}
   let stopRoute = () => {}
@@ -484,6 +506,8 @@ export function createEys(options = {}) {
 
   /** 错误上报：触发回放分段结束（原因=error）并立即发送 */
   function error(err, extra = {}) {
+    // SDK-211 · 错误触发升采样：错误发生后升至全采样并扩展留存窗口，保证错误前后上下文完整可恢复。
+    triggerErrorBoost()
     endReplaySegment('error')
     push({
       type: 'error',
@@ -747,9 +771,32 @@ export function createEys(options = {}) {
 
   /** 将回放事件写入环形缓冲，达到阈值后批量上报 */
   function queueReplay(event) {
+    const now = Date.now()
+    // SDK-211 · 错误触发升采样：窗口过期后退出升采样并恢复常态窗口。
+    if (errorBoosted && now > errorBoostUntil) {
+      errorBoosted = false
+      replayRing.setWindow(cfg.replayWindowMs)
+    }
+    // SDK-211 · 常态降采样（replaySampleRate<1 时降本）；错误升采样期间全保留。
+    if (!replayShouldKeep(cfg.replaySampleRate, errorBoosted, Math.random)) {
+      replaySampledDrops++
+      return
+    }
     const { evicted } = replayRing.push(event)
     if (evicted > 0) diagnostic.emit('replay_buffer_full', { evicted })
     if (replayRing.size >= cfg.replayBatchSize) flushReplay()
+  }
+
+  /**
+   * SDK-211 · 错误触发升采样：升至全采样并将留存窗口扩展为 replayWindowMsError，
+   * 同时发出 `replay_error_triggered` 诊断，便于回放侧识别「错误会话」并优先保留。
+   */
+  function triggerErrorBoost() {
+    if (!cfg.replayErrorTrigger) return
+    errorBoosted = true
+    errorBoostUntil = Date.now() + cfg.replayWindowMsError
+    replayRing.setWindow(cfg.replayWindowMsError)
+    diagnostic.emit('replay_error_triggered', { windowMs: cfg.replayWindowMsError, boosted: true })
   }
 
   /**
@@ -793,7 +840,21 @@ export function createEys(options = {}) {
     try {
       const blockSelector = [...(cfg.privacy.blockSelectors || []), '.eys-block'].filter(Boolean).join(',')
       const maskSelector = [...(cfg.privacy.maskSelectors || [])].filter(Boolean).join(',')
-      stopReplay = setupReplayMonitor({ emit: queueReplay, options: { ...cfg.replayOptions, blockSelector, maskSelector } })
+      // SDK-211 · Canvas / iframe 显式 opt-in：默认关闭，开启后透传 rrweb 的对应开关。
+      // 完整 Canvas 保真度需由 replayOptions.plugins 提供 @rrweb/rrweb-plugin-canvas 实例。
+      stopReplay = setupReplayMonitor({
+        emit: queueReplay,
+        options: {
+          ...cfg.replayOptions,
+          blockSelector,
+          maskSelector,
+          recordCanvas: cfg.replayCanvas,
+          recordCrossOriginIframes: cfg.replayIframe,
+          inlineIframes: cfg.replayIframe,
+          // SDK-211 · 录制质量：rrweb 录制内部报错转为结构化诊断（不含 PII）。
+          errorHandler: (e) => diagnostic.emit('replay_recorder_error', { message: String((e && e.message) || e || '').slice(0, 200) })
+        }
+      })
     } catch (err) {
       console.warn('[web-collection] 启动 rrweb 录制失败，回放已降级关闭：', err && err.message)
       return
@@ -822,36 +883,66 @@ export function createEys(options = {}) {
   /**
    * 将环形缓冲中的回放事件推入上报队列，使用当前分段专属 sessionId。
    * 强制 flush（错误/分段结束/页面卸载）时取出**全部留存**（错误前 30 秒），非强制时按批次增量。
-   * 开启 replayCompression 时先 gzip（Worker / 主线程），随 compression 标记上报；失败时回退原样。
+   * SDK-211 · 分页加载：按 replayPageSize（强制）/replayBatchSize（增量）拆分为多页，
+   * 每页一条独立 replay 记录并附带 page/pageCount，回放侧可渐进加载。
+   * 开启 replayCompression 时逐页 gzip（Worker / 主线程），随 compression 标记上报；失败时回退原样。
    * @param {boolean} [force=false]
    */
   async function flushReplay(force = false) {
     if (!replayRing.size) return
-    const events = force ? replayRing.drain() : replayRing.take(cfg.replayBatchSize)
+    const pageSize = force ? cfg.replayPageSize : cfg.replayBatchSize
+    const events = force ? replayRing.drain() : replayRing.take(pageSize)
     if (!events.length) return
-    let payload = events
-    let compression = 'none'
-    if (replayCompressor) {
-      try {
-        const res = await replayCompressor.compress(events)
-        payload = res.body
-        compression = res.compression
-        if (compression === 'gzip') diagnostic.emit('replay_compressed', { bytes: payload.length })
-      } catch {
-        payload = events
-        compression = 'none'
+    const pages = paginate(events, pageSize)
+    const now = Date.now()
+    let compressedPages = 0
+    for (let i = 0; i < pages.length; i++) {
+      const pageEvents = pages[i]
+      let payload = pageEvents
+      let compression = 'none'
+      if (replayCompressor) {
+        try {
+          const res = await replayCompressor.compress(pageEvents)
+          payload = res.body
+          compression = res.compression
+          if (compression === 'gzip') {
+            compressedPages++
+            diagnostic.emit('replay_compressed', { bytes: payload.length })
+          }
+        } catch {
+          payload = pageEvents
+          compression = 'none'
+        }
       }
+      const item = withBase({ type: 'replay' })
+      // 回放事件使用分段 sessionId（而非全局 sessionId），每个分段独立成一条记录。
+      item.sessionId = currentReplaySessionId
+      item.events = payload
+      item.compression = compression
+      // SDK-211 · 分页加载元数据：当前页序号与总页数（从 1 计数）。
+      item.page = i + 1
+      item.pageCount = pages.length
+      if (force && i === pages.length - 1 && currentSegmentEndReason) {
+        item.segmentEndReason = currentSegmentEndReason
+      }
+      sender.enqueue(item)
     }
-    const item = withBase({ type: 'replay' })
-    // 回放事件使用分段 sessionId（而非全局 sessionId），每个分段独立成一条记录。
-    item.sessionId = currentReplaySessionId
-    item.events = payload
-    item.compression = compression
-    if (force && currentSegmentEndReason) {
-      item.segmentEndReason = currentSegmentEndReason
-    }
-    sender.enqueue(item)
     if (force || sender.size() >= cfg.batchSize) flush(force)
+    // SDK-211 · 录制质量与丢帧指标（节流，强制刷新时必发）：缓冲水位、累计淘汰/降采样、压缩与分页概况。
+    if (force || now - lastQualityEmit > 5000) {
+      lastQualityEmit = now
+      diagnostic.emit('replay_quality', {
+        buffered: replayRing.size,
+        evictedTotal: replayRing.evictedTotal,
+        sampledDrops: replaySampledDrops,
+        compression: replayCompressor ? 'gzip/none' : 'none',
+        compressedPages,
+        pages: pages.length,
+        sampleRate: cfg.replaySampleRate,
+        errorBoosted,
+        windowMs: replayRing.windowMs
+      })
+    }
   }
 
   /** 销毁 SDK 实例：清除定时器、停止录制、刷新全部队列 */
