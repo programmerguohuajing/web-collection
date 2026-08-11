@@ -38,7 +38,8 @@ export function buildAlertChannelPayload(form) {
   if (!form.id && !endpoint && !isFeishuApp) throw new Error('新渠道必须填写 HTTPS 服务地址或 Webhook 地址')
   if (!form.id && isFeishuApp && !String(form.appSecret || '').trim()) throw new Error('飞书智能体渠道必须填写 App Secret')
   if (!form.id && isFeishuApp && !String(form.chatId || '').trim()) throw new Error('飞书智能体渠道必须填写目标群组/用户 ID')
-  if ((type === 'email' || type === 'sms') && !recipients) throw new Error('邮件或短信渠道必须填写接收人')
+  if (type === 'sms' && !recipients) throw new Error('短信渠道必须填写接收人')
+  if (type === 'email' && !recipients && !String(form.bodyTemplate || '').trim()) throw new Error('邮件渠道必须填写接收人或请求体模板')
 
   const secrets = {}
   if (endpoint) secrets.url = endpoint

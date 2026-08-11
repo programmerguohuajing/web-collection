@@ -230,9 +230,18 @@ function defaultBody(type, value) {
 }
 
 function renderObject(value, variables, secrets) {
-  if (Array.isArray(value)) return value.map(item => renderObject(item, variables, secrets))
+  if (Array.isArray(value)) return value.flatMap(item => renderObject(item, variables, secrets))
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, renderObject(item, variables, secrets)]))
   if (typeof value !== 'string') return value
+  // 整串为单个变量、且为 recipients 时，将逗号分隔列表展开为数组（便于 to/cc 等数组字段）
+  const single = value.match(/^\{\{\s*(secret\.)?([A-Za-z0-9_]+)\s*\}\}$/)
+  if (single) {
+    const resolved = single[1] ? secrets[single[2]] : variables[single[2]]
+    if (single[2] === 'recipients' && typeof resolved === 'string' && resolved.includes(',')) {
+      return resolved.split(',').map(item => item.trim()).filter(Boolean)
+    }
+    return resolved == null ? '' : resolved
+  }
   return value.replace(/\{\{\s*(secret\.)?([A-Za-z0-9_]+)\s*\}\}/g, (_, secret, key) => String(secret ? secrets[key] ?? '' : variables[key] ?? ''))
 }
 
