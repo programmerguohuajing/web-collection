@@ -4,12 +4,14 @@
  * 实现统一的埋点、错误追踪、网络请求监控、页面生命周期插桩。
  * 与 Web 端 SDK 共享 core/event.js 中的事件分类、采样、脱敏等核心逻辑。
  */
-import { SDK_VERSION, eventCategory, eventSource, redactObject, sampleRateFor, sanitizeEvent } from '../core/event.js'
+import { SDK_VERSION, eventCategory, eventSource, redactObject, sanitizeEvent } from '../core/event.js'
 import { createSanitizer, resolveConsent } from '../core/sanitizer.js'
 // Reliable Transport v2（平台层复用重试/退避/诊断纯逻辑；通道仍由适配器抽象）。
 import { classifyResponse, computeBackoff } from '../transport/retry.js'
 import { createEventId } from '../transport/id.js'
 import { createDiagnosticSink } from '../transport/diagnostics.js'
+// Phase 6 · 确定性采样（U06 / SDK-208）：基于 traceId/sessionId 的一致性采样 + 优先级保留。
+import { createDeterministicSampler } from '../sampling/index.js'
 
 /** 存储队列和 deviceId 的 localStorage key */
 const QUEUE_KEY = '__web_collection_platform_queue__'
@@ -38,6 +40,10 @@ export function createPlatformEys(options = {}, adapter) {
     maxQueue: 200,
     maxRetries: 3,
     sampleRate: 1,
+    // traceRate 单独控制链路基础采样率；默认 = sampleRate。
+    traceRate: undefined,
+    // errorSampleRate 控制错误链路确定性子采样率；默认 undefined = 错误始终保留（优先级）。
+    errorSampleRate: undefined,
     collectKey: '',
     enabled: true,
     consent: 'granted',
@@ -55,8 +61,16 @@ export function createPlatformEys(options = {}, adapter) {
   const consentMap = resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {})
   // 传输层诊断：队列满/限流/超时/丢弃等（不含业务敏感数据）。
   const diagnostic = createDiagnosticSink(cfg.onDiagnostic)
-  // 采样判断：随机数大于采样率则返回空操作客户端（不上报任何数据）
-  if (Math.random() > cfg.sampleRate) return noopClient()
+  // Phase 6 · 确定性采样（U06 / SDK-208）：用确定性采样器替代「Math.random 整会话丢弃」。
+  // 同一 traceId / sessionId 决策一致；错误链路默认强制保留；sampleRate < 1 时仍可解释地按比例保留。
+  const sampler = createDeterministicSampler({
+    sampleRate: cfg.sampleRate,
+    traceRate: cfg.traceRate,
+    categorySampleRates: cfg.categorySampleRates,
+    errorSampleRate: cfg.errorSampleRate
+  })
+  // 最近一次采样决策（供 getSamplingDecision 自查，不含敏感数据）。
+  let lastSamplingDecision = null
 
   // ========== 实例状态 ==========
   const sessionId = id()
@@ -104,7 +118,9 @@ export function createPlatformEys(options = {}, adapter) {
     instrumentPage,
     // 隐私与同意自查
     getPrivacyMode: () => sanitizer.mode,
-    getConsentCategories: () => ({ ...consentMap })
+    getConsentCategories: () => ({ ...consentMap }),
+    // 采样自查：返回最近一次采样决策（含规则/采样率/单元），用于 SDK 自诊断页（P2）与调试。
+    getSamplingDecision: () => lastSamplingDecision
   }
 
   // ================================================================
@@ -235,12 +251,32 @@ export function createPlatformEys(options = {}, adapter) {
       breadcrumbs: event.type === 'error' ? breadcrumbs.slice(-20) : undefined,  // 仅错误事件附带面包屑
       ...event
     }
-    // 按事件分类采样
-    if (Math.random() > sampleRateFor(eventCategory(item), cfg.categorySampleRates, 1)) {
-      stats.dropped++
-      stats.droppedBySample++
-      diagnostic.emit('dropped_by_sampling', { type: item.type, name: item.name, metric: item.metric })
-      return
+    // Phase 6 · 确定性采样：基于 traceId（优先）/ sessionId 的一致性决策 + 优先级保留。
+    // 回放事件不参与采样丢弃（回放有独立采样策略，见 Phase 7 / SDK-209）。
+    if (item.type !== 'replay') {
+      const category = eventCategory(item)
+      const priority = item.type === 'error'
+      // 错误事件标记其链路优先保留，保证「错误→trace」关联不被采样切断（错误会话按策略保留）。
+      if (priority && item.traceId) sampler.markPriority(item.traceId)
+      const decision = sampler.decide({ traceId: item.traceId, sessionId, category, priority })
+      if (!decision.sampled) {
+        stats.dropped++
+        stats.droppedBySample++
+        lastSamplingDecision = decision
+        // 可解释诊断：丢弃原因带上决策规则/采样率/单元/键，不含任何业务敏感数据。
+        diagnostic.emit('dropped_by_sampling', {
+          rule: decision.rule,
+          rate: decision.rate,
+          unit: decision.unit,
+          key: decision.key,
+          category: decision.category,
+          type: item.type,
+          name: item.name,
+          metric: item.metric
+        })
+        return
+      }
+      lastSamplingDecision = decision
     }
     // 脱敏处理
     item = sanitizer.sanitizeEvent(item)

@@ -97,7 +97,8 @@ export class Tracer {
       return this._rootSpan
     }
 
-    const traceFlags = this.sampler.getTraceFlags('performance')
+    // 链路级采样：基于页面 traceId 的确定性决策，页面内所有 Span 共享同一决策。
+    const traceFlags = this.sampler.getTraceFlagsForTraceId(this.traceId)
     const context = new TraceContext({
       traceId: this.traceId,
       spanId: randomHex(8),
@@ -140,10 +141,12 @@ export class Tracer {
     const parentSpan = options.parent || this.getCurrentSpan()
     const parentContext = parentSpan?.context
 
-    // 创建新 context，继承父 context 的 traceId 和 baggage
-    const traceFlags = options.traceFlags ?? this.sampler.getTraceFlags()
+    // 创建新 context，继承父 context 的 traceId 和 baggage；
+    // 同一 traceId（含远端分布式 trace）共享一致的采样决策，保证父子 Span 不被随机拆分。
+    const resolvedTraceId = parentContext?.traceId || this.traceId
+    const traceFlags = options.traceFlags ?? this.sampler.getTraceFlagsForTraceId(resolvedTraceId)
     const context = new TraceContext({
-      traceId: parentContext?.traceId || this.traceId,
+      traceId: resolvedTraceId,
       spanId: randomHex(8),
       parentSpanId: parentContext?.spanId || '',
       traceFlags,

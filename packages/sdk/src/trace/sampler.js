@@ -82,6 +82,17 @@ export class Sampler {
   }
 
   /**
+   * 兼容确定性采样器接口：旧 Sampler 不感知 traceId，退回按 category 决策。
+   * （推荐使用 sampling 模块的 DeterministicSampler 以获得 trace 一致性。）
+   * @param {string} [traceId]
+   * @param {string} [category]
+   * @returns {'01' | '00'}
+   */
+  getTraceFlagsForTraceId(traceId, category) {
+    return this.getTraceFlags(category)
+  }
+
+  /**
    * 创建新的 Sampler 实例（支持链式调用更新配置）
    * @param {object} options
    * @returns {Sampler}
