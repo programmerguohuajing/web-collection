@@ -1,6 +1,6 @@
-alter table alerts add column fingerprint text;
-alter table alerts add column notify_error text;
-alter table alerts add column context_json text;
+alter table alert_history add column fingerprint text;
+alter table alert_history add column notify_error text;
+alter table alert_history add column context_json text;
 
 create table if not exists alert_channels (
   id integer primary key autoincrement,
@@ -21,7 +21,7 @@ create table if not exists alert_channels (
 
 create table if not exists alert_deliveries (
   id integer primary key autoincrement,
-  alert_id integer not null references alerts(id) on delete cascade,
+  alert_id integer not null references alert_history(id) on delete cascade,
   channel_id integer references alert_channels(id) on delete set null,
   channel_name text not null,
   channel_type text not null,

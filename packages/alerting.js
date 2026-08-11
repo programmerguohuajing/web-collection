@@ -10,7 +10,16 @@ export function normalizeChannel(input = {}) {
   const type = channelTypes.includes(input.type) ? input.type : ''
   const name = String(input.name || '').trim().slice(0, 128)
   if (!name || !type) throw new Error('渠道名称和类型不能为空')
-  const config = input.config && typeof input.config === 'object' ? input.config : {}
+  const legacyConfig = {
+    method: input.method,
+    headers: input.webhookHeaders,
+    bodyTemplate: input.bodyTemplate,
+    recipients: input.recipients || (type === 'email' || type === 'sms' ? input.endpoint : ''),
+    subject: input.subject,
+    templateId: input.templateId,
+    authType: input.authType
+  }
+  const config = isPlainObject(input.config) ? input.config : legacyConfig
   if (config.headers != null && (!config.headers || typeof config.headers !== 'object' || Array.isArray(config.headers))) throw new Error('请求头必须是 JSON 对象')
   if (config.bodyTemplate) {
     try { JSON.parse(config.bodyTemplate) } catch { throw new Error('请求体模板必须是有效 JSON') }
@@ -20,7 +29,13 @@ export function normalizeChannel(input = {}) {
       throw new Error(`敏感请求头 ${key} 必须使用 {{secret.KEY}} 变量`)
     }
   }
-  if (input.secrets?.url) validateEndpoint(String(input.secrets.url))
+  const legacyUrl = input.webhookUrl || (type !== 'email' && type !== 'sms' ? input.endpoint : '')
+  const secrets = {
+    ...(legacyUrl ? { url: legacyUrl } : {}),
+    ...(input.webhookSecret ? { token: input.webhookSecret } : {}),
+    ...plainObject(input.secrets)
+  }
+  if (secrets.url) validateEndpoint(String(secrets.url))
   const method = String(config.method || 'POST').toUpperCase()
   if (!['POST', 'PUT', 'PATCH'].includes(method)) throw new Error('仅支持 POST、PUT、PATCH 请求')
   return {
@@ -36,10 +51,10 @@ export function normalizeChannel(input = {}) {
       templateId: String(config.templateId || '').slice(0, 256),
       authType: ['none', 'bearer', 'basic'].includes(config.authType) ? config.authType : 'none'
     },
-    appIds: strings(input.appIds, 100, 64),
+    appIds: strings(input.appIds ?? input.appId, 100, 64),
     levels: strings(input.levels, 3, 16).filter(value => alertLevels.includes(value)),
     metrics: strings(input.metrics, 20, 32).filter(value => alertMetrics.includes(value)),
-    secrets: plainObject(input.secrets)
+    secrets
   }
 }
 
@@ -205,7 +220,12 @@ function plainObject(value) {
 }
 
 function strings(value, max, size) {
-  return Array.isArray(value) ? [...new Set(value.map(item => String(item).trim().slice(0, size)).filter(Boolean))].slice(0, max) : []
+  const items = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
+  return [...new Set(items.map(item => String(item).trim().slice(0, size)).filter(Boolean))].slice(0, max)
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function parseValue(value, fallback) {

@@ -3,6 +3,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel, pageLoading, toList } from '../dashboard.js'
+import { buildAlertChannelPayload, channelEndpointStatus, channelFilters, channelScope, createAlertChannelForm } from '../alert-channels.js'
 
 const router = useRouter()
 const rows = ref([])
@@ -12,8 +13,8 @@ const query = reactive({ level: '', status: '', metric: '', keyword: '' })
 const channels = ref([])
 const channelDialog = ref(false)
 const channelSaving = ref(false)
-const channelTesting = ref(false)
-const channelForm = reactive({ id: '', name: '', type: 'email', endpoint: '', appId: '', levels: 'error', metrics: 'error,log_error,regression', enabled: true, webhookUrl: '', webhookSecret: '', webhookHeaders: '' })
+const channelTestingId = ref(null)
+const channelForm = reactive(createAlertChannelForm())
 const alertsLoading = ref(false)
 const alertsError = ref('')
 const channelsLoading = ref(false)
@@ -113,31 +114,27 @@ function onPageChange() { load() }
 
 // --- 告警渠道 ---
 async function editChannel(row = {}) {
-  Object.assign(channelForm, {
-    id: row.id || '', name: row.name || '', type: row.type || 'email',
-    endpoint: row.endpoint || '', appId: row.app_id || '',
-    levels: row.levels || 'error', metrics: row.metrics || 'error,log_error,regression',
-    enabled: row.enabled ?? true, webhookUrl: row.webhook_url || '', webhookSecret: '', webhookHeaders: row.webhook_headers || ''
-  })
+  Object.assign(channelForm, createAlertChannelForm(row))
   channelDialog.value = true
 }
 async function submitChannel() {
   channelSaving.value = true
   try {
-    const headers = {}
-    String(channelForm.webhookHeaders || '').split('\n').filter(Boolean).forEach(l => {
-      const i = l.indexOf(':')
-      if (i > 0) headers[l.slice(0, i).trim()] = l.slice(i + 1).trim()
-    })
-    await saveAlertChannel({ ...channelForm, webhookHeaders: headers })
+    await saveAlertChannel(buildAlertChannelPayload(channelForm))
     ElMessage.success(channelForm.id ? '渠道已更新' : '渠道已添加')
     channelDialog.value = false
-    loadChannels()
+    await loadChannels()
+  } catch (error) {
+    ElMessage.error(error.message || '渠道保存失败')
   } finally { channelSaving.value = false }
 }
 async function toggleChannel(row) {
-  await saveAlertChannel({ ...row, enabled: !row.enabled })
-  row.enabled = !row.enabled
+  try {
+    await saveAlertChannel({ ...row, enabled: !row.enabled })
+    row.enabled = !row.enabled
+  } catch (error) {
+    ElMessage.error(error.message || '渠道状态更新失败')
+  }
 }
 async function removeChannel(row) {
   const confirmed = await ElMessageBox.confirm(`确定删除渠道"${row.name}"吗？`, '确认', { type: 'warning' }).then(() => true).catch(() => false)
@@ -147,11 +144,14 @@ async function removeChannel(row) {
   loadChannels()
 }
 async function testChannel(row) {
-  channelTesting.value = true
+  channelTestingId.value = row.id
   try {
     await testAlertChannel(row.id)
     ElMessage.success('测试消息已发送')
-  } finally { channelTesting.value = false }
+    await loadChannels()
+  } catch (error) {
+    ElMessage.error(error.message || '测试消息发送失败')
+  } finally { channelTestingId.value = null }
 }
 function channelTypeLabel(type) {
   return { email: '邮件', webhook: 'Webhook', sms: '短信', dingtalk: '钉钉', feishu: '飞书', wecom: '企业微信' }[type] || type
@@ -238,15 +238,16 @@ onMounted(() => { load(); loadChannels() })
       <template #empty><el-empty description="暂无渠道" :image-size="60" /></template>
       <el-table-column prop="name" label="名称" min-width="160" />
       <el-table-column label="类型" width="110"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
-      <el-table-column prop="endpoint" label="接收端/Webhook 地址" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="app_id" label="应用范围" width="140" />
-      <el-table-column label="级别" width="200"><template #default="{ row }">{{ row.levels }}</template></el-table-column>
-      <el-table-column label="指标" width="200"><template #default="{ row }">{{ row.metrics }}</template></el-table-column>
+      <el-table-column label="服务地址" min-width="130"><template #default="{ row }"><el-tag :type="row.configured ? 'success' : 'danger'" size="small">{{ channelEndpointStatus(row) }}</el-tag></template></el-table-column>
+      <el-table-column label="接收人" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.config?.recipients || '-' }}</template></el-table-column>
+      <el-table-column label="应用范围" width="160"><template #default="{ row }">{{ channelScope(row) }}</template></el-table-column>
+      <el-table-column label="级别" width="180"><template #default="{ row }">{{ channelFilters(row.levels) }}</template></el-table-column>
+      <el-table-column label="指标" width="220"><template #default="{ row }">{{ channelFilters(row.metrics) }}</template></el-table-column>
       <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
       <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="editChannel(row)">编辑</el-button>
-          <el-button link size="small" @click="testChannel(row)" :loading="channelTesting">测试</el-button>
+          <el-button link size="small" @click="testChannel(row)" :loading="channelTestingId === row.id">测试</el-button>
           <el-button link :type="row.enabled ? 'warning' : 'success'" size="small" @click="toggleChannel(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
           <el-button link type="danger" size="small" @click="removeChannel(row)">删除</el-button>
         </template>
@@ -258,16 +259,29 @@ onMounted(() => { load(); loadChannels() })
     <el-form :model="channelForm" label-width="110px">
       <el-form-item label="名称"><el-input v-model="channelForm.name" /></el-form-item>
       <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','wecom']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
-      <el-form-item label="接收端"><el-input v-model="channelForm.endpoint" /></el-form-item>
-      <el-form-item label="应用 App ID"><el-input v-model="channelForm.appId" placeholder="留空则为全局渠道" /></el-form-item>
-      <el-form-item label="告警级别"><el-input v-model="channelForm.levels" placeholder="逗号分隔，例如 error,warning,critical" /></el-form-item>
-      <el-form-item label="指标"><el-input v-model="channelForm.metrics" placeholder="逗号分隔，例如 error,log_error,regression" /></el-form-item>
+      <el-form-item label="服务地址" required>
+        <el-input v-model="channelForm.endpoint" :placeholder="channelForm.endpointConfigured ? '已加密保存；留空表示不修改' : 'https://provider.example.com/webhook'" />
+      </el-form-item>
+      <el-form-item v-if="channelForm.type === 'email' || channelForm.type === 'sms'" label="接收人" required>
+        <el-input v-model="channelForm.recipients" :placeholder="channelForm.type === 'email' ? '多个邮箱以逗号分隔' : '多个手机号以逗号分隔'" />
+      </el-form-item>
+      <el-form-item label="应用 App ID"><el-select v-model="channelForm.appIds" multiple filterable allow-create default-first-option style="width:100%" placeholder="留空则匹配全部应用" /></el-form-item>
+      <el-form-item label="告警级别"><el-select v-model="channelForm.levels" multiple style="width:100%"><el-option label="警告" value="warning" /><el-option label="错误" value="error" /><el-option label="严重" value="critical" /></el-select></el-form-item>
+      <el-form-item label="指标"><el-select v-model="channelForm.metrics" multiple style="width:100%"><el-option v-for="metric in ['error','log_error','regression','lcp','inp','cls','longtask']" :key="metric" :label="metricLabel(metric)" :value="metric" /></el-select></el-form-item>
       <el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item>
       <template v-if="channelForm.type === 'webhook'">
-        <el-form-item label="Webhook URL"><el-input v-model="channelForm.webhookUrl" /></el-form-item>
-        <el-form-item label="Secret"><el-input v-model="channelForm.webhookSecret" type="password" show-password /></el-form-item>
-        <el-form-item label="Headers"><el-input v-model="channelForm.webhookHeaders" type="textarea" :rows="3" placeholder="每行一条，格式：Key: Value" /></el-form-item>
+        <el-form-item label="请求方法"><el-select v-model="channelForm.method" style="width:100%"><el-option v-for="method in ['POST','PUT','PATCH']" :key="method" :label="method" :value="method" /></el-select></el-form-item>
+        <el-form-item label="认证方式"><el-select v-model="channelForm.authType" style="width:100%"><el-option label="无" value="none" /><el-option label="Bearer Token" value="bearer" /><el-option label="Basic Auth" value="basic" /></el-select></el-form-item>
+        <el-form-item v-if="channelForm.authType === 'bearer'" label="Token"><el-input v-model="channelForm.token" type="password" show-password :placeholder="channelForm.endpointConfigured ? '留空表示不修改' : ''" /></el-form-item>
+        <template v-if="channelForm.authType === 'basic'">
+          <el-form-item label="用户名"><el-input v-model="channelForm.username" :placeholder="channelForm.endpointConfigured ? '留空表示不修改' : ''" /></el-form-item>
+          <el-form-item label="密码"><el-input v-model="channelForm.password" type="password" show-password :placeholder="channelForm.endpointConfigured ? '留空表示不修改' : ''" /></el-form-item>
+        </template>
+        <el-form-item label="Headers"><el-input v-model="channelForm.headers" type="textarea" :rows="3" placeholder="每行一条，敏感值请使用 {{secret.token}}" /></el-form-item>
+        <el-form-item label="请求体模板"><el-input v-model="channelForm.bodyTemplate" type="textarea" :rows="4" placeholder='可选 JSON，例如 {"text":"{{message}}"}' /></el-form-item>
       </template>
+      <el-form-item v-if="channelForm.type === 'email'" label="邮件主题"><el-input v-model="channelForm.subject" /></el-form-item>
+      <el-form-item v-if="channelForm.type === 'sms'" label="模板 ID"><el-input v-model="channelForm.templateId" /></el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="channelDialog=false">取消</el-button>

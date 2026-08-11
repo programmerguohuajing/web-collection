@@ -36,6 +36,7 @@ const groups = [
     { title: '链路追踪', path: '/traces', icon: Connection }
   ] },
   { label: '洞察', items: [
+    { title: '产品分析', path: '/analytics', icon: DataAnalysis },
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Aim },
     { title: '发布管理', path: '/releases', icon: Operation }

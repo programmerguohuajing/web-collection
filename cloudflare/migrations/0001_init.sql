@@ -9,6 +9,6 @@ create table if not exists sourcemaps (app_id text not null,release_name text no
 create table if not exists applications (app_id text primary key,name text not null,platform text default 'web',owner text,enabled integer default 1,sample_rate real default 1,replay_sample_rate real default 1,collect_key_hash text,rules_json text,created_at integer,updated_at integer);
 create table if not exists releases (app_id text not null,release_name text not null,status text default 'active',created_at integer,primary key(app_id,release_name));
 create table if not exists settings (id integer primary key,config_json text not null,updated_at integer);
-create table if not exists alerts (id integer primary key autoincrement,app_id text,metric text,level text,value real,message text,notified integer default 0,created_at integer);
+create table if not exists alert_history (id integer primary key autoincrement,app_id text,metric text,level text,value real,message text,notified integer default 0,created_at integer);
 create table if not exists funnels (id integer primary key autoincrement,name text not null,app_id text,steps_json text not null,created_at integer,updated_at integer);
 create table if not exists dashboards (id integer primary key autoincrement,name text not null,widgets_json text not null,created_at integer,updated_at integer);
