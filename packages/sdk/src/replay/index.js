@@ -35,6 +35,16 @@ export function isDriverLoaded() {
 }
 
 /**
+ * 仅供测试：注入/清空 rrweb 驱动，避免测试中真的 import('rrweb') 触发 Node 下的
+ * MessagePort 泄漏。生产代码不得使用。
+ * @param {object|null} d
+ */
+export function __setDriver(d) {
+  driver = d
+  loading = null
+}
+
+/**
  * 初始化会话回放监控（基于 rrweb）。必须先 `ensureDriver`。
  *
  * @param {object} opts

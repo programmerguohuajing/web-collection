@@ -34,6 +34,7 @@
 - [x] **Phase 7 · Core / Replay 分包与懒加载**（U07，SDK-209 / SDK-210）。
   - [x] **SDK-209** Replay 动态加载与分包：移除 `packages/sdk/src/replay/index.js` 顶层 `import { record } from 'rrweb'`，改为 `loadRrweb()` 按需加载（`window.rrweb` 注入 → 动态 `import('rrweb')` → `replayLibUrl` 脚本注入三策略，`rrweb-driver.js`）；`ensureDriver` 幂等且并发共享 Promise；`addReplayEvent`/`takeReplaySnapshot` 在未加载时为安全 no-op。`vite.config.js` 仅打 `es`（Vite 自动把 `import('rrweb')` 拆为独立 `rrweb-*.js` chunk）；新增 `vite.iife.config.js` 将 rrweb `external` 并 `globals: { rrweb: 'rrweb' }`，核心 IIFE 不含 rrweb。`replay:false` 时核心包（ESM/IIFE）既不下载也不包含 rrweb；`startReplay()` 升级为 `Promise<void>`（调用方无需 await 但内部排队）。
   - [x] **SDK-210** Replay Worker/压缩/环形缓冲：新增 `ring-buffer.js`（`ReplayRingBuffer` 容量 `maxSize` + 时间窗口 `windowMs` 惰性淘汰，错误前 30 秒可恢复、常驻内存有界，`replay_buffer_full` 告警）；新增 `compress.js` + `compression.worker.js`，gzip 优先 Worker → 主线程 `CompressionStream` → `none`（base64）降级，`replay_worker_unavailable`/`replay_compressed` 诊断；`startReplay`/`stopReplayRecording`/`flushReplay` 改为异步且 fire-and-forget 安全（`disposed` 守卫，避免 `destroy()` 竞态导致 rrweb 内部定时器泄露）。`index.d.ts` 补全 `replayLibUrl`/`replayWorkerUrl`/`replayCompression`/`replayBufferSize`/`replayWindowMs` 选项与异步 replay API。
+  - [x] **SDK-214** Replay 增强（P2 规模化能力）：错误触发升采样（`replaySampleRate` 常态降采样 + 错误时升全采样并扩展窗口至 `replayWindowMsError`，`replay_error_triggered` 诊断）；Canvas/iframe 显式 opt-in（`replayCanvas`/`replayIframe` 透传 rrweb `recordCanvas`/`recordCrossOriginIframes`/`inlineIframes`）；录制质量与丢帧指标（`replay_quality` 含 buffered/evictedTotal/sampledDrops/pages 等、`replay_recorder_error`）；分页加载（`flushReplay` 按 `replayPageSize` 拆页并携带 `page`/`pageCount`，`sampler.js` 的 `replayShouldKeep`/`paginate` 纯函数）。详见 `docs/replay-v2.md` 第 13 节。
   - [x] **Replay 单元测试**：新增 `packages/sdk/test/replay.test.js`（13 例），覆盖 `ReplayRingBuffer`（容量/时间窗口/drain/take）、压缩（gzip 往返、`none` 降级 + 诊断、Worker 优先 via MockWorker）、`loadRrweb`（`window.rrweb` 复用 / `injectScript` resolve·reject / 动态 `import` 懒加载核心路径）、`ensureDriver` 幂等、`addReplayEvent`/`takeReplaySnapshot` no-op 安全、`createEys` `replay:false|true` 构造与 API 完整；已接入 `npm test`，全部通过，且进程干净退出（修复 Node 22 `BroadcastChannel.close()` 不释放 PipeWrap 的泄漏，测试中置 `BroadcastChannel: undefined` 退化为单标签页布尔守卫）。
 - [ ] **其余 P1 / P2 与 Week 5–12 里程碑**：按计划推进（见第 7 节）。
 
@@ -143,7 +144,7 @@ Web Collection SDK 已经不是“只有埋点”的早期 SDK。当前代码同
 | 请求采集 | 较强 | Datadog、Highlight | 缺 GraphQL operation、可编程 request/response sanitizer、取消请求去噪 |
 | W3C 分布式追踪 | 部分 | OpenTelemetry、Elastic、Faro | `traceparent` 已有；Context、标准 baggage/tracestate、Exporter 尚未闭环 |
 | 通用自定义 Span | 部分且有生命周期缺陷 | OpenTelemetry、Sentry | 需要 Processor/Exporter 和可靠异步上下文，不能只返回 Span 对象 |
-| Session Replay | 较强（已懒加载+压缩+Worker+环形缓冲） | rrweb、Sentry、Datadog、Highlight | 已落地：按需分包、gzip（Worker/主线程/降级）、内存有界环形缓冲、错误前 30 秒可恢复；待补：差异化采样、Canvas/iframe 策略、回放质量指标 |
+| Session Replay | 强（已懒加载+压缩+Worker+环形缓冲+增强） | rrweb、Sentry、Datadog、Highlight | 已落地：按需分包、gzip（Worker/主线程/降级）、内存有界环形缓冲、错误前 30 秒可恢复、错误触发升采样、Canvas/iframe 显式 opt-in、录制质量与丢帧指标、分页加载（SDK-214） |
 | Replay 隐私 | 有输入遮盖 | Sentry、Datadog、Highlight | 需统一严格/默认/关闭分级，并覆盖文本、图片、选择框、网络体和自定义事件 |
 | 行为 Autocapture | 较强 | PostHog | 需稳定元素指纹、文本隐私、业务事件治理和版本化 schema |
 | Feature Flag/实验上下文 | 缺失 | PostHog | 建议只采集 flag key/variant，服务于错误、性能、Replay 对比 |
@@ -453,7 +454,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 - 远程配置：采样率、模块开关、URL 过滤、紧急停采；必须签名校验、TTL、缓存和失败回退。
 - 框架 Integration：Vue/React Router 路由命名、Error Boundary、组件栈、SSR hydration、Next/Nuxt 页面生命周期。
 - ReportingObserver：deprecation、intervention、CSP violation；默认低采样并有 allowlist。
-- Replay 增强：错误前环形缓冲、错误触发升采样、Canvas/iframe 显式 opt-in、录制质量和丢帧指标、分页加载。
+- Replay 增强：错误前环形缓冲、错误触发升采样、Canvas/iframe 显式 opt-in、录制质量和丢帧指标、分页加载（均已落地，SDK-214）。
 - SDK 自诊断页：展示当前配置版本、采样决定、队列水位、最近一次发送结果、被过滤原因；仅开发环境或授权用户可打开。
 - 可选 UI Profiling：先采 LoAF/React Profiler 聚合，不在当前 12 周内自研完整连续性能剖析器。
 
@@ -467,7 +468,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | U04 ✅ | 隐私 | select/点击文本/用户手机号/网络体策略不一致（Phase 4 已落地统一 sanitizer、默认 balanced、手机号不可逆 hash、select 不采原文、body 默认脱敏） | Privacy v2、统一 sanitizer、默认最小化采集 | P0 |
 | U05 ✅ | 发送队列 | localStorage 同步阻塞；无超时/退避/429；现有 sendBeacon 仅按字符长度判断，缺鉴权、ACK 语义、幂等和失败回退（Phase 5 已落地 Reliable Transport v2：IndexedDB 冷队列 + 内存热队列、AbortController 超时、指数退避+Retry-After、429/5xx 识别、BeaconTransport UTF-8 字节切片与非破坏性退出、eventId 幂等、onDiagnostic 健康事件） | Reliable Transport v2 + BeaconTransport + 服务端 eventId 去重 | P0 |
 | U06 ✅ | 采样 | 会话和事件随机决策，Trace/Replay 关联可能断裂（Phase 6 已落地 `src/sampling/`：traceId/sessionId 哈希一致性采样、父子 Span 同决策、错误链路优先级保留、分类子采样不破坏 trace、可解释诊断与自查） | 基于 trace/session ID 的确定性采样和优先级 | P0 |
-| U07 | Replay | 默认静态打包、无错误触发保留、无质量指标 | 独立包、懒加载、环形缓冲、Worker 压缩 | P1 |
+| U07 | Replay | 默认静态打包、无错误触发保留、无质量指标 | 独立包、懒加载、环形缓冲、Worker 压缩；错误触发升采样、Canvas/iframe opt-in、质量指标、分页加载（SDK-214） | P1 |
 | U08 | Web Vitals | FID 仍在核心列表；生命周期覆盖不完整 | web-vitals v5 语义、BFCache/soft nav/LoAF | P1 |
 | U09 | Resource Timing | 个别阶段值使用绝对时间，缓存/SW 归因弱 | 标准阶段差值和 attribution 测试夹具 | P1 |
 | U10 | 错误上下文 | 异常链、机制、框架信息不足 | Error v2 + Vue/React Integration | P1 |
@@ -521,6 +522,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | SDK-208 ✅ | 确定性采样与 Replay 策略 | `src/sampling/`、trace/replay | 4d | 同 trace 决策一致；错误会话按策略保留；配置可解释（Phase 6 已完成：`DeterministicSampler` + 哈希原语、20 例单测全绿；Replay 独立采样归入 Phase 7 / SDK-209） |
 | SDK-209 | Replay 动态加载与分包 | `src/replay/`、Vite config、exports | 4d | 关闭 Replay 时 ESM 和基础 IIFE 均不下载/包含 rrweb；开启后按需加载成功 |
 | SDK-210 | Replay Worker/压缩/环形缓冲 | replay transport | 7d | 错误前 30 秒可恢复；长任务增量满足预算 |
+| SDK-214 | Replay 增强（P2 规模化能力） | `src/replay/`、`src/index.js`、`index.d.ts` | 4d | 错误触发升采样（窗口扩展 + 全采样）、Canvas/iframe 显式 opt-in、录制质量与丢帧指标（replay_quality/replay_recorder_error）、分页加载（page/pageCount） |
 | SDK-211 | Web Vitals 与页面生命周期 v2 | `src/performance/` | 6d | BFCache/prerender/pagehide/INP/CLS 对照用例通过 |
 | SDK-212 | SPA Route Transaction | performance + Vue/React integration | 6d | 路由、数据请求、渲染完成形成稳定父子链路 |
 | SDK-213 | Error v2 异常链和 Stack Frame | `src/error/`、API issue grouping | 6d | cause/AggregateError/DOMException/扩展噪音测试通过 |

@@ -231,6 +231,30 @@ export interface EysOptions {
   replayBufferSize?: number
   /** 回放环形缓冲时间窗口（毫秒，默认 30000）：超出窗口的旧事件被惰性淘汰，保证错误前 30 秒可恢复 */
   replayWindowMs?: number
+  /**
+   * 强制刷新（错误/分段结束/页面卸载）时单页回放事件上限（默认 50，= replayBatchSize）。
+   * 超出拆分为多页，每页独立记录并携带 page/pageCount，支撑回放「分页加载」（SDK-211）。
+   */
+  replayPageSize?: number
+  /**
+   * 常态回放增量采样率 [0,1]（默认 1，全保留）。<1 时对高频回放事件降采样以降本；
+   * 发生错误时自动升至全采样（错误触发升采样），不影响错误前后上下文完整性。
+   */
+  replaySampleRate?: number
+  /** 是否开启错误触发升采样（默认 true）：错误发生后扩展留存窗口至 replayWindowMsError 并全采样 */
+  replayErrorTrigger?: boolean
+  /** 错误升采样期间的留存窗口（毫秒，默认 60000，常态 30s 的两倍） */
+  replayWindowMsError?: number
+  /**
+   * 是否开启 Canvas 录制（默认 false，显式 opt-in）。开启后透传 rrweb 的 recordCanvas。
+   * 完整 Canvas 保真度需在 replayOptions.plugins 中提供 @rrweb/rrweb-plugin-canvas 实例。
+   */
+  replayCanvas?: boolean
+  /**
+   * 是否开启跨域 iframe 录制（默认 false，显式 opt-in）。开启后透传 rrweb 的
+   * recordCrossOriginIframes 与 inlineIframes。
+   */
+  replayIframe?: boolean
   /** 白屏检测的 DOM 选择器 */
   whiteScreenSelector?: string
   /** 白屏检测超时时间（毫秒） */

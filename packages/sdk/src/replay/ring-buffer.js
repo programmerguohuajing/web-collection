@@ -18,7 +18,7 @@ export class ReplayRingBuffer {
    */
   constructor({ maxSize = 1500, windowMs = 30000 } = {}) {
     this.maxSize = Math.max(1, maxSize | 0)
-    this.windowMs = Math.max(0, windowMs | 0)
+    this.windowMs_ = Math.max(0, windowMs | 0)
     /** @type {Array<{ts:number, event:object}>} */
     this._buf = []
     this._evicted = 0
@@ -45,6 +45,19 @@ export class ReplayRingBuffer {
   /** 当前留存数量（不含已过窗口但未被惰性淘汰的项） */
   get size() {
     return this._buf.length
+  }
+
+  /** 当前时间窗口（用于诊断与错误升采样下的窗口扩展观测） */
+  get windowMs() {
+    return this.windowMs_
+  }
+
+  /**
+   * 动态调整留存时间窗口（错误触发升采样时扩展为更长窗口，错误窗口结束后恢复）。
+   * @param {number} ms
+   */
+  setWindow(ms) {
+    this.windowMs_ = Math.max(0, ms | 0)
   }
 
   /** 累计因容量超限被丢弃的事件数（用于诊断，可重置） */
@@ -83,8 +96,8 @@ export class ReplayRingBuffer {
    * @param {number} now
    */
   _evictExpired(now) {
-    if (this.windowMs <= 0) return
-    const cutoff = now - this.windowMs
+    if (this.windowMs_ <= 0) return
+    const cutoff = now - this.windowMs_
     let i = 0
     while (i < this._buf.length && this._buf[i].ts < cutoff) i++
     if (i > 0) {
