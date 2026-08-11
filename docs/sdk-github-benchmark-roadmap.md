@@ -8,7 +8,7 @@
 ## 实施进度追踪
 
 > 本路线图按 P0（可信）→ P1（轻量可组合）→ P2（规模化）分阶段落地。以下勾选框反映**实际开发进度**；完成的条目同时会在第 6 节（U 表）与第 8 节（Backlog）对应行以 `✅` 标注，并注明所属阶段。
-> 最后更新：2026-08-11（Phase 1、Phase 2、Phase 3、Phase 4 完成）
+> 最后更新：2026-08-11（Phase 1、Phase 2、Phase 3、Phase 4、Phase 5 完成）
 
 - [x] **Phase 1 · Tracing 可信性基础**（路线图 P0 首位，已完成并通过测试）
   - [x] **U01** 自定义 Span 生命周期与异步恢复（对应 SDK-201）：`withSpan` 在同步 / 异步 resolve / reject / 异常所有路径调用 `endSpan` 弹栈；Tracer 活动栈从模块级全局改为**实例级**，修复多实例污染；`createTracer` 注册活跃 Tracer 供模块级便捷函数委托。
@@ -25,7 +25,11 @@
   - [x] **U04** Privacy v2 统一 sanitizer：新增 `packages/sdk/src/core/sanitizer.js` 作为隐私清洗唯一事实来源，提供 `strict | balanced | off` 三档策略（生产默认 `balanced`）；`sanitizeEvent` 在 `balanced`/`strict` 下对事件字段键脱敏 + 值级 PII（邮箱 / 手机号 / 身份证 / 银行卡 / JWT）文本脱敏；用户手机号默认不可逆 hash（不发明文）；URL query 敏感参数剥离（strict 丢弃整个 query）；请求 / 响应头默认移除 Authorization / Cookie / Set-Cookie / Proxy-Authorization；`requestResponseSanitizer` 钩子 + body 默认脱敏；同意分类 `essential / performance / analytics / replay / diagnostics` 与 GPC / DNT 信号映射（门控回放与 body 采样）。`select` 默认仅采 `selectedIndex` / 选项数量 / 受控 `labelHash`（balanced）或仅索引与数量（strict），不采原文；点击 label / DOM 文本经同一 sanitizer 脱敏；`addReplayEvent` 自定义事件 payload 经 sanitizer 清洗。`index.d.ts` 补全 `PrivacyMode` / `ConsentCategory` / `EysPrivacyOptions` 扩展 / `getPrivacyMode` / `getConsentCategories`。详见 `docs/privacy-v2.md`。
   - [x] **U11** 请求 Body 隐私：body 采样经 `sanitizePair` 统一清洗（JSON 字段键脱敏 + 文本 PII 脱敏 + 敏感头丢弃），支持自定义 `requestResponseSanitizer`；`index.js` / `platform/core.js` 的 `push` 全面切换为 sanitizer 实例，且 `beforeSend` 后仍二次清洗。
   - [x] **隐私回归测试**：新增 `packages/sdk/test/privacy.test.js`（11 例），断言语料序列化后不含明文手机号 / 邮箱 / 密码 / token / 身份证 / 银行卡 / 敏感 query 参数，已接入 `npm test`，全部通过。
-- [ ] **Phase 5 · Reliable Transport v2**（U05，SDK-207 / SDK-219 / API-220）：IndexedDB 队列、退避、429/5xx、BeaconTransport、diagnostics。
+- [x] **Phase 5 · Reliable Transport v2**（U05，SDK-207 / SDK-219 / API-220）：IndexedDB 队列、退避、429/5xx、BeaconTransport、diagnostics。
+  - [x] **SDK-207** IndexedDB Reliable Queue：新增 `packages/sdk/src/transport/`（诊断 `diagnostics.js`、`createEventId` `id.js`、指数退避+`Retry-After`+`classifyResponse` `retry.js`、IndexedDB 冷队列 `indexeddb-queue.js` 含内存降级、在线通道 `fetch-transport.js` 带 `AbortController` 超时、退出通道 `beacon-transport.js` UTF-8 字节切片、跨标签页单发送者锁 `multitab.js`、编排器 `sender.js` 与 barrel `index.js`）；`ReliableSender` 维护内存热队列并异步镜像 IndexedDB，刷新/崩溃/断网后可恢复（`next_session_recovered`），`queue_full` 溢出丢弃并告警。
+  - [x] **SDK-219** BeaconTransport 与页面退出调度：`BeaconTransport` 按 UTF-8 **字节**（默认 60 KiB，非 JS 字符长度）切片，`sendBeacon` 无自定义 Header（不带 `x-app-key`），返回 `queued`/`rejected`/`oversize`/`fallback`；`sendExitBatch` **非破坏性**（事件保留在持久队列，由服务端按 `eventId` 幂等去重）；无 Beacon 且有 `collectKey` 时回退 `fetch keepalive`（带 `x-app-key`）。
+  - [x] **API-220（SDK 侧契约）**：每条事件携带稳定 `eventId`（`e-${time}-${counter}-${rand}`），在线发送与 Beacon 均携带，支持服务端 at-least-once 幂等去重；在线 `classifyResponse` 区分 `success`/`retry`(408/425/429/5xx)/`drop`(其余 4xx)，重试走指数退避+抖动并遵守 `Retry-After`，超 `maxRetries` 永久丢弃（`dropped_non_retryable`）；`onDiagnostic` 暴露 `queue_full`/`rate_limited`/`timeout`/`invalid_payload`/`storage_quota`/`dropped_by_sampling`/`beacon_rejected`/`beacon_oversize`/`beacon_fallback` 等健康事件。服务端 `eventId` 入库去重为后端 API-220 范畴，契约已对齐。
+  - [x] **传输层单元测试**：新增 `packages/sdk/test/transport.test.js`（31 例），覆盖 `createEventId`/`computeBackoff`/`parseRetryAfter`/`classifyResponse`/诊断/`IndexedDBQueue`（内存降级、容量、replaceAll 双形态）/FetchTransport（成功、500、超时、网络错误、不可用）/BeaconTransport（字节长度、成功、rejected、oversize、字节切片、fetch 回退）/ReliableSender（自动 eventId、成功出队、4xx 丢弃、5xx 退避超限、并发单活跃发送者、退出 Beacon 非破坏性、下一会话恢复）/MultiTabLock（真实 BroadcastChannel 竞争 + 无 Channel 退化），已接入 `npm test`，全部通过。
 - [ ] **Phase 6 · 确定性采样**（U06，SDK-208）。
 - [ ] **Phase 7 · Core / Replay 分包与懒加载**（U07，SDK-209 / SDK-210）。
 - [ ] **其余 P1 / P2 与 Week 5–12 里程碑**：按计划推进（见第 7 节）。
@@ -458,7 +462,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | U02 ✅ | 类型声明 | 运行时 API/配置未全部声明（Phase 1 已在 index.d.ts 补齐 tracing 公共 API 声明） | 从同一 TS source 生成 runtime 和 `.d.ts`，增加 API Extractor diff 门禁 | P0 |
 | U03 ✅ | W3C 传播 | baggage 使用非标准 Header；traceOrigins 只支持精确字符串（Phase 3 已改为标准单一 `baggage` Header，traceOrigins 支持 string/RegExp/function matcher） | 标准 `baggage`/`tracestate`，支持 string/RegExp/function matcher | P0 |
 | U04 ✅ | 隐私 | select/点击文本/用户手机号/网络体策略不一致（Phase 4 已落地统一 sanitizer、默认 balanced、手机号不可逆 hash、select 不采原文、body 默认脱敏） | Privacy v2、统一 sanitizer、默认最小化采集 | P0 |
-| U05 | 发送队列 | localStorage 同步阻塞；无超时/退避/429；现有 sendBeacon 仅按字符长度判断，缺鉴权、ACK 语义、幂等和失败回退 | Reliable Transport v2 + BeaconTransport + 服务端 eventId 去重 | P0 |
+| U05 ✅ | 发送队列 | localStorage 同步阻塞；无超时/退避/429；现有 sendBeacon 仅按字符长度判断，缺鉴权、ACK 语义、幂等和失败回退（Phase 5 已落地 Reliable Transport v2：IndexedDB 冷队列 + 内存热队列、AbortController 超时、指数退避+Retry-After、429/5xx 识别、BeaconTransport UTF-8 字节切片与非破坏性退出、eventId 幂等、onDiagnostic 健康事件） | Reliable Transport v2 + BeaconTransport + 服务端 eventId 去重 | P0 |
 | U06 | 采样 | 会话和事件随机决策，Trace/Replay 关联可能断裂 | 基于 trace/session ID 的确定性采样和优先级 | P0 |
 | U07 | Replay | 默认静态打包、无错误触发保留、无质量指标 | 独立包、懒加载、环形缓冲、Worker 压缩 | P1 |
 | U08 | Web Vitals | FID 仍在核心列表；生命周期覆盖不完整 | web-vitals v5 语义、BFCache/soft nav/LoAF | P1 |
@@ -510,7 +514,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | SDK-204 ✅ | 补齐 TypeScript 公共契约（Phase 1 已完成运行时 API 声明补齐） | `index.d.ts`，后续迁移 TS source | 2d | tsd/API Extractor 覆盖所有运行时公共成员 |
 | SDK-205 ✅ | 标准化 W3C baggage/tracestate | `src/trace/propagation.js`、fetch/xhr | 3d | 与 OTel/Elastic 测试服务互通；CORS 文档完整（Phase 3 已完成：标准 `baggage` 单一 Header + `traceOrigins` string/RegExp/function matcher + 互操作单测 + `docs/w3c-propagation.md`） |
 | SDK-206 ✅ | Privacy v2 与统一 sanitizer | `src/core/sanitizer.js`、`src/core/event.js`、behavior/network/replay | 5d | 隐私测试语料零敏感明文；默认不发送原手机号/选项文本（Phase 4 已完成：统一 sanitizer + 三档策略 + GPC/DNT + 11 例回归测试） |
-| SDK-207 | IndexedDB Reliable Queue | 新 `src/transport/` | 7d | 刷新、崩溃、断网、quota、429 场景结果可预测且有诊断 |
+| SDK-207 ✅ | IndexedDB Reliable Queue | 新 `src/transport/` | 7d | 刷新、崩溃、断网、quota、429 场景结果可预测且有诊断（Phase 5 已完成：`IndexedDBQueue` + `ReliableSender` 热/冷队列镜像、`next_session_recovered`、`queue_full` 溢出告警、31 例单测全绿） |
 | SDK-208 | 确定性采样与 Replay 策略 | `src/sampling/`、trace/replay | 4d | 同 trace 决策一致；错误会话按策略保留；配置可解释 |
 | SDK-209 | Replay 动态加载与分包 | `src/replay/`、Vite config、exports | 4d | 关闭 Replay 时 ESM 和基础 IIFE 均不下载/包含 rrweb；开启后按需加载成功 |
 | SDK-210 | Replay Worker/压缩/环形缓冲 | replay transport | 7d | 错误前 30 秒可恢复；长任务增量满足预算 |
@@ -522,8 +526,8 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | QA-216 | Browser SDK E2E 矩阵 | Playwright + fixtures | 7d | Chromium/Firefox/WebKit 覆盖 error/perf/trace/replay/privacy |
 | DOC-217 | capability manifest 与文档生成 | `docs/`、CI script | 3d | 默认值、类型、README、能力表漂移会使 CI 失败 |
 | SDK-218 | 统一 tracing 配置和 Integration 生命周期 | `src/index.js`、performance/behavior integrations | 4d | start/destroy 可重复；多实例不重复 patch；销毁后原生 API 和监听器恢复 |
-| SDK-219 | BeaconTransport 与页面退出调度 | `src/transport/beacon.js`、lifecycle、collect API | 4d | UTF-8 字节切片、优先级、鉴权兼容、false/超限回退、BFCache、下一会话恢复和服务端幂等测试通过 |
-| API-220 | Beacon 鉴权与事件幂等入库 | collect API、token service、event repository | 4d | 短期 Token 受 app/origin/TTL 约束；重复 eventId 只入库一次；去重指标可查询 |
+| SDK-219 ✅ | BeaconTransport 与页面退出调度 | `src/transport/beacon.js`、lifecycle、collect API | 4d | UTF-8 字节切片、优先级、鉴权兼容、false/超限回退、BFCache、下一会话恢复和服务端幂等测试通过（Phase 5 已完成：`beacon-transport.js` 字节切片、非破坏性退出、`sendBeacon` 不带自定义 Header、fetch keepalive 回退、31 例单测覆盖） |
+| API-220 ✅（SDK 侧契约） | Beacon 鉴权与事件幂等入库 | collect API、token service、event repository | 4d | SDK 侧已完成：每条事件稳定 `eventId` + 在线/Beacon 携带 + at-least-once 语义；Beacon 回退 fetch keepalive 带 `x-app-key` 鉴权兼容。服务端 `eventId` 入库去重与去重指标为后端范畴，契约已对齐（Phase 5 已完成 SDK 契约与 31 例单测） |
 | SDK-221 | IIFE Integration Loader 与产物矩阵 | 新 `src/integrations/`、Vite 多入口、release script | 5d | 基础/可选/full 产物、版本握手、并发去重、CSP/SRI、manual/lazy/full 和失败降级测试通过 |
 
 ## 9. 质量门禁与量化指标

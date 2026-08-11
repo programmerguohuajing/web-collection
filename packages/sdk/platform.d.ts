@@ -1,4 +1,4 @@
-import type { CaptureCategory, ConsentStatus, EysPrivacyOptions, EysTransaction, EysUser } from './index.js'
+import type { CaptureCategory, ConsentStatus, EysDiagnosticEvent, EysPrivacyOptions, EysTransaction, EysUser } from './index.js'
 
 /** 平台上下文信息 */
 export interface PlatformContext {
@@ -66,6 +66,8 @@ export interface PlatformEysOptions {
   categorySampleRates?: Partial<Record<CaptureCategory, number>>
   beforeSend?: (event: Record<string, unknown>) => Record<string, unknown> | false
   privacy?: EysPrivacyOptions
+  /** 传输层诊断回调（Reliable Transport v2）。暴露队列满 / 限流 / 超时 / 丢弃等事件，不含业务敏感数据。 */
+  onDiagnostic?: (event: EysDiagnosticEvent) => void
 }
 
 /** 平台 SDK 客户端实例接口 */
