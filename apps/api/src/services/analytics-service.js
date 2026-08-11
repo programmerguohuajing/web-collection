@@ -210,6 +210,8 @@ export async function getClickPaths(filters = {}) {
 
   return { nodes: [...nodeMap.values()], edges: [...edgeMap.values()] }
 }
+
+export async function getSessionEvents(sessionId, filters = {}) {
   const page = pageOf(filters)
   if (!sessionId?.trim()) return { ...page, total: 0, items: [] }
   const [rows, totalRows] = await Promise.all([
@@ -740,72 +742,99 @@ export async function getDistributedTrace(traceId, filters = {}) {
     all('select * from events where trace_id=? order by ts asc', [traceId]),
     all('select * from spans where trace_id=? order by start_ts asc', [traceId])
   ])
-  // 将 events 统一转换为 span 格式
-  const eventSpans = events.map(event => ({
-    id: `event-${event.id}`,
-    traceId: event.trace_id,
-    spanId: event.span_id,
-    parentSpanId: event.parent_span_id || '',
-    serviceName: 'frontend',
-    operationName: event.metric || event.name || event.type,
-    kind: 'CLIENT',
-    startTs: Number(event.ts),
-    duration: event.type === 'perf' ? Number(event.value) : 0,
-    statusCode: event.type === 'error' ? 'ERROR' : 'OK',
-    attributes: event.props_json || {}
-  }))
-  // 合并所有 spans
+  return buildDistributedTrace(events, backendSpans)
+}
+
+/**
+ * 将前端事件和后端 span 归一化为可渲染的调用树。
+ * 无 spanId 的历史事件也会生成稳定的兜底节点，避免已有 trace 展示为空。
+ */
+export function buildDistributedTrace(events = [], backendSpans = []) {
+  const eventSpans = events.map((event, index) => {
+    const attributes = structuredObject(event.props_json)
+    return {
+      spanId: cleanId(event.span_id) || `event-${event.id || index}`,
+      parentSpanId: cleanId(event.parent_span_id || attributes.__parentSpanId),
+      serviceName: 'frontend',
+      operationName: event.metric || event.name || event.type || 'event',
+      kind: 'CLIENT',
+      startTs: Number(event.ts) || 0,
+      duration: event.type === 'perf' ? Number(event.value) || 0 : 0,
+      statusCode: event.type === 'error' || attributes.failed === true || Number(attributes.status) >= 400 ? 'ERROR' : 'OK',
+      attributes
+    }
+  })
   const allSpans = [
     ...eventSpans,
-    ...backendSpans.map(span => ({
-      id: span.id,
-      traceId: span.trace_id,
-      spanId: span.span_id,
-      parentSpanId: span.parent_span_id || '',
+    ...backendSpans.map((span, index) => ({
+      spanId: cleanId(span.span_id) || `backend-${span.id || index}`,
+      parentSpanId: cleanId(span.parent_span_id),
       serviceName: span.service_name || 'unknown',
-      operationName: span.operation_name || '',
+      operationName: span.operation_name || 'span',
       kind: span.kind || 'INTERNAL',
-      startTs: Number(span.start_ts),
+      startTs: Number(span.start_ts) || 0,
       duration: Number(span.duration) || 0,
       statusCode: span.status_code || 'UNSET',
-      attributes: span.attributes_json || {}
+      attributes: structuredObject(span.attributes_json)
     }))
   ]
-  // 建树
+
+  // 同一根 span 可能承载多个前端性能事件；合并重复 ID，避免重复 key 和断裂边。
   const spanMap = new Map()
-  const nodes = []
-  const edges = []
-  const errorSpans = []
-  const allSpanIds = new Set(allSpans.map(s => s.spanId).filter(Boolean))
   for (const span of allSpans) {
-    if (!span.spanId) continue
-    spanMap.set(span.spanId, span)
-    const isError = span.statusCode === 'ERROR'
-    const hasError = isError || Object.keys(span.attributes || {}).some(k => String(span.attributes[k]).toLowerCase().includes('error'))
-    const node = {
-      id: span.spanId,
-      name: span.operationName,
-      service: span.serviceName,
-      kind: span.kind,
-      startTs: span.startTs,
-      duration: span.duration,
-      status: span.statusCode,
-      hasError: hasError || isError
+    const existing = spanMap.get(span.spanId)
+    if (!existing) {
+      spanMap.set(span.spanId, span)
+      continue
     }
-    if (span.parentSpanId && spanMap.has(span.parentSpanId)) {
-      edges.push({ source: span.parentSpanId, target: span.spanId })
-    }
-    nodes.push(node)
-    if (hasError || isError) errorSpans.push(span.spanId)
+    spanMap.set(span.spanId, {
+      ...existing,
+      parentSpanId: existing.parentSpanId || span.parentSpanId,
+      startTs: Math.min(existing.startTs || Infinity, span.startTs || Infinity),
+      duration: Math.max(existing.duration, span.duration),
+      statusCode: spanHasError(existing) || spanHasError(span) ? 'ERROR' : existing.statusCode,
+      attributes: { ...existing.attributes, ...span.attributes }
+    })
   }
-  // 找根节点
-  const roots = nodes.filter(node => {
-    const span = spanMap.get(node.id)
-    return !span.parentSpanId || !allSpanIds.has(span.parentSpanId)
-  })
-  // 计算关键路径（耗时最长的链）
+
+  const allSpanIds = new Set(spanMap.keys())
+  const spans = [...spanMap.values()]
+  const nodes = spans.map(span => ({
+    id: span.spanId,
+    name: span.operationName,
+    service: span.serviceName,
+    kind: span.kind,
+    startTs: Number.isFinite(span.startTs) ? span.startTs : 0,
+    duration: span.duration,
+    status: span.statusCode,
+    hasError: spanHasError(span)
+  }))
+  const edges = spans
+    .filter(span => span.parentSpanId && span.parentSpanId !== span.spanId && allSpanIds.has(span.parentSpanId))
+    .map(span => ({ source: span.parentSpanId, target: span.spanId }))
+  const errorSpans = spans.filter(spanHasError).map(span => span.spanId)
+  const roots = nodes.filter(node => !edges.some(edge => edge.target === node.id))
   const criticalPath = computeCriticalPath(roots, spanMap)
   return { root: roots[0] || null, nodes, edges, criticalPath, errorSpans }
+}
+
+function structuredObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function cleanId(value) {
+  return String(value || '').trim()
+}
+
+function spanHasError(span) {
+  if (String(span.statusCode || '').toUpperCase() === 'ERROR') return true
+  return Object.values(span.attributes || {}).some(value => String(value).toLowerCase().includes('error'))
 }
 
 /**
@@ -816,26 +845,37 @@ export async function getDistributedTrace(traceId, filters = {}) {
  */
 function computeCriticalPath(roots, spanMap) {
   if (!roots.length) return []
-  // DFS 找最长路径
-  function dfs(spanId, path, maxPath) {
+  const childrenByParent = new Map()
+  for (const span of spanMap.values()) {
+    if (!span.parentSpanId) continue
+    const children = childrenByParent.get(span.parentSpanId) || []
+    children.push(span)
+    childrenByParent.set(span.parentSpanId, children)
+  }
+  // DFS 找累计耗时最长的路径，并防御异常循环引用。
+  function dfs(spanId, path, duration, visited, maxPath) {
+    if (visited.has(spanId)) return
+    visited.add(spanId)
     path.push(spanId)
     const span = spanMap.get(spanId)
-    const children = [...spanMap.values()].filter(s => s.parentSpanId === spanId)
+    const totalDuration = duration + (span?.duration || 0)
+    const children = childrenByParent.get(spanId) || []
     if (!children.length) {
-      if (path.length > maxPath.path.length) {
+      if (totalDuration > maxPath.duration || (totalDuration === maxPath.duration && path.length > maxPath.path.length)) {
         maxPath.path = [...path]
-        maxPath.duration = children.reduce((sum, c) => sum + (spanMap.get(c.spanId)?.duration || 0), 0) + (span?.duration || 0)
+        maxPath.duration = totalDuration
       }
     } else {
       for (const child of children) {
-        dfs(child.spanId, path, maxPath)
+        dfs(child.spanId, path, totalDuration, visited, maxPath)
       }
     }
     path.pop()
+    visited.delete(spanId)
   }
   let maxPath = { path: [], duration: 0 }
   for (const root of roots) {
-    dfs(root.id, [], maxPath)
+    dfs(root.id, [], 0, new Set(), maxPath)
   }
   return maxPath.path
 }

@@ -1,11 +1,28 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { computeFunnel, computePaths, normalizeFunnelSteps, normalizeInsightQuery, whereFor } from '../apps/api/src/services/analytics-service.js'
+import { buildDistributedTrace, computeFunnel, computePaths, normalizeFunnelSteps, normalizeInsightQuery, whereFor } from '../apps/api/src/services/analytics-service.js'
 
 test('trace filters support id, time, release and page', () => {
   const result = whereFor({ traceId: 'abc', release: '1.2.3', path: '/checkout', startTime: 10, endTime: 20 }, ["trace_id<>''"])
   assert.equal(result.where, "where trace_id<>'' and release_name=? and trace_id ilike ? and (path ilike ? or url ilike ?) and ts>=? and ts<=?")
   assert.deepEqual(result.params, ['1.2.3', '%abc%', '%/checkout%', '%/checkout%', 10, 20])
+})
+
+test('distributed trace keeps legacy events and links children regardless of row order', () => {
+  const result = buildDistributedTrace([
+    { id: 'child-event', trace_id: 'trace-1', span_id: 'child', parent_span_id: 'root', type: 'perf', metric: 'fetch', ts: 20, value: 10, props_json: { status: 200 } },
+    { id: 'root-event', trace_id: 'trace-1', span_id: 'root', type: 'perf', metric: 'page_load', ts: 10, value: 5, props_json: {} },
+    { id: 'legacy-error', trace_id: 'trace-1', type: 'error', name: 'TypeError', ts: 30, props_json: {} }
+  ], [
+    { id: 'backend-row', trace_id: 'trace-1', span_id: 'backend', parent_span_id: 'child', service_name: 'orders', operation_name: 'GET /orders', start_ts: 25, duration: 20, status_code: 'OK', attributes_json: {} }
+  ])
+
+  assert.deepEqual(result.edges, [
+    { source: 'root', target: 'child' },
+    { source: 'child', target: 'backend' }
+  ])
+  assert.ok(result.nodes.some(node => node.id === 'event-legacy-error' && node.hasError))
+  assert.deepEqual(result.criticalPath, ['root', 'child', 'backend'])
 })
 
 test('funnel counts ordered conversion, dropoff, errors and replay correlation', () => {

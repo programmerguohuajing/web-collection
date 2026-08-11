@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
 import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
-import { deleteDashboard, deleteFunnel, deleteInsight, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, runFunnel, saveDashboard, saveFunnel, saveInsight } from './services/analytics-service.js'
+import { deleteDashboard, deleteFunnel, deleteInsight, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight } from './services/analytics-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -343,6 +343,7 @@ function sanitize(event) {
     deviceId: clip(event.deviceId || '', 128),
     traceId: clip(event.traceId || '', 64),
     spanId: clip(event.spanId || '', 32),
+    parentSpanId: clip(event.parentSpanId || '', 32),
     url: cleanUrl(event.url || ''),
     path: clip(event.path || '', 512),
     title: clip(event.title || '', 256),
