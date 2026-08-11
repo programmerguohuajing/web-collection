@@ -107,7 +107,7 @@ export function createEys(options = {}) {
     tracing: true,
     traceOrigins: [],
     // distributedTracing 开启链路追踪的层级 span 功能
-    distributedTracing: false,
+    distributedTracing: true,
     // baggage 静态业务属性，会透传到所有 span
     baggage: {},
     // requests 控制是否开启请求性能采集。
