@@ -24,12 +24,7 @@ async function pollLive() {
     const suffix = queryFromFilters({ ...query, page: page.value, pageSize: pageSize.value })
     const data = await api(`/api/events?${suffix}&type=error,perf,behavior&_t=${Date.now()}`, { requestKey: 'live:events' })
     const normalized = normalizePageResponse(data, { page: page.value, pageSize: pageSize.value })
-    const newItems = normalized.items.filter(item => item && (item.type || item.name || item.ts))
-    const existingIds = new Set(events.value.map(event => `${event.session_id || event.sessionId}_${event.ts}_${event.type}_${event.name}`))
-    for (const item of newItems) {
-      const key = `${item.session_id || item.sessionId}_${item.ts}_${item.type}_${item.name}`
-      if (!existingIds.has(key)) events.value.unshift(item)
-    }
+    events.value = normalized.items.filter(item => item && (item.type || item.name || item.ts))
     total.value = normalized.total
     pageSize.value = normalized.pageSize
     page.value = normalized.page
