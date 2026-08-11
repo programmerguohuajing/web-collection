@@ -13,7 +13,7 @@ export async function insertEventRow(event) {
   await run(
     `insert into events (
       id, ts, type, app_id, release_name, user_id, user_name, user_phone, session_id, device_id, trace_id, span_id, parent_span_id, url, path, title, referrer, user_agent, sdk_version, environment, source, context_json, browser, os, device, name, metric, value, message, stack, props_json, breadcrumbs_json
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       event.id,
       event.ts,

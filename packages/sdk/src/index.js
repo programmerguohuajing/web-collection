@@ -44,7 +44,7 @@ const STORE_KEY = '__web_collection_queue__'
  * @param {string} [options.userName=''] - 当前用户名
  * @param {string} [options.userPhone=''] - 当前用户手机号
  * @param {number} [options.batchSize=10] - 累计多少条事件后触发一次上报
- * @param {number} [options.flushInterval=5000] - 定时批量上报的时间间隔（ms）
+ * @param {number} [options.flushInterval=60000] - 定时批量上报的时间间隔（ms）
  * @param {number} [options.maxQueue=200] - 本地队列最大可缓存事件数
  * @param {number} [options.maxRetries=3] - 单次上报失败后的最大重试次数
  * @param {number} [options.sampleRate=1] - 采样率（0~1），未命中则返回空实现
@@ -92,7 +92,7 @@ export function createEys(options = {}) {
     // batchSize 表示累计多少条事件后触发一次上报。
     batchSize: 10,
     // flushInterval 表示定时批量上报的时间间隔。
-    flushInterval: 5000,
+    flushInterval: 60000,
     // maxQueue 表示本地队列最大可缓存事件数。
     maxQueue: 200,
     // maxRetries 表示单次上报失败后的最大重试次数。

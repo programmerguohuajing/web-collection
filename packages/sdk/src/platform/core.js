@@ -29,7 +29,7 @@ export function createPlatformEys(options = {}, adapter) {
     userName: '',
     userPhone: '',
     batchSize: 10,
-    flushInterval: 5000,
+    flushInterval: 60000,
     maxQueue: 200,
     maxRetries: 3,
     sampleRate: 1,
