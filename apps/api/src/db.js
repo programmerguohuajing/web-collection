@@ -270,13 +270,19 @@ export async function ensureSchema() {
     metric varchar(32) not null,
     fingerprint varchar(128),
     level varchar(16) not null,
+    status varchar(16) not null default 'pending',
     value double precision,
     message text not null,
     notified boolean not null default false,
     notify_error text,
-    created_at bigint not null
+    context_json jsonb,
+    created_at bigint not null,
+    updated_at bigint not null default 0
   )`)
+  await run(`alter table alert_history add column if not exists status varchar(16) not null default 'pending'`)
   await run(`alter table alert_history add column if not exists context_json jsonb`)
+  await run(`alter table alert_history add column if not exists updated_at bigint not null default 0`)
+  await run(`update alert_history set updated_at=created_at where updated_at=0`)
   await run(`create table if not exists alert_channels (
     id bigserial primary key,
     name varchar(128) not null,
@@ -334,11 +340,17 @@ export async function ensureSchema() {
   await run(`create index if not exists idx_events_ts on events(ts)`)
   await run(`create index if not exists idx_events_trace on events(trace_id, ts)`)
   await run(`create index if not exists idx_events_session on events(session_id, ts)`)
+  await run(`create index if not exists idx_events_app_release_ts on events(app_id, release_name, ts desc)`)
+  await run(`create index if not exists idx_events_type_ts on events(type, ts desc)`)
   await run(`create index if not exists idx_events_analytics on events(app_id, name, ts)`)
   await run(`create index if not exists idx_events_props_gin on events using gin(props_json jsonb_path_ops)`)
   await run(`create index if not exists idx_replay_events_created_at on replay_events(created_at)`)
   await run(`create index if not exists idx_replay_events_app_created_at on replay_events(app_id, created_at)`)
+  await run(`create index if not exists idx_replay_events_session_created_at on replay_events(session_id, created_at desc)`)
+  await run(`create index if not exists idx_releases_app_created_at on releases(app_id, created_at desc)`)
+  await run(`create index if not exists idx_issues_app_last_seen on issues(app_id, last_seen desc)`)
   await run(`create index if not exists idx_alert_history_created_at on alert_history(created_at)`)
+  await run(`create index if not exists idx_alert_history_status_metric on alert_history(status, metric, created_at desc)`)
   await run(`create index if not exists idx_alert_deliveries_alert on alert_deliveries(alert_id, created_at)`)
   await run(`create index if not exists idx_alert_deliveries_pending on alert_deliveries(status, updated_at)`)
 }
@@ -378,13 +390,22 @@ export async function scalar(sql, params = []) {
 
 /** 创建 PostgreSQL 连接池，支持 DATABASE_URL / PG_URL 或分项环境变量配置 */
 function createDbClient() {
+  const timeoutMs = positiveInt(process.env.PG_QUERY_TIMEOUT_MS, 5000, 1000, 60000)
   return new Pool({
     connectionString:
       process.env.DATABASE_URL ||
       process.env.PG_URL ||
       `postgresql://${encodeURIComponent(process.env.PGUSER || 'postgres')}:${encodeURIComponent(process.env.PGPASSWORD || '')}@${process.env.PGHOST || '127.0.0.1'}:${Number(process.env.PGPORT || 5432)}/${dbName}`,
-    max: Number(process.env.PG_POOL_SIZE || 10)
+    max: positiveInt(process.env.PG_POOL_SIZE, 10, 1, 100),
+    connectionTimeoutMillis: timeoutMs,
+    query_timeout: timeoutMs,
+    statement_timeout: timeoutMs
   })
+}
+
+function positiveInt(value, fallback, min, max) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.floor(number))) : fallback
 }
 
 /**

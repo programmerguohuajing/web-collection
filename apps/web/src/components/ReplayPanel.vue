@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref } from 'vue'
 import { Replayer } from '@rrweb/replay'
 
 const props = defineProps({
@@ -21,6 +21,7 @@ const currentReplayId = ref('')
 const loadingReplayId = ref('')
 let currentReplayer = null
 let progressTimer = 0
+let playRequestId = 0
 
 const REASON_MAP = {
   error: '报错',
@@ -59,31 +60,35 @@ function fitReplay(width, height) {
 }
 
 async function play(item) {
+  if (!item?.replayId || loadingReplayId.value === item.replayId) return
+  const requestId = ++playRequestId
   replayError.value = ''
   currentReplayId.value = item.replayId
   loadingReplayId.value = item.replayId
-  const events = await props.loadReplay(item.replayId).finally(() => {
-    if (loadingReplayId.value === item.replayId) loadingReplayId.value = ''
-  })
-  if (currentReplayId.value !== item.replayId) return
-  await nextTick()
-  destroyPlayer()
-  if (!events.length || !replayEl.value) {
-    replayError.value = '未获取到回放事件数据'
-    return
-  }
-
-  const validEvents = events.filter(e => e && typeof e.timestamp === 'number')
-  if (!validEvents.length) {
-    replayError.value = '事件数据格式不完整，无法播放'
-    return
-  }
-
-  const meta = validEvents.find((event) => event.type === 4)?.data || {}
-  const width = meta.width || replayEl.value.clientWidth || 1024
-  const height = meta.height || replayEl.value.clientHeight || 768
-
   try {
+    destroyPlayer()
+    const payload = await props.loadReplay(item.replayId)
+    if (requestId !== playRequestId || currentReplayId.value !== item.replayId) return
+    await nextTick()
+    const events = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.events)
+        ? payload.events
+        : Array.isArray(payload?.data) ? payload.data : []
+    if (!events.length || !replayEl.value) {
+      replayError.value = '未获取到回放事件数据'
+      return
+    }
+
+    const validEvents = events.filter(e => e && Number.isFinite(Number(e.timestamp)))
+    if (!validEvents.length) {
+      replayError.value = '事件数据格式不完整，无法播放'
+      return
+    }
+
+    const meta = validEvents.find((event) => event.type === 4)?.data || {}
+    const width = Number(meta.width) || replayEl.value.clientWidth || 1024
+    const height = Number(meta.height) || replayEl.value.clientHeight || 768
     currentReplayer = new Replayer(validEvents, {
       root: replayEl.value,
       width,
@@ -98,9 +103,10 @@ async function play(item) {
     isPlaying.value = true
     startProgress()
   } catch (error) {
-    console.error('[Replay] failed to start:', error)
-    replayError.value = error.message || '播放初始化失败，数据可能不完整'
+    if (requestId === playRequestId && error?.code !== 'ABORT_ERR') replayError.value = error?.message || '回放加载失败，请稍后重试'
     destroyPlayer()
+  } finally {
+    if (loadingReplayId.value === item.replayId) loadingReplayId.value = ''
   }
 }
 
@@ -154,6 +160,11 @@ function destroyPlayer() {
   }
 }
 
+onBeforeUnmount(() => {
+  playRequestId += 1
+  destroyPlayer()
+})
+
 function formatTime(ms) {
   const seconds = Math.floor(ms / 1000)
   const minute = Math.floor(seconds / 60)
@@ -196,7 +207,7 @@ defineExpose({ play })
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" :loading="loadingReplayId === row.replayId" @mouseenter="prefetch(row)" @focus="prefetch(row)" @click="play(row)">播放</el-button>
+            <el-button link type="primary" :loading="loadingReplayId === row.replayId" :disabled="Boolean(loadingReplayId && loadingReplayId !== row.replayId)" @mouseenter="prefetch(row)" @focus="prefetch(row)" @click="play(row)">播放</el-button>
           </template>
         </el-table-column>
       </el-table>

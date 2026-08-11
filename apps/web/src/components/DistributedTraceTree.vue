@@ -13,6 +13,7 @@ const edges = ref([])
 const errorSpans = ref([])
 const criticalPath = ref([])
 const loading = ref(false)
+const loadError = ref('')
 const query = ref('')
 const mode = ref('all')
 const service = ref('all')
@@ -21,13 +22,25 @@ const visibleLimit = ref(120)
 const selectedNode = ref(null)
 const expandSignal = ref(0)
 const expandAll = ref(true)
+let loadRequestId = 0
 
 async function loadDistributedTrace() {
-  if (!props.traceId) return
+  if (!props.traceId) {
+    loadRequestId += 1
+    nodes.value = []
+    edges.value = []
+    errorSpans.value = []
+    criticalPath.value = []
+    loadError.value = ''
+    return
+  }
+  const requestId = ++loadRequestId
   loading.value = true
+  loadError.value = ''
   pageLoading.value = true
   try {
-    const data = await api(`/api/traces/${encodeURIComponent(props.traceId)}/distributed`)
+    const data = await api(`/api/traces/${encodeURIComponent(props.traceId)}/distributed`, { requestKey: `trace:distributed:${props.traceId}` })
+    if (requestId !== loadRequestId) return
     nodes.value = data.nodes || []
     edges.value = data.edges || []
     errorSpans.value = data.errorSpans || []
@@ -35,10 +48,12 @@ async function loadDistributedTrace() {
     selectedNode.value = null
     visibleLimit.value = 120
   } catch (e) {
-    console.error('Failed to load distributed trace:', e)
+    if (requestId === loadRequestId && e?.code !== 'ABORT_ERR') loadError.value = e.message || '调用拓扑加载失败，请稍后重试'
   } finally {
-    loading.value = false
-    pageLoading.value = false
+    if (requestId === loadRequestId) {
+      loading.value = false
+      pageLoading.value = false
+    }
   }
 }
 
@@ -166,7 +181,14 @@ function resetFilters() {
       </div>
     </template>
 
-    <div v-if="!loading && !nodes.length" class="trace-empty">
+    <div v-if="!loading && loadError" class="trace-empty trace-error">
+      <div class="empty-orbit"><span></span><i></i></div>
+      <strong>调用拓扑加载失败</strong>
+      <p>{{ loadError }}</p>
+      <button type="button" @click="loadDistributedTrace">重试</button>
+    </div>
+
+    <div v-if="!loading && !loadError && !nodes.length" class="trace-empty">
       <div class="empty-orbit"><span></span><i></i></div>
       <strong>暂无链路数据</strong>
       <p>当前 Trace 尚未形成可展示的调用关系。</p>

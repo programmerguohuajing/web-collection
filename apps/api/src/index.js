@@ -11,7 +11,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
-import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings } from './governance.js'
+import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings, updateAlertStatus } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
 import { deleteDashboard, deleteFunnel, deleteInsight, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight } from './services/analytics-service.js'
 
@@ -166,6 +166,15 @@ app.put('/api/settings', async (req, res, next) => {
 app.get('/api/alerts', async (req, res, next) => {
   try { res.json(await listAlerts(req.query)) } catch (err) { next(err) }
 })
+app.patch('/api/alerts/:id', async (req, res, next) => {
+  try {
+    res.json(await updateAlertStatus(req.params.id, req.body?.status))
+  } catch (err) {
+    const status = Number(err?.statusCode) || 500
+    if (status >= 400 && status < 500) return res.status(status).json({ error: err.message })
+    next(err)
+  }
+})
 app.get('/api/alert-channels', async (req, res, next) => {
   try { res.json(await listAlertChannels(req.query)) } catch (err) { next(err) }
 })
@@ -264,7 +273,10 @@ app.use((req, res) => {
 })
 
 app.use((err, req, res, next) => {
-  res.status(500).type('text/plain; charset=utf-8').send(err?.message || 'server error')
+  const code = Number(err?.statusCode)
+  const status = Number.isInteger(code) && code >= 400 && code < 600 ? code : 500
+  res.status(status).type(status >= 500 ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8')
+    .send(status >= 500 ? 'server error' : JSON.stringify({ error: err?.message || 'request failed' }))
 })
 
 await initDatabase()
@@ -370,10 +382,12 @@ function sanitize(event) {
 }
 
 function filters(query) {
+  const page = positiveInt(query.page, 1, 1, 1000000)
+  const pageSize = positiveInt(query.pageSize || query.limit, 10, 1, 100)
   return {
-    limit: Number(query.limit || 100),
-    startTime: query.startTime,
-    endTime: query.endTime,
+    limit: positiveInt(query.limit, 100, 1, 100),
+    startTime: finiteTimestamp(query.startTime),
+    endTime: finiteTimestamp(query.endTime),
     appId: clip(query.appId || '', 64),
     release: clip(query.release || '', 64),
     traceId: clip(query.traceId || '', 64),
@@ -386,9 +400,23 @@ function filters(query) {
     userName: clip(query.userName || '', 128),
     userPhone: clip(query.userPhone || '', 32),
     keyword: clip(query.keyword || '', 200),
-    page: Number(query.page || 1),
-    pageSize: Number(query.pageSize || query.limit || 10)
+    page,
+    pageSize
   }
+}
+
+// 查询参数来自 URL，不能把 NaN/Infinity 直接传给 PostgreSQL。
+// 无效或越界值回退到安全默认值，避免列表接口返回 500 或执行无界查询。
+function positiveInt(value, fallback, min, max) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return fallback
+  return Math.max(min, Math.min(max, Math.floor(number)))
+}
+
+function finiteTimestamp(value) {
+  if (value == null || value === '') return undefined
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : undefined
 }
 
 // 字符串裁剪，统一控制字段长度。

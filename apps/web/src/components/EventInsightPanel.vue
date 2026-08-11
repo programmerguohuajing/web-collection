@@ -1,8 +1,9 @@
 <script setup>
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { api } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 import AnalyticsChart from './AnalyticsChart.vue'
+import { ElMessage } from 'element-plus'
 
 const store = useFilterStore()
 
@@ -15,9 +16,23 @@ const form = reactive({ eventName: '', measure: 'events', interval: 'auto', brea
 const result = ref(null)
 const properties = ref([])
 const loading = ref(false)
+const saving = ref(false)
+const removing = ref(false)
+const loadError = ref('')
+const propertiesError = ref('')
 const saveName = ref('')
 const selectedId = ref(null)
 const chartType = ref('line')
+let runRequestId = 0
+let propertiesRequestId = 0
+
+const resultHasData = computed(() => {
+  const value = result.value
+  return Boolean(value && (
+    (Array.isArray(value.table) && value.table.length) ||
+    (Array.isArray(value.series) && value.series.some(item => item?.points?.length))
+  ))
+})
 
 function requestBody() {
   const [selectedStart, selectedEnd] = store.range || []
@@ -35,19 +50,48 @@ function requestBody() {
 }
 
 async function loadProperties() {
-  properties.value = form.eventName
-    ? await api(`/api/analytics/event-properties?eventName=${encodeURIComponent(form.eventName)}${store.appId ? `&appId=${encodeURIComponent(store.appId)}` : ''}`)
-    : []
+  const requestId = ++propertiesRequestId
+  propertiesError.value = ''
+  if (!form.eventName) {
+    properties.value = []
+    return
+  }
+  try {
+    const data = await api(`/api/analytics/event-properties?eventName=${encodeURIComponent(form.eventName)}${store.appId ? `&appId=${encodeURIComponent(store.appId)}` : ''}`, {
+      requestKey: 'analytics:event-properties',
+      timeout: 12000
+    })
+    if (requestId !== propertiesRequestId) return
+    properties.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    if (requestId !== propertiesRequestId || error?.code === 'ABORT_ERR') return
+    properties.value = []
+    propertiesError.value = error?.message || '事件属性加载失败，请稍后重试'
+  }
 }
 
 async function run() {
   if (!form.eventName) return
+  const requestId = ++runRequestId
+  loadError.value = ''
   loading.value = true
   try {
-    result.value = await api('/api/analytics/insights/query', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(requestBody())
+    const data = await api('/api/analytics/insights/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestBody()),
+      requestKey: 'analytics:event-insight-query',
+      timeout: 15000
     })
-  } finally { loading.value = false }
+    if (requestId === runRequestId) result.value = data
+  } catch (error) {
+    if (requestId === runRequestId && error?.code !== 'ABORT_ERR') {
+      result.value = null
+      loadError.value = error?.message || '事件分析加载失败，请稍后重试'
+    }
+  } finally {
+    if (requestId === runRequestId) loading.value = false
+  }
 }
 
 function addFilter() {
@@ -56,20 +100,42 @@ function addFilter() {
 
 async function save() {
   if (!saveName.value.trim() || !form.eventName) return
-  await api(selectedId.value ? `/api/analytics/insights/${selectedId.value}` : '/api/analytics/insights', {
-    method: selectedId.value ? 'PUT' : 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: saveName.value, kind: 'eventTrend', definition: requestBody() })
-  })
-  await emit('changed')
+  saving.value = true
+  try {
+    await api(selectedId.value ? `/api/analytics/insights/${selectedId.value}` : '/api/analytics/insights', {
+      method: selectedId.value ? 'PUT' : 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: saveName.value, kind: 'eventTrend', definition: requestBody() }),
+      requestKey: 'analytics:event-insight-save',
+      timeout: 12000
+    })
+    ElMessage.success('分析已保存')
+    emit('changed')
+  } catch (error) {
+    if (error?.code !== 'ABORT_ERR') ElMessage.error(error?.message || '分析保存失败，请稍后重试')
+  } finally {
+    saving.value = false
+  }
 }
 
 async function remove() {
   if (!selectedId.value) return
-  await api(`/api/analytics/insights/${selectedId.value}`, { method: 'DELETE' })
-  selectedId.value = null
-  saveName.value = ''
-  await emit('changed')
+  removing.value = true
+  try {
+    await api(`/api/analytics/insights/${selectedId.value}`, {
+      method: 'DELETE',
+      requestKey: 'analytics:event-insight-remove',
+      timeout: 12000
+    })
+    selectedId.value = null
+    saveName.value = ''
+    ElMessage.success('分析已删除')
+    emit('changed')
+  } catch (error) {
+    if (error?.code !== 'ABORT_ERR') ElMessage.error(error?.message || '分析删除失败，请稍后重试')
+  } finally {
+    removing.value = false
+  }
 }
 
 function selectSaved(id) {
@@ -77,11 +143,11 @@ function selectSaved(id) {
   if (!item) return
   Object.assign(form, item.definition, { filters: (item.definition.filters || []).map(filter => ({ ...filter, value: Array.isArray(filter.value) ? filter.value.join(',') : filter.value || '' })) })
   saveName.value = item.name
-  loadProperties()
-  run()
+  void loadProperties()
+  void run()
 }
 
-watch(() => form.eventName, loadProperties)
+watch(() => form.eventName, () => { void loadProperties() })
 </script>
 
 <template>
@@ -90,9 +156,16 @@ watch(() => form.eventName, loadProperties)
       <el-option v-for="item in insights.filter(item => item.kind === 'eventTrend')" :key="item.id" :label="item.name" :value="item.id" />
     </el-select>
     <el-input v-model="saveName" placeholder="分析名称" style="width:200px" />
-    <el-button :disabled="!saveName || !form.eventName" @click="save">保存分析</el-button>
-    <el-button v-if="selectedId" type="danger" plain @click="remove">删除</el-button>
+    <el-button :loading="saving" :disabled="!saveName || !form.eventName" @click="save">保存分析</el-button>
+    <el-button v-if="selectedId" type="danger" plain :loading="removing" :disabled="saving" @click="remove">删除</el-button>
   </el-space>
+
+  <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" class="panel-alert">
+    <template #default><el-button link type="primary" @click="run">重试</el-button></template>
+  </el-alert>
+  <el-alert v-if="propertiesError" type="warning" :title="propertiesError" show-icon :closable="false" class="panel-alert">
+    <template #default><el-button link type="primary" @click="loadProperties">重试</el-button></template>
+  </el-alert>
 
   <el-form inline class="insight-form">
     <el-form-item label="事件">
@@ -120,7 +193,8 @@ watch(() => form.eventName, loadProperties)
   </div>
   <el-button link type="primary" @click="addFilter">+ 添加过滤条件</el-button>
 
-  <template v-if="result">
+  <el-alert v-if="result && !resultHasData" type="info" title="当前筛选条件暂无事件数据" show-icon :closable="false" class="panel-alert" />
+  <template v-else-if="result">
     <el-space class="chart-actions"><el-radio-group v-model="chartType"><el-radio-button value="line">折线图</el-radio-button><el-radio-button value="bar">柱状图</el-radio-button></el-radio-group></el-space>
     <AnalyticsChart kind="trend" :result="result" :chart-type="chartType" />
     <el-table :data="result.table" border>

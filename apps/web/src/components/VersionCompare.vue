@@ -7,23 +7,47 @@ const from = ref('')
 const to = ref('')
 const result = ref(null)
 const loading = ref(false)
+const loadError = ref('')
+let compareRequestId = 0
 
 watch(() => props.rows, (rows) => {
   if (rows?.length >= 2) {
     from.value = rows[rows.length - 1]?.release || ''
     to.value = rows[0]?.release || ''
+  } else {
+    from.value = ''
+    to.value = ''
+    result.value = null
+    loadError.value = ''
   }
 })
 
 async function compare() {
-  if (!from.value || !to.value || from.value === to.value) return
+  const requestId = ++compareRequestId
+  loadError.value = ''
+  if (!from.value || !to.value || from.value === to.value) {
+    result.value = null
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    result.value = await api(`/api/analytics/releases/compare?appId=${encodeURIComponent(props.appId)}&from=${encodeURIComponent(from.value)}&to=${encodeURIComponent(to.value)}`)
-  } finally { loading.value = false }
+    const data = await api(`/api/analytics/releases/compare?appId=${encodeURIComponent(props.appId || '')}&from=${encodeURIComponent(from.value)}&to=${encodeURIComponent(to.value)}`, {
+      requestKey: 'analytics:release-compare',
+      timeout: 12000
+    })
+    if (requestId === compareRequestId) result.value = data
+  } catch (error) {
+    if (requestId === compareRequestId && error?.code !== 'ABORT_ERR') {
+      result.value = null
+      loadError.value = error?.message || '版本对比加载失败，请稍后重试'
+    }
+  } finally {
+    if (requestId === compareRequestId) loading.value = false
+  }
 }
 
-watch(() => [from.value, to.value], compare, { deep: true })
+watch(() => [from.value, to.value, props.appId], () => { void compare() }, { deep: true })
 </script>
 
 <template>
@@ -39,6 +63,9 @@ watch(() => [from.value, to.value], compare, { deep: true })
     </div>
 
     <el-skeleton v-if="loading" :rows="4" animated />
+    <el-alert v-else-if="loadError" type="error" :title="loadError" show-icon :closable="false" class="compare-alert">
+      <template #default><el-button link type="primary" @click="compare">重试</el-button></template>
+    </el-alert>
     <div v-else-if="result" class="compare-result">
       <el-row :gutter="16">
         <el-col :span="8">
@@ -78,6 +105,7 @@ watch(() => [from.value, to.value], compare, { deep: true })
 </template>
 
 <style scoped>
+.compare-alert { margin-bottom: 12px; }
 .compare-metric { display: flex; flex-direction: column; gap: 8px; }
 .compare-metric > div { display: flex; justify-content: space-between; align-items: center; }
 .compare-metric small { color: #8491a3; }

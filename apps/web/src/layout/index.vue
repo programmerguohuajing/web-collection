@@ -5,7 +5,7 @@ import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
   Histogram, House, Menu, Monitor, Operation, Stopwatch, User, Warning
 } from '@element-plus/icons-vue'
-import { api, error, loading, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading } from '../dashboard.js'
+import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 
 const route = useRoute()
@@ -58,7 +58,13 @@ async function applyQuickRange(value) {
 }
 
 onMounted(async () => {
-  ;[applications.value] = await Promise.all([api('/api/applications'), refresh()])
+  try {
+    const [applicationData] = await Promise.all([api('/api/applications', { requestKey: 'layout:applications' }), refresh()])
+    const normalized = normalizePageResponse(applicationData)
+    applications.value = normalized.items.map(item => ({ ...item, app_id: item.app_id || item.appId || '', name: item.name || item.appName || item.app_id || item.appId || '-' }))
+  } catch (loadError) {
+    if (loadError?.code !== 'ABORT_ERR') error.value = loadError.message || '应用列表加载失败'
+  }
 })
 </script>
 
@@ -123,6 +129,7 @@ onMounted(async () => {
       </header>
 
       <main class="app-main">
+        <el-alert v-if="slowRequest" class="section slow-request-alert" type="warning" title="接口响应较慢，仍在加载中，请稍候…" :closable="false" show-icon />
         <el-alert v-if="error" class="section" type="error" :title="error" show-icon />
         <router-view v-loading="pageLoading" />
       </main>
@@ -144,4 +151,5 @@ onMounted(async () => {
   padding: 16px 20px 6px; font-size: 12px; color: #606266;
   text-transform: uppercase; letter-spacing: 0.5px;
 }
+.slow-request-alert { margin-bottom: 12px; }
 </style>

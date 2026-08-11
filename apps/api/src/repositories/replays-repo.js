@@ -20,21 +20,22 @@ const fullSnapshotWhere = `exists (
 export async function listReplaySessions(limit = 20, filters = {}, offset = 0) {
   const { where, params } = replayWhere(filters)
   return all(
-    `select id::text as "replayId",
+    `select max(id)::text as "replayId",
             session_id as "sessionId",
-            1 as count,
-            coalesce(user_id, (select user_id from replay_events x where x.app_id = replay_events.app_id and x.session_id = replay_events.session_id and x.user_id is not null order by x.created_at desc limit 1)) as "userId",
-            coalesce(user_name, (select user_name from replay_events x where x.app_id = replay_events.app_id and x.session_id = replay_events.session_id and x.user_name is not null order by x.created_at desc limit 1)) as "userName",
-            coalesce(user_phone, (select user_phone from replay_events x where x.app_id = replay_events.app_id and x.session_id = replay_events.session_id and x.user_phone is not null order by x.created_at desc limit 1)) as "userPhone",
-            created_at as "firstSeen",
-            created_at as "lastSeen",
-            url,
-            release,
-            end_reason as "endReason"
+            count(*)::integer as count,
+            (array_agg(user_id order by created_at desc, id desc) filter(where user_id is not null))[1] as "userId",
+            (array_agg(user_name order by created_at desc, id desc) filter(where user_name is not null))[1] as "userName",
+            (array_agg(user_phone order by created_at desc, id desc) filter(where user_phone is not null))[1] as "userPhone",
+            min(created_at) as "firstSeen",
+            max(created_at) as "lastSeen",
+            (array_agg(url order by created_at desc, id desc) filter(where url is not null))[1] as url,
+            (array_agg(release order by created_at desc, id desc) filter(where release is not null))[1] as release,
+            (array_agg(end_reason order by created_at desc, id desc) filter(where end_reason is not null))[1] as "endReason"
      from replay_events
      ${where}
        ${where ? 'and' : 'where'} ${fullSnapshotWhere}
-     order by created_at desc
+     group by app_id, session_id
+     order by max(created_at) desc
      limit ? offset ?`,
     [...params, limit, offset]
   )
@@ -43,8 +44,12 @@ export async function listReplaySessions(limit = 20, filters = {}, offset = 0) {
 export async function countReplaySessions(filters = {}) {
   const { where, params } = replayWhere(filters)
   return scalar(
-    `select count(*) as count from replay_events ${where}
-       ${where ? 'and' : 'where'} ${fullSnapshotWhere}`,
+    `select count(*) as count from (
+       select app_id, session_id
+       from replay_events ${where}
+       ${where ? 'and' : 'where'} ${fullSnapshotWhere}
+       group by app_id, session_id
+     ) sessions`,
     params
   )
 }
@@ -54,7 +59,8 @@ export async function countReplaySessions(filters = {}) {
  * @param {string} sessionId - 会话 ID
  * @returns {Promise<Array>} 包含 events_json 的行数组
  */
-export async function listReplayEventRows(idOrSessionId) {
+export async function listReplayEventRows(idOrSessionId, limit = 500) {
+  const rowLimit = safeLimit(limit, 500, 1, 5000)
   if (/^\d+$/.test(String(idOrSessionId))) {
     return all(
       `select events_json
@@ -69,14 +75,15 @@ export async function listReplayEventRows(idOrSessionId) {
            order by id asc
            limit 1
          ), 9223372036854775807)
-       order by created_at asc, id asc`,
-      [idOrSessionId, idOrSessionId, idOrSessionId, idOrSessionId]
+       order by created_at asc, id asc
+       limit ?`,
+      [idOrSessionId, idOrSessionId, idOrSessionId, idOrSessionId, rowLimit]
     )
   }
   // 优先精确匹配；若精确匹配无结果，再用 ILIKE 前缀匹配（兼容分段扩展 sessionId）。
-  let rows = await all('select events_json from replay_events where session_id = ? order by created_at asc, id asc', [idOrSessionId])
+  let rows = await all('select events_json from replay_events where session_id = ? order by created_at asc, id asc limit ?', [idOrSessionId, rowLimit])
   if (!rows.length) {
-    rows = await all('select events_json from replay_events where session_id ilike ? order by created_at asc, id asc', [`${idOrSessionId}%`])
+    rows = await all('select events_json from replay_events where session_id ilike ? order by created_at asc, id asc limit ?', [`${idOrSessionId}%`, rowLimit])
   }
   return rows
 }
@@ -108,8 +115,21 @@ function replayWhere(filters = {}) {
 }
 
 function addRange(parts, params, field, start, end) {
-  if (start) { parts.push(`${field} >= ?`); params.push(Number(start)) }
-  if (end) { parts.push(`${field} <= ?`); params.push(Number(end)) }
+  const startValue = finiteTimestamp(start)
+  const endValue = finiteTimestamp(end)
+  if (startValue != null) { parts.push(`${field} >= ?`); params.push(startValue) }
+  if (endValue != null) { parts.push(`${field} <= ?`); params.push(endValue) }
+}
+
+function safeLimit(value, fallback, min, max) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.floor(number))) : fallback
+}
+
+function finiteTimestamp(value) {
+  if (value == null || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
 }
 
 function addEq(parts, params, field, value) {

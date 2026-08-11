@@ -2,52 +2,68 @@
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
-import { api, queryFromFilters, pageLoading } from '../dashboard.js'
+import { api, normalizePageResponse, queryFromFilters, pageLoading } from '../dashboard.js'
 
 const events = ref([])
 const initialLoading = ref(false)
+const liveError = ref('')
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 const query = reactive({ userId: '', path: '', keyword: '' })
 let pollTimer = 0
+let pollInFlight = false
 
 async function pollLive() {
+  if (pollInFlight) return
+  pollInFlight = true
+  initialLoading.value = true
+  liveError.value = ''
   pageLoading.value = true
   try {
     const suffix = queryFromFilters({ ...query, page: page.value, pageSize: pageSize.value })
-    const data = await api(`/api/events?${suffix}&type=error,perf,behavior&_t=${Date.now()}`)
-    const newItems = (data.items || []).filter(item => item && (item.type || item.name || item.ts))
-    const existingIds = new Set(events.value.map(e => `${e.session_id}_${e.ts}_${e.type}_${e.name}`))
+    const data = await api(`/api/events?${suffix}&type=error,perf,behavior&_t=${Date.now()}`, { requestKey: 'live:events' })
+    const normalized = normalizePageResponse(data, { page: page.value, pageSize: pageSize.value })
+    const newItems = normalized.items.filter(item => item && (item.type || item.name || item.ts))
+    const existingIds = new Set(events.value.map(event => `${event.session_id || event.sessionId}_${event.ts}_${event.type}_${event.name}`))
     for (const item of newItems) {
-      const key = `${item.session_id}_${item.ts}_${item.type}_${item.name}`
+      const key = `${item.session_id || item.sessionId}_${item.ts}_${item.type}_${item.name}`
       if (!existingIds.has(key)) events.value.unshift(item)
     }
-    total.value = data.total || 0
-    pageSize.value = data.pageSize || pageSize.value
-    page.value = data.page || page.value
+    total.value = normalized.total
+    pageSize.value = normalized.pageSize
+    page.value = normalized.page
+  } catch (error) {
+    if (error?.code !== 'ABORT_ERR') {
+      liveError.value = error.message || '实时事件加载失败'
+      if (!events.value.length) total.value = 0
+    }
   } finally {
+    pollInFlight = false
+    initialLoading.value = false
     pageLoading.value = false
   }
 }
 
-function onSearch() { page.value = 1; pollLive() }
+function onSearch() { page.value = 1; void pollLive() }
 
 onMounted(() => {
-  pollLive()
-  pollTimer = setInterval(pollLive, 10000)
+  void pollLive()
+  pollTimer = setInterval(() => { void pollLive() }, 10000)
 })
 
-onBeforeUnmount(() => {
-  clearInterval(pollTimer)
-})
+onBeforeUnmount(() => clearInterval(pollTimer))
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>实时监控</h1><p>最近事件流与系统状态</p></div><div><el-button @click="pollLive">刷新</el-button></div></div>
-
+  <div class="page-heading"><div><h1>实时监控</h1><p>最近事件流与系统状态</p></div><div><el-button :loading="initialLoading" @click="pollLive">刷新</el-button></div></div>
   <el-card shadow="never" class="section panel">
     <SearchPanel :fields="['path', 'userId', 'keyword']" @search="onSearch" />
+    <el-alert v-if="liveError" class="table-error" type="error" :title="liveError" show-icon :closable="false"><template #default><el-button link type="primary" @click="pollLive">重试</el-button></template></el-alert>
     <EventTable title="实时事件" :rows="events" :loading="initialLoading" :total="total" :page="page" :page-size="pageSize" stream @page-change="page = $event; pollLive()" @size-change="pageSize = $event; page = 1; pollLive()" />
   </el-card>
 </template>
+
+<style scoped>
+.table-error { margin-bottom: 12px; }
+</style>

@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteApplication, deleteRelease, loadGovernance, loadReleases, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease } from '../../../dashboard.js'
+import { deleteApplication, deleteRelease, loadGovernance, loadReleases, normalizePageResponse, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease, toList } from '../../../dashboard.js'
 
 const applications = ref([])
 const applicationOptions = ref([])
@@ -16,25 +16,61 @@ const releaseForm = reactive({ release: '', status: 'active' })
 const appForm = reactive({ appId: '', name: '', platform: 'web', owner: '', enabled: true, sampleRate: 1, replaySampleRate: 1, allowedOrigins: '', blockedTypes: '', blockedNames: '' })
 const newCollectKey = ref('')
 const collectKeyDialog = ref(false)
+const governanceLoading = ref(false)
+const governanceError = ref('')
+const releaseLoading = ref(false)
+const releaseError = ref('')
+let governanceRequestId = 0
+let releaseRequestId = 0
+
+function normalizeApplication(row = {}) {
+  return {
+    ...row,
+    app_id: row.app_id || row.appId || '',
+    name: row.name || row.appName || row.app_id || row.appId || '-',
+    platform: row.platform || '-',
+    owner: row.owner || '-',
+    enabled: row.enabled !== false,
+    sample_rate: Number(row.sample_rate ?? row.sampleRate ?? 0),
+    replay_sample_rate: Number(row.replay_sample_rate ?? row.replaySampleRate ?? 0),
+    release_count: Number(row.release_count ?? row.releaseCount ?? 0)
+  }
+}
+
+function normalizeRelease(row = {}) {
+  return { ...row, release_name: row.release_name || row.releaseName || row.release || '', status: row.status || '-' }
+}
 
 async function load() {
+  const requestId = ++governanceRequestId
+  governanceLoading.value = true
+  governanceError.value = ''
   pageLoading.value = true
   try {
     const data = await loadGovernance({
       appPage: appPager.page, appPageSize: appPager.pageSize
     })
-    applications.value = data.applications.items
-    applicationOptions.value = data.applicationOptions
-    Object.assign(appPager, { page: data.applications.page, pageSize: data.applications.pageSize, total: data.applications.total })
-    Object.assign(settings.retention, data.settings.retention)
-    Object.assign(settings.alerts, data.settings.alerts)
-  } finally { pageLoading.value = false }
+    if (requestId !== governanceRequestId) return
+    const appData = normalizePageResponse(data.applications, appPager)
+    applications.value = appData.items.map(normalizeApplication)
+    applicationOptions.value = toList(data.applicationOptions).map(normalizeApplication)
+    Object.assign(appPager, appData)
+    Object.assign(settings.retention, data.settings?.retention || {})
+    Object.assign(settings.alerts, data.settings?.alerts || {})
+  } catch (error) {
+    if (requestId === governanceRequestId && error?.code !== 'ABORT_ERR') governanceError.value = error.message || '采集治理加载失败'
+  } finally {
+    if (requestId === governanceRequestId) {
+      governanceLoading.value = false
+      pageLoading.value = false
+    }
+  }
 }
 
 function editApp(row = {}) {
   Object.assign(appForm, {
-    appId: row.app_id || '', name: row.name || '', platform: row.platform || 'web', owner: row.owner || '', enabled: row.enabled ?? true,
-    sampleRate: Number(row.sample_rate ?? 1), replaySampleRate: Number(row.replay_sample_rate ?? 1),
+    appId: row.app_id || row.appId || '', name: row.name || '', platform: row.platform || 'web', owner: row.owner || '', enabled: row.enabled ?? true,
+    sampleRate: Number(row.sample_rate ?? row.sampleRate ?? 1), replaySampleRate: Number(row.replay_sample_rate ?? row.replaySampleRate ?? 1),
     allowedOrigins: row.rules_json?.allowedOrigins?.join('\n') || '', blockedTypes: row.rules_json?.blockedTypes?.join(',') || '', blockedNames: row.rules_json?.blockedNames?.join(',') || ''
   })
   appDialog.value = true
@@ -64,7 +100,7 @@ async function resetKey(row) {
   collectKeyDialog.value = false
   newCollectKey.value = ''
   try {
-    newCollectKey.value = (await rotateCollectKey(row.app_id)).collectKey
+    newCollectKey.value = (await rotateCollectKey(row.app_id || row.appId)).collectKey
     collectKeyDialog.value = true
   } catch (error) {
     ElMessage.error(error.message || '采集密钥生成失败')
@@ -78,16 +114,39 @@ async function submitSettings() {
 }
 
 async function openReleases(row) {
-  activeAppId.value = row.app_id
+  activeAppId.value = row.app_id || row.appId || ''
+  if (!activeAppId.value) return
   releasePager.page = 1
   await loadReleasePage()
   releaseDialog.value = true
 }
 
 async function loadReleasePage() {
-  const data = await loadReleases(activeAppId.value, releasePager.page, releasePager.pageSize)
-  releases.value = data.items
-  Object.assign(releasePager, { page: data.page, pageSize: data.pageSize, total: data.total })
+  if (!activeAppId.value) return
+  const requestId = ++releaseRequestId
+  releaseLoading.value = true
+  releaseError.value = ''
+  try {
+    const data = await loadReleases(activeAppId.value, releasePager.page, releasePager.pageSize)
+    if (requestId !== releaseRequestId) return
+    const normalized = normalizePageResponse(data, releasePager)
+    releases.value = normalized.items.map(normalizeRelease)
+    Object.assign(releasePager, normalized)
+  } catch (error) {
+    if (requestId === releaseRequestId && error?.code !== 'ABORT_ERR') releaseError.value = error.message || '版本列表加载失败'
+  } finally {
+    if (requestId === releaseRequestId) releaseLoading.value = false
+  }
+}
+
+function formatRate(value) {
+  const rate = Number(value)
+  return Number.isFinite(rate) ? `${Math.round(rate * 100)}%` : '-'
+}
+
+function formatDate(value) {
+  const date = new Date(Number(value))
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString()
 }
 
 async function submitRelease() {
@@ -126,14 +185,15 @@ onMounted(load)
   <div>
     <el-card shadow="never" class="section panel">
       <template #header><div class="panel-head"><b>应用与采样</b><el-button type="primary" @click="editApp()">新增应用</el-button></div></template>
-      <el-table :data="applications" border>
+      <el-alert v-if="governanceError" class="table-error" type="error" :title="governanceError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
+      <el-table :data="applications" border v-loading="governanceLoading" empty-text="暂无应用数据">
         <el-table-column prop="app_id" label="App ID" min-width="150" />
         <el-table-column prop="name" label="应用名称" min-width="150" />
         <el-table-column prop="platform" label="平台" width="100" />
         <el-table-column prop="owner" label="负责人" min-width="120" />
-        <el-table-column label="事件采样率" width="120"><template #default="{ row }">{{ Math.round(row.sample_rate * 100) }}%</template></el-table-column>
-        <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ Math.round(row.replay_sample_rate * 100) }}%</template></el-table-column>
-        <el-table-column prop="release_count" label="版本数" width="90" />
+        <el-table-column label="事件采样率" width="120"><template #default="{ row }">{{ formatRate(row.sample_rate ?? row.sampleRate) }}</template></el-table-column>
+        <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ formatRate(row.replay_sample_rate ?? row.replaySampleRate) }}</template></el-table-column>
+        <el-table-column label="版本数" width="90"><template #default="{ row }">{{ row.release_count ?? row.releaseCount ?? 0 }}</template></el-table-column>
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="270"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
       </el-table>
@@ -189,12 +249,17 @@ onMounted(load)
       <el-form-item label="状态"><el-select v-model="releaseForm.status" style="width: 120px"><el-option label="active" value="active" /><el-option label="archived" value="archived" /></el-select></el-form-item>
       <el-form-item><el-button type="primary" @click="submitRelease">添加</el-button></el-form-item>
     </el-form>
-    <el-table :data="releases" border>
-      <el-table-column prop="release_name" label="版本" min-width="180" />
-      <el-table-column prop="status" label="状态" width="120" />
-      <el-table-column label="首次上报时间" width="190"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
+    <el-alert v-if="releaseError" class="table-error" type="error" :title="releaseError" show-icon :closable="false"><template #default><el-button link type="primary" @click="loadReleasePage">重试</el-button></template></el-alert>
+    <el-table :data="releases" border v-loading="releaseLoading" empty-text="暂无版本数据">
+      <el-table-column label="版本" min-width="180"><template #default="{ row }">{{ row.release_name || row.release || '-' }}</template></el-table-column>
+      <el-table-column label="状态" width="120"><template #default="{ row }">{{ row.status || '-' }}</template></el-table-column>
+      <el-table-column label="首次上报时间" width="190"><template #default="{ row }">{{ formatDate(row.created_at ?? row.createdAt) }}</template></el-table-column>
       <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" @click="removeRelease(row)">删除</el-button></template></el-table-column>
     </el-table>
     <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="releasePager.page" :page-size="releasePager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="releasePager.total" @current-change="value => { releasePager.page = value; loadReleasePage() }" @size-change="value => { releasePager.page = 1; releasePager.pageSize = value; loadReleasePage() }" />
   </el-dialog>
 </template>
+
+<style scoped>
+.table-error { margin-bottom: 12px; }
+</style>

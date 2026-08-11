@@ -246,7 +246,15 @@ export function buildAlertContext(event, threshold) {
 }
 
 function pageOf(filters) {
-  return { page: Math.max(1, Number(filters.page || 1)), pageSize: Math.max(1, Math.min(100, Number(filters.pageSize || 10))) }
+  return {
+    page: safePage(filters?.page, 1, 1000000),
+    pageSize: safePage(filters?.pageSize, 10, 100)
+  }
+}
+
+function safePage(value, fallback, max) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(1, Math.min(max, Math.floor(number))) : fallback
 }
 
 function parse(value, fallback) {

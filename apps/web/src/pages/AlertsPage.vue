@@ -2,7 +2,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel, pageLoading } from '../dashboard.js'
+import { api, normalizePageResponse, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel, pageLoading, toList } from '../dashboard.js'
 
 const router = useRouter()
 const rows = ref([])
@@ -14,22 +14,49 @@ const channelDialog = ref(false)
 const channelSaving = ref(false)
 const channelTesting = ref(false)
 const channelForm = reactive({ id: '', name: '', type: 'email', endpoint: '', appId: '', levels: 'error', metrics: 'error,log_error,regression', enabled: true, webhookUrl: '', webhookSecret: '', webhookHeaders: '' })
+const alertsLoading = ref(false)
+const alertsError = ref('')
+const channelsLoading = ref(false)
+let alertsRequestId = 0
+let channelsRequestId = 0
 
 async function load() {
+  const requestId = ++alertsRequestId
+  alertsLoading.value = true
+  alertsError.value = ''
   pageLoading.value = true
   try {
     const suffix = queryFromFilters({ ...query, page: pager.page, pageSize: pager.pageSize })
-    const data = await api(`/api/alerts?${suffix}`)
-    rows.value = data?.items || []
-    pager.total = data?.total || 0
-  } finally { pageLoading.value = false }
+    const data = await api(`/api/alerts?${suffix}`, { requestKey: 'alerts:list' })
+    if (requestId !== alertsRequestId) return
+    const normalized = normalizePageResponse(data, pager)
+    rows.value = normalized.items
+    Object.assign(pager, normalized)
+  } catch (error) {
+    if (requestId === alertsRequestId && error?.code !== 'ABORT_ERR') {
+      rows.value = []
+      Object.assign(pager, { total: 0 })
+      alertsError.value = error.message || '告警记录加载失败'
+    }
+  } finally {
+    if (requestId === alertsRequestId) {
+      alertsLoading.value = false
+      pageLoading.value = false
+    }
+  }
 }
 
 async function loadChannels() {
+  const requestId = ++channelsRequestId
+  channelsLoading.value = true
   try {
-    const data = await api('/api/alert-channels')
-    channels.value = data?.items || []
-  } catch { channels.value = [] }
+    const data = await api('/api/alert-channels', { requestKey: 'alerts:channels' })
+    if (requestId === channelsRequestId) channels.value = toList(data)
+  } catch {
+    if (requestId === channelsRequestId) channels.value = []
+  } finally {
+    if (requestId === channelsRequestId) channelsLoading.value = false
+  }
 }
 
 async function acknowledge(row) {
@@ -169,7 +196,8 @@ onMounted(() => { load(); loadChannels() })
       <el-button type="primary" @click="onSearch">搜索</el-button>
     </div>
 
-    <el-table :data="rows" border>
+    <el-alert v-if="alertsError" class="table-error" type="error" :title="alertsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
+    <el-table :data="rows" border v-loading="alertsLoading" empty-text="暂无告警记录">
       <el-table-column label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column prop="app_id" label="应用" width="140" />
       <el-table-column label="指标" width="100">
@@ -196,7 +224,7 @@ onMounted(() => { load(); loadChannels() })
         </template>
       </el-table-column>
     </el-table>
-    <el-pagination class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onPageChange" @size-change="onPageChange" />
+    <el-pagination v-if="pager.total > 0" class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onPageChange" @size-change="onPageChange" />
   </el-card>
 
   <el-card shadow="never" class="section panel">
@@ -206,7 +234,7 @@ onMounted(() => { load(); loadChannels() })
         <el-button type="primary" @click="editChannel()">新增渠道</el-button>
       </div>
     </template>
-    <el-table :data="channels" border>
+    <el-table :data="channels" border v-loading="channelsLoading" empty-text="暂无通知渠道">
       <template #empty><el-empty description="暂无渠道" :image-size="60" /></template>
       <el-table-column prop="name" label="名称" min-width="160" />
       <el-table-column label="类型" width="110"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
@@ -224,7 +252,6 @@ onMounted(() => { load(); loadChannels() })
         </template>
       </el-table-column>
     </el-table>
-    <el-empty v-if="!channels.length" description="暂无渠道" :image-size="60" style="margin-top:16px" />
   </el-card>
 
   <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑渠道' : '新增渠道'" width="560px" :loading="channelSaving">
@@ -251,4 +278,5 @@ onMounted(() => { load(); loadChannels() })
 
 <style scoped>
 .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.table-error { margin-bottom: 12px; }
 </style>
