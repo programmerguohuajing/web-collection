@@ -214,6 +214,23 @@ export interface EysOptions {
   replayBatchSize?: number
   /** 回放额外配置项 */
   replayOptions?: Record<string, unknown>
+  /**
+   * IIFE 自托管场景下 rrweb 脚本地址。ESM 构建由 Vite 自动拆分为独立 chunk，无需此配置；
+   * IIFE 构建把 rrweb 外部化，replay 开启时若未通过 <script> 预注入 window.rrweb，
+   * 则由此 URL 注入 rrweb 脚本后再录制（Phase 7 · SDK-209）。
+   */
+  replayLibUrl?: string
+  /**
+   * 压缩 Worker 脚本地址。提供则在 Worker 内完成 gzip（主线程零阻塞）；
+   * 不提供则回退主线程 CompressionStream；两者皆不可用则降级压缩标记 none。
+   */
+  replayWorkerUrl?: string
+  /** 是否对回放 payload 做 gzip 压缩（默认 true，无 CompressionStream 时自动降级） */
+  replayCompression?: boolean
+  /** 回放环形缓冲最大留存事件数（内存护栏，默认 1500） */
+  replayBufferSize?: number
+  /** 回放环形缓冲时间窗口（毫秒，默认 30000）：超出窗口的旧事件被惰性淘汰，保证错误前 30 秒可恢复 */
+  replayWindowMs?: number
   /** 白屏检测的 DOM 选择器 */
   whiteScreenSelector?: string
   /** 白屏检测超时时间（毫秒） */
@@ -311,12 +328,12 @@ export interface EysClient {
   flushSpans(): Promise<void> | void
   /** 销毁 SDK 实例，清理所有监听和资源 */
   destroy(): void
-  /** 开始回放录制 */
-  startReplay(): void
-  /** 停止回放录制 */
-  stopReplay(): void
-  /** 刷新回放缓冲区 */
-  flushReplay(force?: boolean): void
+  /** 开始回放录制（异步懒加载 rrweb，SDK-209） */
+  startReplay(): Promise<void>
+  /** 停止回放录制并刷新缓冲区 */
+  stopReplay(): Promise<void>
+  /** 刷新回放缓冲区（异步，含压缩） */
+  flushReplay(force?: boolean): Promise<void>
   /** 添加自定义回放事件 */
   addReplayEvent(name: string, props?: Record<string, unknown>): void
   /** 主动触发回放快照 */

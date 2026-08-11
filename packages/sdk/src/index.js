@@ -20,7 +20,11 @@ import { setupMemoryMonitor } from './performance/memory.js'
 import { setupBodySampler } from './performance/body-sampler.js'
 import { setupServerTimingMonitor } from './performance/server-timing.js'
 import { setupBundleMonitor } from './performance/bundle.js'
-import { addReplayEvent, setupReplayMonitor, takeReplaySnapshot } from './replay/index.js'
+// Phase 7 · Replay 分包与懒加载（SDK-209）：rrweb 唯一动态边界在 rrweb-driver.js。
+import { ensureDriver, setupReplayMonitor, addReplayEvent, takeReplaySnapshot } from './replay/index.js'
+// Phase 7 · Replay 环形缓冲与压缩（SDK-210）：内存护栏 + gzip（Worker/主线程/降级）。
+import { ReplayRingBuffer } from './replay/ring-buffer.js'
+import { createReplayCompressor } from './replay/compress.js'
 import { setupServiceWorkerMonitor } from './runtime/sw.js'
 import { imageReport } from './core/report.js'
 import { SDK_VERSION, eventCategory, eventSource, sanitizeEvent } from './core/event.js'
@@ -150,6 +154,19 @@ export function createEys(options = {}) {
     replayBatchSize: 50,
     // replayOptions 传递 rrweb 等回放模块的附加配置。
     replayOptions: {},
+    // SDK-209 · 分包与懒加载：rrweb 不在核心包静态打包，replay 开启时才按需加载。
+    // replayLibUrl 仅 IIFE 自托管场景需要：引入外部化后的 rrweb 脚本地址，
+    // 加载完成后暴露 window.rrweb；ESM 构建由 Vite 自动拆分为独立 chunk，无需此配置。
+    replayLibUrl: '',
+    // replayWorkerUrl 指向压缩 Worker 脚本（SDK-210）：提供则优先在 Worker 内 gzip，
+    // 主线程零阻塞；不提供则回退主线程 CompressionStream。
+    replayWorkerUrl: '',
+    // replayCompression 控制是否对回放 payload 做 gzip（默认开启；无 CompressionStream 时自动降级 none）。
+    replayCompression: true,
+    // replayBufferSize / replayWindowMs：环形缓冲容量与时间窗口（SDK-210 内存护栏）。
+    // 超出窗口或容量的旧事件被淘汰，保证错误前 30 秒可恢复且内存有界。
+    replayBufferSize: 1500,
+    replayWindowMs: 30000,
     whiteScreenSelector: '#app > *',
     whiteScreenTimeout: 5000,
     enabled: true,
@@ -203,7 +220,7 @@ export function createEys(options = {}) {
   // sessionId 标识当前页面访问会话。
   const sessionId = getId('eys_sid')
   const deviceId = getId('eys_did', true)
-  // sender（ReliableSender）持久化待上报事件；recent/breadcrumbs 用于去重和错误上下文；replayEvents 用于临时缓存回放片段。
+  // sender（ReliableSender）持久化待上报事件；recent/breadcrumbs 用于去重和错误上下文；replayRing 为回放片段的环形缓冲（SDK-210 内存护栏）。
   const recent = []
   const breadcrumbs = []
   const globalContext = {}
@@ -221,6 +238,8 @@ export function createEys(options = {}) {
     }
     if (typeof cfg.onDiagnostic === 'function') cfg.onDiagnostic(event)
   })
+  // 跨标签页锁引用（SDK-219）：destroy 时 close() 释放 BroadcastChannel，避免进程泄漏。
+  let multiTabLock = null
   const sender = new ReliableSender({
     cold: new IndexedDBQueue({ maxQueue: cfg.maxQueue * 10 }),
     transport: new FetchTransport({ endpoint: cfg.endpoint, collectKey: cfg.collectKey, fetchImpl: originalFetch, timeout: cfg.transportTimeout }),
@@ -232,9 +251,17 @@ export function createEys(options = {}) {
     maxBatch: cfg.batchSize,
     collectKey: cfg.collectKey,
     diagnostic,
-    lock: createMultiTabLock(cfg.endpoint)
+    // 捕获锁引用，destroy 时必须 close() 释放底层 BroadcastChannel（及其 MessagePort），
+    // 否则该 ref'd 句柄会使进程/Worker 无法正常退出（资源泄漏）。详见 multitab.js。
+    lock: (() => { const lock = createMultiTabLock(cfg.endpoint); multiTabLock = lock; return lock })()
   })
-  const replayEvents = []
+  // SDK-210 · 环形缓冲：回放事件的内存护栏，最近 replayWindowMs 内最多留存 replayBufferSize 条，
+  // 超出容量/窗口的旧事件被惰性淘汰，保证错误前 30 秒可恢复且常驻内存有界。
+  const replayRing = new ReplayRingBuffer({ maxSize: cfg.replayBufferSize, windowMs: cfg.replayWindowMs })
+  // SDK-210 · 回放压缩器：Worker / 主线程 CompressionStream / 降级 none；保持主线程低开销预算。
+  const replayCompressor = cfg.replayCompression
+    ? createReplayCompressor({ workerUrl: cfg.replayWorkerUrl, onDiagnostic: (type, detail) => diagnostic.emit(type, detail) })
+    : null
   const pageTraceId = randomHex(16)
   // 创建 Tracer 实例（当 distributedTracing 开启时）
   // 容错：链路追踪构造失败只降级关闭 tracer，不能拖垮整个 SDK 初始化。
@@ -287,6 +314,8 @@ export function createEys(options = {}) {
    *  null 表示尚未触发结束（正常录制中），结束后重置。 */
   let currentSegmentEndReason = null
   let stopReplay = null
+  /** 已销毁标记：destroy 后任何仍在飞行的 startReplay 加载完成时立即停录，避免 rrweb 内部定时器泄露。 */
+  let disposed = false
   let replayStopTimer = 0
   let replayStartTimer = 0
   let whiteScreenTimer = 0
@@ -503,7 +532,7 @@ export function createEys(options = {}) {
     Object.assign(consentMap, resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {}))
     if (cfg.consent === 'denied') {
       stopCapture()
-      replayEvents.length = 0
+      replayRing.clear()
       void sender.clear()
     }
     if (cfg.consent === 'granted' && cfg.enabled) startCapture()
@@ -514,7 +543,7 @@ export function createEys(options = {}) {
     cfg.enabled = Boolean(enabled)
     if (!cfg.enabled) {
       stopCapture()
-      replayEvents.length = 0
+      replayRing.clear()
       void sender.clear()
     }
     if (cfg.enabled && cfg.consent !== 'denied') startCapture()
@@ -700,7 +729,11 @@ export function createEys(options = {}) {
    * @param {boolean} [force=false]
    */
   async function flushAll(force = false) {
-    if (force) await sender.sendExitBatch()
+    if (force) {
+      // 页面退出/隐藏/冻结：先把留存回放（错误前 30 秒窗口）冲刷进队列，再走 Beacon 尽力排队。
+      await flushReplay(true)
+      await sender.sendExitBatch()
+    }
     await flush(force)
     if (force) tracer?.flushSpans?.()
   }
@@ -712,38 +745,61 @@ export function createEys(options = {}) {
     if (breadcrumbs.length > 20) breadcrumbs.shift()
   }
 
-  /** 将回放事件加入临时缓存，达到阈值后批量上报 */
+  /** 将回放事件写入环形缓冲，达到阈值后批量上报 */
   function queueReplay(event) {
-    replayEvents.push(event)
-    if (replayEvents.length >= cfg.replayBatchSize) flushReplay()
+    const { evicted } = replayRing.push(event)
+    if (evicted > 0) diagnostic.emit('replay_buffer_full', { evicted })
+    if (replayRing.size >= cfg.replayBatchSize) flushReplay()
   }
 
   /**
    * 结束当前回放分段。
    * 设定结束原因 → 刷新当前缓冲区（附带原因） → 拍全量快照 → 生成新 sessionId → 清空缓存。
    * 新 sessionId 使后续事件写入独立的回放记录，与上一段完全分开。
-   * @param {'error'|'route'} reason - 结束原因
+   * @param {'error'|'route'|'max_duration'|'page_unload'} reason - 结束原因
    */
   function endReplaySegment(reason) {
     if (!cfg.replay) return
     clearTimeout(replayStartTimer)
     stopCurrentReplay()
     currentSegmentEndReason = reason
+    // flushReplay 已改为异步（含压缩），此处 fire-and-forget：错误/路由切换时确保留存窗口随分段上报。
     flushReplay(true)
     replaySegIndex++
     currentReplaySessionId = `${replayBaseSessionId}_seg${replaySegIndex}`
     currentSegmentEndReason = null
     if (reason !== 'max_duration' && reason !== 'page_unload') {
-      replayStartTimer = setTimeout(startReplay, 120)
+      replayStartTimer = setTimeout(() => { startReplay() }, 120)
     }
   }
 
-  /** 启动会话回放录制 */
-  function startReplay() {
+  /** 启动会话回放录制（异步懒加载 rrweb，SDK-209） */
+  async function startReplay() {
     if (stopReplay) return
-    const blockSelector = [...(cfg.privacy.blockSelectors || []), '.eys-block'].filter(Boolean).join(',')
-    const maskSelector = [...(cfg.privacy.maskSelectors || [])].filter(Boolean).join(',')
-    stopReplay = setupReplayMonitor({ emit: queueReplay, options: { ...cfg.replayOptions, blockSelector, maskSelector } })
+    // 回放仅浏览器有意义；非浏览器环境（Node 测试 / SSR）直接跳过，避免加载 rrweb。
+    if (typeof document === 'undefined' || typeof window === 'undefined') return
+    // 懒加载 rrweb 驱动；失败时降级关闭回放，不拖垮 SDK（绝不抛出未处理 rejection）。
+    try {
+      await ensureDriver({ replayLibUrl: cfg.replayLibUrl })
+    } catch (err) {
+      console.warn('[web-collection] 加载 rrweb 失败，回放已降级关闭：', err && err.message)
+      return
+    }
+    // 加载期间 SDK 可能已被销毁（或录制已被停止）：立即停录并返回，避免 rrweb 内部定时器泄露。
+    if (stopReplay || disposed) {
+      if (stopReplay) stopCurrentReplay()
+      return
+    }
+    try {
+      const blockSelector = [...(cfg.privacy.blockSelectors || []), '.eys-block'].filter(Boolean).join(',')
+      const maskSelector = [...(cfg.privacy.maskSelectors || [])].filter(Boolean).join(',')
+      stopReplay = setupReplayMonitor({ emit: queueReplay, options: { ...cfg.replayOptions, blockSelector, maskSelector } })
+    } catch (err) {
+      console.warn('[web-collection] 启动 rrweb 录制失败，回放已降级关闭：', err && err.message)
+      return
+    }
+    // 极少竞态：录制刚建立即已销毁，立即停录。
+    if (disposed) { stopCurrentReplay(); return }
     clearTimeout(replayStopTimer)
     if (cfg.replayMaxDuration > 0) {
       replayStopTimer = setTimeout(() => endReplaySegment('max_duration'), cfg.replayMaxDuration)
@@ -751,9 +807,9 @@ export function createEys(options = {}) {
   }
 
   /** 停止回放录制并立即刷新缓冲区 */
-  function stopReplayRecording() {
+  async function stopReplayRecording() {
     stopCurrentReplay()
-    flushReplay(true)
+    await flushReplay(true)
   }
 
   /** 停止当前回放录制：清除定时器、调用 stopReplay 清理函数、置空引用 */
@@ -763,15 +819,34 @@ export function createEys(options = {}) {
     stopReplay = null
   }
 
-  /** 将缓存的回放事件推入上报队列，使用当前分段专属 sessionId。
-   *  强制 flush 时附带 segmentEndReason 以标记该段为什么结束。 */
-  function flushReplay(force = false) {
-    if (!replayEvents.length) return
-    const size = force ? replayEvents.length : cfg.replayBatchSize
+  /**
+   * 将环形缓冲中的回放事件推入上报队列，使用当前分段专属 sessionId。
+   * 强制 flush（错误/分段结束/页面卸载）时取出**全部留存**（错误前 30 秒），非强制时按批次增量。
+   * 开启 replayCompression 时先 gzip（Worker / 主线程），随 compression 标记上报；失败时回退原样。
+   * @param {boolean} [force=false]
+   */
+  async function flushReplay(force = false) {
+    if (!replayRing.size) return
+    const events = force ? replayRing.drain() : replayRing.take(cfg.replayBatchSize)
+    if (!events.length) return
+    let payload = events
+    let compression = 'none'
+    if (replayCompressor) {
+      try {
+        const res = await replayCompressor.compress(events)
+        payload = res.body
+        compression = res.compression
+        if (compression === 'gzip') diagnostic.emit('replay_compressed', { bytes: payload.length })
+      } catch {
+        payload = events
+        compression = 'none'
+      }
+    }
     const item = withBase({ type: 'replay' })
-    // 回放事件使用分段 sessionId（而非全局 sessionId），每个分段独立成一条记录
+    // 回放事件使用分段 sessionId（而非全局 sessionId），每个分段独立成一条记录。
     item.sessionId = currentReplaySessionId
-    item.events = replayEvents.splice(0, size)
+    item.events = payload
+    item.compression = compression
     if (force && currentSegmentEndReason) {
       item.segmentEndReason = currentSegmentEndReason
     }
@@ -781,15 +856,23 @@ export function createEys(options = {}) {
 
   /** 销毁 SDK 实例：清除定时器、停止录制、刷新全部队列 */
   async function destroy() {
+    disposed = true
     clearInterval(timer)
     clearTimeout(replayStartTimer)
     finalizePerformance()
     stopCapture()
-    stopReplayRecording()
+    await stopReplayRecording()
+    stopCurrentReplay() // 兜底停录：捕获 destroy 竞态期间才完成的 startReplay
+    replayCompressor?.destroy()
+    replayRing.clear()
     if (stats.dropped || stats.failed) push({ type: 'perf', metric: 'sdk_health', value: stats.enqueued, props: { ...stats }, source: 'auto' })
-    flushAll(true)
+    await flushAll(true)
     // 关闭 Span 导出管线，冲刷剩余缓冲（根/未结束 Span），避免调用树丢失尾包。
     await tracer?.shutdownSpans?.()
+    // 必须在所有发送（flushAll 内的 sendExitBatch 会再次 acquire 锁）完成之后才关闭跨标签页锁，
+    // 否则 acquire 会重新创建 BroadcastChannel（PipeWrap/MessagePort），导致进程/Worker 无法退出。
+    multiTabLock?.close?.()
+    multiTabLock = null
   }
 }
 
