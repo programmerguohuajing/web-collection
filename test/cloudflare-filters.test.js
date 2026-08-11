@@ -123,6 +123,24 @@ assert.deepEqual(await tracesResponse.json(), { items: [], total: 51, page: 2, p
 assert.ok(traceQueries.some(([sql]) => /trace_id<>''/.test(sql)))
 assert.ok(traceQueries.some(([sql, values]) => /limit \? offset \?/.test(sql) && values.at(-2) === 25 && values.at(-1) === 25))
 
+let releasesSql = ''
+let releasesValues = []
+const releasesResponse = await worker.fetch(new Request('https://example.com/api/analytics/releases?appId=web&release=1.2.3&startTime=10&endTime=20'), {
+  DB: {
+    prepare(sql) {
+      releasesSql = sql
+      return {
+        bind(...values) { releasesValues = values; return this },
+        async all() { return { results: [{ app_id: 'web', release: '1.2.3', events: 12, errors: 1, users: 3 }] } }
+      }
+    }
+  }
+})
+assert.deepEqual(await releasesResponse.json(), [{ app_id: 'web', release: '1.2.3', events: 12, errors: 1, users: 3 }])
+assert.match(releasesSql, /from releases r left join events e/)
+assert.match(releasesSql, /where r\.app_id=\? and r\.release_name=\?/)
+assert.deepEqual(releasesValues, [10, 20, 'web', '1.2.3'])
+
 const workerTree = buildDistributedTrace([
   { id: 'child-event', span_id: 'child', props_json: '{"__parentSpanId":"root","status":200}', type: 'perf', metric: 'fetch', ts: 20, value: 10 },
   { id: 'root-event', span_id: 'root', props_json: '{}', type: 'perf', metric: 'page_load', ts: 10, value: 5 },

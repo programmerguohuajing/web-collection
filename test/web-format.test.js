@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { formatDuration, formatErrorLocation, formatSpanId, formatSpanStatus, readableText, scoreWebVitals, spanStatusType } from '../apps/web/src/utils/format.js'
 import { buildSummary } from '../apps/api/src/services/summary-service.js'
+import { normalizeReleaseReport } from '../apps/web/src/utils/release-report.js'
 
 assert.equal(formatDuration(999), '999ms')
 assert.equal(formatDuration(1250), '1.3s')
@@ -24,6 +25,10 @@ assert.equal(formatSpanStatus({ type: 'perf', props: { failed: 'true', status: 0
 assert.equal(spanStatusType({ type: 'perf', props: { status: 302 } }), 'warning')
 assert.equal(spanStatusType({ type: 'perf', props: { status: 503 } }), 'danger')
 assert.equal(spanStatusType({ type: 'perf', props: {} }), 'success')
+assert.deepEqual(normalizeReleaseReport([{ release: '1.0.0' }]), [{ release: '1.0.0' }])
+assert.deepEqual(normalizeReleaseReport({ items: [{ release: '2.0.0' }] }), [{ release: '2.0.0' }])
+assert.deepEqual(normalizeReleaseReport({ results: [{ release: '3.0.0' }] }), [{ release: '3.0.0' }])
+assert.deepEqual(normalizeReleaseReport({}), [])
 
 const summary = buildSummary([], {}, [], [
   { type: 'perf', metric: 'lcp', value: 100 },

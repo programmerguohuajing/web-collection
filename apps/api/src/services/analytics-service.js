@@ -245,12 +245,21 @@ export async function getLive(filters = {}) {
 }
 
 export async function getReleaseComparison(filters = {}) {
-  const { where, params } = whereFor(filters)
-  return all(`select release_name release, count(*)::integer events,
-    count(*) filter(where type='error')::integer errors,
-    count(distinct coalesce(nullif(user_id,''), device_id))::integer users,
-    round(avg(value) filter(where type='perf' and metric='lcp')::numeric, 2) lcp
-    from events ${where} group by release_name order by max(ts) desc limit 20`, params)
+  const joinConditions = []
+  const whereConditions = []
+  const params = []
+  if (filters.startTime) { joinConditions.push('e.ts>=?'); params.push(Number(filters.startTime)) }
+  if (filters.endTime) { joinConditions.push('e.ts<=?'); params.push(Number(filters.endTime)) }
+  if (filters.appId) { whereConditions.push('r.app_id=?'); params.push(filters.appId) }
+  if (filters.release) { whereConditions.push('r.release_name=?'); params.push(filters.release) }
+  const join = joinConditions.length ? ` and ${joinConditions.join(' and ')}` : ''
+  const where = whereConditions.length ? `where ${whereConditions.join(' and ')}` : ''
+  return all(`select r.app_id, r.release_name release, r.status, r.created_at, count(e.id)::integer events,
+    count(e.id) filter(where e.type='error')::integer errors,
+    count(distinct coalesce(nullif(e.user_id,''), e.device_id))::integer users,
+    round(avg(e.value) filter(where e.type='perf' and e.metric='lcp')::numeric, 2) lcp
+    from releases r left join events e on e.app_id=r.app_id and e.release_name=r.release_name${join}
+    ${where} group by r.app_id, r.release_name, r.status, r.created_at order by r.created_at desc limit 20`, params)
 }
 
 export async function getReleaseDetailComparison(appId, fromRelease, toRelease) {
