@@ -77,6 +77,39 @@ export interface EysDiagnosticEvent {
   reason?: string
   /** 事件时间戳（毫秒） */
   ts: number
+  /** 采样决策单元：trace | session | global（仅 dropped_by_sampling 携带，Phase 6） */
+  unit?: string
+  /** 参与哈希的单元键（traceId / sessionId / 'global'，不含敏感数据） */
+  key?: string
+  /** 采样决策规则：priority | error_rate | remote | trace | session | session_category */
+  rule?: string
+  /** 命中的采样率 */
+  rate?: number
+  /** 命中分类（如 error / performance / requests …） */
+  category?: string
+  /** 扩展性诊断明细（不含业务敏感数据） */
+  detail?: Record<string, unknown>
+}
+
+/**
+ * 采样决策结果（Phase 6 · 确定性采样，可解释）。
+ * 通过 `getSamplingDecision()` 自查最近一次决策，或随 `dropped_by_sampling` 诊断派发。
+ */
+export interface SamplingDecision {
+  /** 是否保留该事件 / Span */
+  sampled: boolean
+  /** 应用的基础采样率 */
+  rate: number
+  /** 决策规则：priority（错误优先保留）| error_rate | remote（远端权重）| trace | session | session_category */
+  rule: string
+  /** 决策单元：trace | session | global */
+  unit: string
+  /** 实际参与哈希的单元键（traceId / sessionId / 'global'，不含敏感数据） */
+  key: string
+  /** 命中的事件分类 */
+  category?: string
+  /** 命中的分类采样率（rule === 'session_category' 时） */
+  categoryRate?: number
 }
 
 /** 隐私保护配置（Privacy v2 统一 sanitizer） */
@@ -145,8 +178,12 @@ export interface EysOptions {
   maxQueue?: number
   /** 最大重试次数 */
   maxRetries?: number
-  /** 全局采样率（0-1） */
+  /** 全局采样率（0-1），作为 session / global 基础采样率（Phase 6 确定性采样） */
   sampleRate?: number
+  /** 链路（traceId）基础采样率（0-1）；默认复用 sampleRate（Phase 6） */
+  traceRate?: number
+  /** 错误链路 / 事件的确定性子采样率（0-1）；默认不设置 = 错误始终保留（优先级，Phase 6） */
+  errorSampleRate?: number
   /** 是否采集用户行为 */
   behavior?: boolean
   /** 是否采集 console 日志 */
@@ -256,6 +293,8 @@ export interface EysClient {
   getPrivacyMode(): PrivacyMode
   /** 获取解析后的同意分类（已合并 GPC / DNT 信号），用于自查 SDK 当前门控 */
   getConsentCategories(): Record<ConsentCategory, boolean>
+  /** 获取最近一次采样决策（含规则 / 采样率 / 单元 / 键），用于 SDK 自诊断与调试；无决策时返回 null */
+  getSamplingDecision(): SamplingDecision | null
   /** 启用/禁用 SDK */
   setEnabled(enabled: boolean): void
   /** 设置全局上下文（会附加到所有上报事件中） */

@@ -23,13 +23,15 @@ import { setupBundleMonitor } from './performance/bundle.js'
 import { addReplayEvent, setupReplayMonitor, takeReplaySnapshot } from './replay/index.js'
 import { setupServiceWorkerMonitor } from './runtime/sw.js'
 import { imageReport } from './core/report.js'
-import { SDK_VERSION, eventCategory, eventSource, sampleRateFor, sanitizeEvent } from './core/event.js'
+import { SDK_VERSION, eventCategory, eventSource, sanitizeEvent } from './core/event.js'
 import { createSanitizer, resolveConsent } from './core/sanitizer.js'
 import { getId } from './utils/id.js'
 import { setupEnvironmentMonitor } from './utils/environment.js'
 import { setupRuntimeMonitor } from './utils/runtime.js'
 // 链路追踪模块
-import { createTracer, createSampler, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcessor, WebCollectionSpanExporter } from './trace/index.js'
+import { createTracer, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcessor, WebCollectionSpanExporter } from './trace/index.js'
+// Phase 6 · 确定性采样（U06 / SDK-208）：基于 traceId/sessionId 的一致性采样 + 优先级保留。
+import { createDeterministicSampler } from './sampling/index.js'
 // Reliable Transport v2：可替换、可测试的发送通道与持久化队列（SDK-207 / SDK-219）。
 import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock } from './transport/index.js'
 
@@ -116,8 +118,12 @@ export function createEys(options = {}) {
     maxQueue: 200,
     // maxRetries 表示单次上报失败后的最大重试次数。
     maxRetries: 3,
-    // sampleRate 控制当前会话是否命中采样。
+    // sampleRate 作为 session/global 基础采样率；trace 单元默认复用该值（可由 traceRate 单独指定）。
     sampleRate: 1,
+    // traceRate 单独控制链路（traceId）基础采样率；默认 = sampleRate。
+    traceRate: undefined,
+    // errorSampleRate 控制错误链路/事件的确定性子采样率；默认 undefined = 错误始终保留（优先级）。
+    errorSampleRate: undefined,
     // behavior 控制是否开启行为采集。
     behavior: true,
     console: true,
@@ -181,8 +187,18 @@ export function createEys(options = {}) {
   const sanitizer = createSanitizer(cfg.privacy)
   // 解析同意分类（含 GPC / DNT 信号映射），用于按分类门控高风险采集模块（如回放、body 采样）。
   const consentMap = resolveConsent({ consent: cfg.consent, consentCategories: cfg.privacy?.consentCategories }, globalThis.navigator || {})
-  // 采样未命中时直接返回一个空实现客户端。
-  if (Math.random() > cfg.sampleRate) return noopClient()
+  // Phase 6 · 确定性采样（U06 / SDK-208）：
+  // 用确定性采样器替代「Math.random 命中即整会话丢弃」的旧逻辑——
+  // 同一 traceId / sessionId 永远得到一致决策，错误链路默认强制保留，
+  // 且可在 sampleRate < 1 时仍可解释地按比例保留。不再整会话返回空实现。
+  const sampler = createDeterministicSampler({
+    sampleRate: cfg.sampleRate,
+    traceRate: cfg.traceRate,
+    categorySampleRates: cfg.categorySampleRates,
+    errorSampleRate: cfg.errorSampleRate
+  })
+  // 最近一次采样决策（供 getSamplingDecision 自查，不含敏感数据）。
+  let lastSamplingDecision = null
 
   // sessionId 标识当前页面访问会话。
   const sessionId = getId('eys_sid')
@@ -230,7 +246,8 @@ export function createEys(options = {}) {
         version: SDK_VERSION,
         traceId: pageTraceId,
         baggage: cfg.baggage,
-        sampler: createSampler({ sampleRate: cfg.sampleRate, categorySampleRates: cfg.categorySampleRates })
+        // 链路级采样由同一确定性采样器驱动，保证 trace 内父子 Span 决策一致。
+        sampler
       })
     } catch (err) {
       console.warn('[web-collection] 初始化链路追踪失败，已降级关闭：', err)
@@ -333,7 +350,9 @@ export function createEys(options = {}) {
     getCurrentSpan: () => tracer?.getCurrentSpan?.() ?? null,
     // 隐私与同意自查
     getPrivacyMode: () => sanitizer.mode,
-    getConsentCategories: () => ({ ...consentMap })
+    getConsentCategories: () => ({ ...consentMap }),
+    // 采样自查：返回最近一次采样决策（含规则/采样率/单元），用于 SDK 自诊断页（P2）与调试。
+    getSamplingDecision: () => lastSamplingDecision
   }
 
   function startCapture() {
@@ -582,10 +601,31 @@ export function createEys(options = {}) {
       return
     }
     const item = withBase(event)
-    if (Math.random() > sampleRateFor(eventCategory(item), cfg.categorySampleRates, 1)) {
-      stats.dropped++
-      stats.droppedBySample++
-      return
+    // 回放事件不参与采样丢弃：回放有独立的缓冲区与采样策略（路线图 Phase 7 / SDK-209）。
+    if (item.type !== 'replay') {
+      const category = eventCategory(item)
+      const priority = item.type === 'error'
+      // 错误事件标记其链路优先保留，保证「错误→trace」关联不被采样切断（错误会话按策略保留）。
+      if (priority && item.traceId) sampler.markPriority(item.traceId)
+      const decision = sampler.decide({ traceId: item.traceId, sessionId, category, priority })
+      if (!decision.sampled) {
+        stats.dropped++
+        stats.droppedBySample++
+        lastSamplingDecision = decision
+        // 可解释诊断：丢弃原因带上决策规则/采样率/单元/键，不含任何业务敏感数据。
+        diagnostic.emit('dropped_by_sampling', {
+          rule: decision.rule,
+          rate: decision.rate,
+          unit: decision.unit,
+          key: decision.key,
+          category: decision.category,
+          type: item.type,
+          name: item.name,
+          metric: item.metric
+        })
+        return
+      }
+      lastSamplingDecision = decision
     }
     let prepared = sanitizer.sanitizeEvent(item)
     if (typeof cfg.beforeSend === 'function') {
@@ -769,40 +809,6 @@ export function install(app, options = {}) {
     previous?.(err, instance, info)
   }
   app.config.globalProperties.$eys = eys
-}
-
-/**
- * 采样未命中时返回的空实现客户端
- * 所有方法均为 no-op，无任何副作用。ID 生成器等透传方法则原样返回。
- * @returns {object} 空操作的客户端对象
- */
-function noopClient() {
-  return {
-    track() {},
-    error() {},
-    metric() {},
-    log() {},
-    setUser() {},
-    setConsent() {},
-    setEnabled() {},
-    setContext() {},
-    addBreadcrumb() {},
-    startTransaction() { return { setData() {}, finish() {} } },
-    markPageReady() {},
-    flush() {},
-    destroy() {},
-    startReplay() {},
-    stopReplay() {},
-    flushReplay() {},
-    addReplayEvent() {},
-    takeReplaySnapshot() {},
-    endReplaySegment() {},
-    getPrivacyMode() { return 'balanced' },
-    getConsentCategories() { return { essential: true, performance: true, analytics: true, replay: true, diagnostics: true } },
-    startSpan() { return noopSpan() },
-    withSpan(name, fn) { return fn() },
-    getCurrentSpan() { return null }
-  }
 }
 
 /**

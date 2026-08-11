@@ -1,4 +1,4 @@
-import type { CaptureCategory, ConsentStatus, EysDiagnosticEvent, EysPrivacyOptions, EysTransaction, EysUser } from './index.js'
+import type { CaptureCategory, ConsentStatus, EysDiagnosticEvent, EysPrivacyOptions, EysTransaction, EysUser, SamplingDecision } from './index.js'
 
 /** 平台上下文信息 */
 export interface PlatformContext {
@@ -59,6 +59,10 @@ export interface PlatformEysOptions {
   maxQueue?: number
   maxRetries?: number
   sampleRate?: number
+  /** 链路（traceId）基础采样率（0-1）；默认复用 sampleRate（Phase 6 确定性采样） */
+  traceRate?: number
+  /** 错误链路 / 事件的确定性子采样率（0-1）；默认不设置 = 错误始终保留（优先级，Phase 6） */
+  errorSampleRate?: number
   collectKey?: string
   enabled?: boolean
   consent?: ConsentStatus
@@ -110,6 +114,8 @@ export interface PlatformEysClient {
   instrumentApp<T extends Record<string, any>>(config: T): T
   /** 对 Page 配置做插桩（小程序等平台特有） */
   instrumentPage<T extends Record<string, any>>(config: T): T
+  /** 获取最近一次采样决策（含规则 / 采样率 / 单元 / 键），用于 SDK 自诊断与调试；无决策时返回 null */
+  getSamplingDecision(): SamplingDecision | null
 }
 
 /** 创建通用平台 SDK 实例（需传入自定义适配器） */

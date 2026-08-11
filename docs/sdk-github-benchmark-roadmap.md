@@ -8,7 +8,7 @@
 ## 实施进度追踪
 
 > 本路线图按 P0（可信）→ P1（轻量可组合）→ P2（规模化）分阶段落地。以下勾选框反映**实际开发进度**；完成的条目同时会在第 6 节（U 表）与第 8 节（Backlog）对应行以 `✅` 标注，并注明所属阶段。
-> 最后更新：2026-08-11（Phase 1、Phase 2、Phase 3、Phase 4、Phase 5 完成）
+> 最后更新：2026-08-12（Phase 1、Phase 2、Phase 3、Phase 4、Phase 5、Phase 6 完成）
 
 - [x] **Phase 1 · Tracing 可信性基础**（路线图 P0 首位，已完成并通过测试）
   - [x] **U01** 自定义 Span 生命周期与异步恢复（对应 SDK-201）：`withSpan` 在同步 / 异步 resolve / reject / 异常所有路径调用 `endSpan` 弹栈；Tracer 活动栈从模块级全局改为**实例级**，修复多实例污染；`createTracer` 注册活跃 Tracer 供模块级便捷函数委托。
@@ -30,7 +30,7 @@
   - [x] **SDK-219** BeaconTransport 与页面退出调度：`BeaconTransport` 按 UTF-8 **字节**（默认 60 KiB，非 JS 字符长度）切片，`sendBeacon` 无自定义 Header（不带 `x-app-key`），返回 `queued`/`rejected`/`oversize`/`fallback`；`sendExitBatch` **非破坏性**（事件保留在持久队列，由服务端按 `eventId` 幂等去重）；无 Beacon 且有 `collectKey` 时回退 `fetch keepalive`（带 `x-app-key`）。
   - [x] **API-220（SDK 侧契约）**：每条事件携带稳定 `eventId`（`e-${time}-${counter}-${rand}`），在线发送与 Beacon 均携带，支持服务端 at-least-once 幂等去重；在线 `classifyResponse` 区分 `success`/`retry`(408/425/429/5xx)/`drop`(其余 4xx)，重试走指数退避+抖动并遵守 `Retry-After`，超 `maxRetries` 永久丢弃（`dropped_non_retryable`）；`onDiagnostic` 暴露 `queue_full`/`rate_limited`/`timeout`/`invalid_payload`/`storage_quota`/`dropped_by_sampling`/`beacon_rejected`/`beacon_oversize`/`beacon_fallback` 等健康事件。服务端 `eventId` 入库去重为后端 API-220 范畴，契约已对齐。
   - [x] **传输层单元测试**：新增 `packages/sdk/test/transport.test.js`（31 例），覆盖 `createEventId`/`computeBackoff`/`parseRetryAfter`/`classifyResponse`/诊断/`IndexedDBQueue`（内存降级、容量、replaceAll 双形态）/FetchTransport（成功、500、超时、网络错误、不可用）/BeaconTransport（字节长度、成功、rejected、oversize、字节切片、fetch 回退）/ReliableSender（自动 eventId、成功出队、4xx 丢弃、5xx 退避超限、并发单活跃发送者、退出 Beacon 非破坏性、下一会话恢复）/MultiTabLock（真实 BroadcastChannel 竞争 + 无 Channel 退化），已接入 `npm test`，全部通过。
-- [ ] **Phase 6 · 确定性采样**（U06，SDK-208）。
+- [x] **Phase 6 · 确定性采样**（U06，SDK-208）：新增 `src/sampling/`（哈希原语 + `DeterministicSampler`），基于 traceId/sessionId 的哈希一致性采样、优先级保留错误链路、分类子采样（不破坏 trace）、远端权重、可解释决策与 `dropped_by_sampling` 诊断、`getSamplingDecision()` 自查；浏览器/平台入口与 tracer 接入。
 - [ ] **Phase 7 · Core / Replay 分包与懒加载**（U07，SDK-209 / SDK-210）。
 - [ ] **其余 P1 / P2 与 Week 5–12 里程碑**：按计划推进（见第 7 节）。
 
@@ -463,7 +463,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | U03 ✅ | W3C 传播 | baggage 使用非标准 Header；traceOrigins 只支持精确字符串（Phase 3 已改为标准单一 `baggage` Header，traceOrigins 支持 string/RegExp/function matcher） | 标准 `baggage`/`tracestate`，支持 string/RegExp/function matcher | P0 |
 | U04 ✅ | 隐私 | select/点击文本/用户手机号/网络体策略不一致（Phase 4 已落地统一 sanitizer、默认 balanced、手机号不可逆 hash、select 不采原文、body 默认脱敏） | Privacy v2、统一 sanitizer、默认最小化采集 | P0 |
 | U05 ✅ | 发送队列 | localStorage 同步阻塞；无超时/退避/429；现有 sendBeacon 仅按字符长度判断，缺鉴权、ACK 语义、幂等和失败回退（Phase 5 已落地 Reliable Transport v2：IndexedDB 冷队列 + 内存热队列、AbortController 超时、指数退避+Retry-After、429/5xx 识别、BeaconTransport UTF-8 字节切片与非破坏性退出、eventId 幂等、onDiagnostic 健康事件） | Reliable Transport v2 + BeaconTransport + 服务端 eventId 去重 | P0 |
-| U06 | 采样 | 会话和事件随机决策，Trace/Replay 关联可能断裂 | 基于 trace/session ID 的确定性采样和优先级 | P0 |
+| U06 ✅ | 采样 | 会话和事件随机决策，Trace/Replay 关联可能断裂（Phase 6 已落地 `src/sampling/`：traceId/sessionId 哈希一致性采样、父子 Span 同决策、错误链路优先级保留、分类子采样不破坏 trace、可解释诊断与自查） | 基于 trace/session ID 的确定性采样和优先级 | P0 |
 | U07 | Replay | 默认静态打包、无错误触发保留、无质量指标 | 独立包、懒加载、环形缓冲、Worker 压缩 | P1 |
 | U08 | Web Vitals | FID 仍在核心列表；生命周期覆盖不完整 | web-vitals v5 语义、BFCache/soft nav/LoAF | P1 |
 | U09 | Resource Timing | 个别阶段值使用绝对时间，缓存/SW 归因弱 | 标准阶段差值和 attribution 测试夹具 | P1 |
@@ -515,7 +515,7 @@ client.setView({ name: 'Checkout', route: '/checkout/:id' })
 | SDK-205 ✅ | 标准化 W3C baggage/tracestate | `src/trace/propagation.js`、fetch/xhr | 3d | 与 OTel/Elastic 测试服务互通；CORS 文档完整（Phase 3 已完成：标准 `baggage` 单一 Header + `traceOrigins` string/RegExp/function matcher + 互操作单测 + `docs/w3c-propagation.md`） |
 | SDK-206 ✅ | Privacy v2 与统一 sanitizer | `src/core/sanitizer.js`、`src/core/event.js`、behavior/network/replay | 5d | 隐私测试语料零敏感明文；默认不发送原手机号/选项文本（Phase 4 已完成：统一 sanitizer + 三档策略 + GPC/DNT + 11 例回归测试） |
 | SDK-207 ✅ | IndexedDB Reliable Queue | 新 `src/transport/` | 7d | 刷新、崩溃、断网、quota、429 场景结果可预测且有诊断（Phase 5 已完成：`IndexedDBQueue` + `ReliableSender` 热/冷队列镜像、`next_session_recovered`、`queue_full` 溢出告警、31 例单测全绿） |
-| SDK-208 | 确定性采样与 Replay 策略 | `src/sampling/`、trace/replay | 4d | 同 trace 决策一致；错误会话按策略保留；配置可解释 |
+| SDK-208 ✅ | 确定性采样与 Replay 策略 | `src/sampling/`、trace/replay | 4d | 同 trace 决策一致；错误会话按策略保留；配置可解释（Phase 6 已完成：`DeterministicSampler` + 哈希原语、20 例单测全绿；Replay 独立采样归入 Phase 7 / SDK-209） |
 | SDK-209 | Replay 动态加载与分包 | `src/replay/`、Vite config、exports | 4d | 关闭 Replay 时 ESM 和基础 IIFE 均不下载/包含 rrweb；开启后按需加载成功 |
 | SDK-210 | Replay Worker/压缩/环形缓冲 | replay transport | 7d | 错误前 30 秒可恢复；长任务增量满足预算 |
 | SDK-211 | Web Vitals 与页面生命周期 v2 | `src/performance/` | 6d | BFCache/prerender/pagehide/INP/CLS 对照用例通过 |
