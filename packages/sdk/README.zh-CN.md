@@ -94,6 +94,31 @@ const eys: EysClient = createEys(options)
 eys.track('submit_order', { orderId: 'SO202607100001' })
 ```
 
+### Vue 接入
+
+```js
+import { createApp } from 'vue'
+import WebCollection from '@web-collection/sdk'
+import App from './App.vue'
+
+createApp(App).use(WebCollection, {
+  endpoint: 'https://your-domain.com/api/collect',
+  appId: 'web',
+  release: '1.0.0'
+}).mount('#app')
+```
+
+- `WebCollection` 是 SDK 默认导出，作为 Vue 插件通过 `app.use()` 安装后自动完成初始化。
+- 插件劫持 `app.config.errorHandler`，组件渲染期错误经 `eys.error` 自动上报（携带 `source: 'vue'`、组件名与渲染信息 `info`），无需手动 try/catch。
+- 实例挂载到 `app.config.globalProperties.$eys`，组件内通过 `this.$eys` 调用埋点、日志等方法：
+
+```js
+// 选项式 API
+this.$eys.track('checkout_clicked', { plan: 'pro' })
+```
+
+Vue Router 的页面切换与路由变更会被自动采集——SDK 已劫持 `history.pushState` / `replaceState` 与 `popstate` / `hashchange`，无需额外接入。要求 Vue 3.x。
+
 ### React 接入
 
 ```jsx
