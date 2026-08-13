@@ -94,6 +94,36 @@ const eys: EysClient = createEys(options)
 eys.track('submit_order', { orderId: 'SO202607100001' })
 ```
 
+### React 接入
+
+```jsx
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import { WebCollectionProvider, ErrorBoundary, useWebCollection } from '@web-collection/sdk/react'
+import App from './App'
+
+createRoot(document.getElementById('root')).render(
+  <WebCollectionProvider options={{ endpoint: 'https://your-domain.com/api/collect', appId: 'web', release: '1.0.0' }}>
+    <ErrorBoundary fallback={<p>页面出错了</p>}>
+      <App />
+    </ErrorBoundary>
+  </WebCollectionProvider>
+)
+```
+
+- `WebCollectionProvider` 在应用根挂载一次并完成 SDK 初始化（在 `useEffect` 中执行，仅客户端，因此 Next.js 等 SSR 场景天然安全），通过 React Context 下发实例。
+- `ErrorBoundary` 捕获子树渲染错误并通过 `eys.error` 自动上报。React 没有 Vue 那种 `app.config.errorHandler` 全局钩子，渲染期错误必须由 Error Boundary 捕获。可用 `fallback` 指定兜底 UI，或用 `eys` 传入外部创建的实例。
+- `useWebCollection()` 从 Context 获取 SDK 实例（初始化完成前返回 `null`，建议在事件回调 / effect 中使用，而非首次渲染期依赖）。
+
+```jsx
+function CheckoutButton() {
+  const eys = useWebCollection()
+  return <button onClick={() => eys?.track('checkout_clicked', { plan: 'pro' })}>结算</button>
+}
+```
+
+React Router 的页面切换与路由变更会被自动采集——SDK 已劫持 `history.pushState` / `replaceState` 与 `popstate` / `hashchange`，无需额外接入。要求 React 16.8+。
+
 采集治理与上下文：
 ```js
 const eys = createEys({

@@ -90,6 +90,36 @@ createApp(App).use(WebCollection, {
 }).mount('#app')
 ```
 
+### React Integration
+
+```jsx
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import { WebCollectionProvider, ErrorBoundary, useWebCollection } from '@web-collection/sdk/react'
+import App from './App'
+
+createRoot(document.getElementById('root')).render(
+  <WebCollectionProvider options={{ endpoint: 'https://your-domain.com/api/collect', appId: 'web', release: '1.0.0' }}>
+    <ErrorBoundary fallback={<p>Something went wrong.</p>}>
+      <App />
+    </ErrorBoundary>
+  </WebCollectionProvider>
+)
+```
+
+- `WebCollectionProvider` initializes the SDK once at the app root (in a `useEffect`, client-only — so it is SSR-safe for Next.js). It injects the instance through React Context.
+- `ErrorBoundary` catches React render errors in its subtree and reports them automatically via `eys.error`. React has no global error hook like Vue's `app.config.errorHandler`, so render errors must be caught by an Error Boundary. Provide `fallback` for the fallback UI, or pass `eys` to use an instance created elsewhere.
+- `useWebCollection()` returns the SDK instance from Context (returns `null` until initialization completes; use it inside event handlers / effects, not during the first render).
+
+```jsx
+function CheckoutButton() {
+  const eys = useWebCollection()
+  return <button onClick={() => eys?.track('checkout_clicked', { plan: 'pro' })}>Checkout</button>
+}
+```
+
+React Router page views and route changes are collected automatically — the SDK hooks `history.pushState` / `replaceState` and `popstate` / `hashchange`, so no extra setup is required. Requires React 16.8+.
+
 Enabling `console: true` captures `console.log/info/warn/error` and keeps the latest 20 console breadcrumbs (up to 500 characters each), used for search and reconstructing error context. This is disabled by default to avoid accidentally capturing sensitive data in application logs; use `consoleLevels` to limit the captured levels.
 
 You can also record structured logs proactively:
