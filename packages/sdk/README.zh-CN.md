@@ -1,11 +1,34 @@
-> 中文文档。 [English Documentation](https://unpkg.com/@web-collection/sdk@latest/README.md)
+<div align="center">
 
-# Web Collection SDK 指标说明
+🌐 **[中文文档](./README.zh-CN.md) · [English](./README.md)**
 
-[![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk)
-[![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/LICENSE)
+# 📦 Web Collection SDK 指标说明
 
-## 接入
+> 开箱即用的浏览器端 SDK：错误、性能、回放、链路与行为采集。
+
+[![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/index.d.ts)
+
+</div>
+
+**Web Collection SDK** 是为 [Web Collection](https://github.com/programmerguohuajing/web-collection) 控制台提供数据的浏览器端采集器，以轻量、框架无关的内核采集错误、性能、会话回放、分布式链路与行为数据。
+
+## 📑 目录
+
+- [🚀 接入](#接入)
+- [🔒 隐私与数据最小化](#隐私与数据最小化)
+- [🔗 分布式链路追踪与调用拓扑](#分布式链路追踪与调用拓扑)
+- [🎯 手动埋点](#手动埋点)
+- [📊 行为指标](#行为指标)
+- [⚡ 性能指标](#性能指标)
+- [🌐 请求指标](#请求指标)
+- [🐛 错误指标](#错误指标)
+- [💰 采样与成本控制](#采样与成本控制)
+- [🎬 会话回放](#会话回放)
+- [📋 通用字段](#通用字段)
+- [📡 队列、传输与上报](#队列传输与上报)
+- [📱 小程序与 App 接入](#小程序与-app-接入)
+
+## 🔌 接入
 
 ```js
 import { createEys } from '@web-collection/sdk'
@@ -89,9 +112,9 @@ eys.setConsent('denied')
 eys.setEnabled(false)
 ```
 
-`consent` 默认是 `granted`，拒绝后事件不会进入队列或发起请求。内置脱敏先于 `beforeSend` 执行，请勿在回调中恢复敏感数据。
+`consent` 默认是 `granted`，拒绝后事件不会进入队列或发起请求。内置脱敏先于 `beforeSend` 执行，请勿在回调中恢复敏感数据。设备环境指纹默认开启（`environmentInfo: true`）；运行时版本信息默认关闭（`runtimeInfo: false`）——开启后会在上下文中附加运行时 / SDK 版本。
 
-## 隐私与数据最小化
+## 🔒 隐私与数据最小化
 
 SDK 默认尽量少的采集敏感数据。统一的脱敏引擎（`privacy.mode`）在每条事件**入队前**以及 `beforeSend` **之后**各执行一次，因此即便自定义钩子重新引入敏感数据，也不会被发出。
 
@@ -128,7 +151,7 @@ WebCollection.createEys({
 
 回放遮罩仍沿用 DOM 中的 `.eys-block`（不录制）与 `.eys-ignore`（输入框不录制）。
 
-## 分布式链路追踪与调用拓扑
+## 🔗 分布式链路追踪与调用拓扑
 
 SDK 可以把页面性能、Fetch 和 XHR 事件关联为一棵分布式调用树。拓扑图不是在 SDK 内绘制的：SDK 负责上报 `traceId`、`spanId` 和 `parentSpanId`，监控平台再把相同 `traceId` 的节点聚合起来，并按父子 ID 建立连线。
 
@@ -178,6 +201,7 @@ const eys = createEys({
 | `baggage` | `{}` | 以标准 W3C 单一 `baggage` 请求头传播的静态、非敏感业务上下文。 |
 | `sampleRate` | `1` | `0` 到 `1` 的全局会话采样率；当前会话未命中采样时返回空实现客户端。 |
 | `categorySampleRates` | `{}` | 可选的分类采样率覆盖，在适用场景下也参与 Trace 采样标记。 |
+| `spanExport` | `false` | 开启后，页面根 / 自动请求 / 自定义 Span 经 Processor/Exporter 批量写入 `/api/spans`（0.2.0-beta 起可配合采样默认开启）。 |
 
 ### 拓扑是如何形成的
 
@@ -243,7 +267,7 @@ Access-Control-Expose-Headers: traceparent, traceresponse
 
 生产环境建议从较低的 `sampleRate` 开始，根据采集量、存储和查询预算逐步调整。`baggage` 会随每个链路请求发送，应保持精简且不得包含敏感信息。
 
-## 手动埋点
+## 🎯 手动埋点
 
 ```js
 eys.track('submit_order', {
@@ -259,7 +283,7 @@ eys.track('submit_order', {
 | `name` | 自定义事件名 |
 | `props` | 自定义业务参数 |
 
-## 行为指标
+## 📊 行为指标
 
 默认由 `behavior: true` 开启。
 | 指标 | 触发时机 | 主要 props |
@@ -274,12 +298,21 @@ eys.track('submit_order', {
 | `hashchange` | hash 路由变化 | `from`、`to` |
 | `exposure` | 元素进入视口 50% 且停留约 1 秒 | 元素 `tag/id/className/text/data-track-*` |
 
-可选高噪声行为默认关闭：
+以下可选行为默认关闭：
 ```js
-createEys({ formTracking: true, rageClick: true, deadClick: true, interactionTracking: true })
+createEys({
+  formTracking: true,        // 表单提交 / 输入框聚焦失焦
+  rageClick: true,           // 快速重复点击
+  deadClick: true,           // 无效点击（需元素加 data-track-dead-click）
+  interactionTracking: true, // 通用交互事件
+  selectTracking: true,      // <select> 选项变更
+  inputTracking: true,       // 输入框聚焦 / 失焦 / 变更
+  keyboardTracking: true,    // 键盘按键（默认 Enter / Escape）
+  touchTracking: true        // 触摸开始 / 结束
+})
 ```
 
-其中 `dead_click` 需要元素增加 `data-track-dead-click`，不会采集表单值或剪贴板内容。
+不会采集表单值与剪贴板内容。`dead_click` 需要元素增加 `data-track-dead-click`。`keyboardTrackingKeys`（默认 `['Enter', 'Escape']`）控制 `keyboardTracking` 开启时记录哪些按键。
 
 业务事务：
 ```js
@@ -301,28 +334,54 @@ transaction.finish({ status: 'success' })
 <button data-track data-track-action="save">保存</button>
 ```
 
-## 性能指标
+## ⚡ 性能指标
 
-默认自动采集。
-| 指标 | 含义 | value |
+默认自动采集。每条指标都会带上[通用字段](#通用字段)及自身 `props`。下方按类别分组。
+
+### 页面加载与渲染
+
+| 指标 | 含义 | `value` 来源 |
 | --- | --- | --- |
+| `navigation` | 完整 Navigation Timing 拆解 | `nav.duration` |
 | `ttfb` | 首字节时间 | `navigation.responseStart` |
 | `fp` | First Paint | `startTime` |
 | `fcp` | First Contentful Paint | `startTime` |
+| `first_screen` | 首屏完成（= LCP 时间点） | `lcpEntry.startTime` |
+| `data_ready` | 业务数据就绪（`markPageReady()` 触发） | `performance.now()` |
+| `js_boot` | SDK 初始化到首帧耗时 | `now − sdkStartedAt` |
 | `lcp` | Largest Contentful Paint | `startTime` |
-| `fid` | First Input Delay | `processingStart - startTime` |
-| `inp` | 交互延迟 | `duration` |
-| `cls` | 累积布局偏移 | 会话窗口最大 CLS |
-| `longtask` | 长任务 | `duration` |
-| `resource` | 静态资源加载耗时 | `duration` |
+| `tti` | 可交互时间（基于 longtask 估算） | 估算值 |
+| `tbt` | 总阻塞时间（Σ 时长 > 50ms 部分） | 累计值 |
 
-`resource` props：
-| 字段 | 说明 |
+`navigation` 的 props：`dns`、`tcp`、`tls`、`request`、`download`、`ttfb`、`dom_ready`、`page_load`、`redirect`、`redirect_count`。
+
+### 交互、稳定性与健康度
+
+| 指标 | 含义 |
 | --- | --- |
-| `name` | 资源 URL |
-| `initiatorType` | 资源类型，如 `img/script/css/fetch` |
-| `transferSize` | 传输大小 |
-| `ttfb` | 资源响应开始时间 |
+| `fid` | 首次输入延迟 |
+| `inp` | 交互延迟（Interaction to Next Paint） |
+| `cls` | 累积布局偏移（会话窗口最大值） |
+| `longtask` | 长任务（> 50ms，含 `attribution[]`） |
+| `white_screen` | 白屏检测耗时（有效内容出现的时间） |
+| `blank_screen_rate` | 白屏率——内容渲染后为 `0`，超过 `whiteScreenTimeout` 则为 `100` |
+| `memory` | JS 堆内存快照（`usedJSHeapSize`/`totalJSHeapSize`/`jsHeapSizeLimit`），每 `memoryInterval` 采样一次 |
+| `resource_failure_rate` | 资源加载失败率（`0` / `100`） |
+| `cache_hit_rate` | 缓存命中率（`transferSize === 0 && decodedBodySize > 0` 时为 `100`） |
+| `route_render` | SPA 路由渲染耗时（路由切换之间） |
+| `service_worker_*` | Service Worker 生命周期状态（`installing`/`activated`/…） |
+
+白屏检测始终开启，可用 `whiteScreenSelector`（默认 `'#app > *'`）与 `whiteScreenTimeout`（默认 `5000` ms）调整判定。`memory` 依赖 Chrome 的 `performance.memory`，默认每 `memoryInterval`（`60000` ms）采样一次；设 `memoryInterval: 0` 可关闭周期采样。
+
+### 资源与包体
+
+| 指标 | 含义 | 关键 `props` |
+| --- | --- | --- |
+| `resource` | 静态资源加载耗时 | `name`、`initiatorType`、`transferSize`、`ttfb` |
+| `bundle_summary` | 页面卸载时的 JS/CSS 包体体积摘要（需 `bundleMonitoring: true`） | `jsTotalBytes`、`cssTotalBytes`、`jsCount`、`cssCount`、`chunks[]` |
+| `fetch_body` / `xhr_body` | 请求/响应 body 采样（需 `requestBodySampling > 0`） | 请求/响应 body（经脱敏） |
+
+fetch/XHR 响应中的 Server-Timing 会被解析并附加到对应 `fetch`/`xhr` 指标的 `props`（W3C Server-Timing）。
 
 自定义性能指标：
 ```js
@@ -333,9 +392,9 @@ eys.metric('report_render', performance.now() - start, {
 })
 ```
 
-## 请求指标
+## 🌐 请求指标
 
-默认由 `requests: true` 开启，会采集 `fetch`、`XMLHttpRequest`、`WebSocket`、`EventSource`。
+默认由 `requests: true` 开启，会采集 `fetch`、`XMLHttpRequest`、`WebSocket`、`EventSource`。通过 `requestBodySampling: <0..1>`（默认 `0`）开启请求 / 响应 body 采样；采样到的 body 以 `fetch_body` / `xhr_body` 上报，且始终经过隐私脱敏。
 ### Fetch
 
 ```js
@@ -396,7 +455,7 @@ source.addEventListener('message', event => {
 | `phase: close` | 连接持续时长、消息数、字节数 |
 
 失败时会上报 `SseError`。
-## 错误指标
+## 🐛 错误指标
 
 默认自动采集。
 | 错误 | 触发时机 | 主要 props |
@@ -408,6 +467,8 @@ source.addEventListener('message', event => {
 | `WebSocketError` | WebSocket 异常 | `source`、`readyState` |
 | `SseError` | EventSource 异常 | `source`、`readyState` |
 
+可通过 `workerMonitoring: true` 监控 Web Worker 错误、`serviceWorkerMonitoring: true` 监控 Service Worker 生命周期状态（两者默认均关闭）。
+
 手动上报错误：
 ```js
 try {
@@ -417,7 +478,7 @@ try {
 }
 ```
 
-## 采样与成本控制
+## 💰 采样与成本控制
 
 采样是**确定性**且**可解释**的：相同的 `traceId` 或 `sessionId` 永远得到相同的保留 / 丢弃决策，因此同一条分布式链路不会被拆到保留 / 丢弃两侧，错误关联数据也不会因采样丢失。
 
@@ -443,7 +504,7 @@ const eys = createEys({
 console.log(eys.getSamplingDecision())
 ```
 
-## 会话回放
+## 🎬 会话回放
 
 会话回放基于 rrweb 录制用户 DOM，用于还原错误发生前的操作路径。它**按成本可选**：rrweb **不会**被打入核心包。当 `replay: false`（默认 `true`）时，ESM 与基础 IIFE 均不下载、解析、编译 rrweb。当 `replay: true` 时按需加载——ESM 拆分为独立 `rrweb-*.js` chunk；IIFE 由外部环境通过 `window.rrweb`（或 `replayLibUrl`）提供。
 
@@ -463,6 +524,7 @@ const eys = createEys({
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `replay` | `true` | 是否开启会话回放；`false` 时不下载 rrweb |
+| `replayMaxDuration` | `60000` | 单段最长录制时长（ms）；路由切换或达到该时长时开启新一段 |
 | `replayLibUrl` | `''` | IIFE 自托管场景：外部化 rrweb 脚本地址，加载后暴露 `window.rrweb` |
 | `replayWorkerUrl` | `''` | 压缩 Worker 脚本地址；提供则优先在 Worker 内 gzip |
 | `replayCompression` | `true` | 是否对回放 payload 做 gzip（无 `CompressionStream` 自动降级 `none`） |
@@ -507,7 +569,7 @@ await eys.flushReplay(true)                   // 强制冲刷错误前 30 秒窗
 <input class="eys-ignore" />
 ```
 
-## 通用字段
+## 📋 通用字段
 
 每条事件都会带上：
 | 字段 | 说明 |
@@ -526,15 +588,14 @@ await eys.flushReplay(true)                   // 强制冲刷错误前 30 秒窗
 | `userAgent` | 浏览器 UA |
 | `ts` | 事件时间戳 |
 
-## 队列、传输与上报
+## 📡 队列、传输与上报
 
 事件先进入内存**热队列**，并镜像到 **IndexedDB 冷队列**，因此刷新、崩溃、断网后不丢，并在下一会话恢复（发出 `next_session_recovered` 诊断）。标签页隐藏或页面卸载时，通过 **Beacon** 退出通道冲刷剩余事件（UTF-8 字节切片、非破坏性——服务端按 `eventId` 幂等去重）。
 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `batchSize` | `10` | 普通事件批量上报条数 |
-| `maxBatch` | `50` | 单次传输批次最大条数 |
-| `flushInterval` | `5000` | 定时上报间隔 |
+| `batchSize` | `10` | 普通事件批量上报条数（同时作为单次传输批次上限） |
+| `flushInterval` | `60000` | 定时上报间隔（ms） |
 | `maxQueue` | `200` | 本地队列最大缓存（超出丢弃最旧并触发 `queue_full`） |
 | `maxRetries` | `3` | 在线发送失败重试次数 |
 | `transportTimeout` | `10000` | 单次在线发送超时（ms） |
@@ -549,7 +610,7 @@ await eys.flushReplay(true)                   // 强制冲刷错误前 30 秒窗
 eys.flush()
 ```
 
-## 诊断（`onDiagnostic`）
+## 🩺 诊断（`onDiagnostic`）
 
 传入 `onDiagnostic` 可观测非敏感的 SDK 健康事件。回调不会抛异常、不含业务 PII，可长期在生产开启以监控传输与回放成本：
 
@@ -566,7 +627,7 @@ WebCollection.createEys({
 
 回放事件：`replay_buffer_full`、`replay_worker_unavailable`、`replay_compressed`、`replay_error_triggered`、`replay_recorder_error`、`replay_quality`。
 
-## 小程序与 App 接入
+## 📱 小程序与 App 接入
 
 非 Web 运行时使用独立入口 `@web-collection/sdk/platform`，不会加载 DOM、rrweb、`window` 或 `localStorage`。同一构建产物也可通过 `miniapp`、`uni-app`、`taro`、`react-native` 子路径导入。
 

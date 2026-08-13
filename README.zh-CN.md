@@ -1,18 +1,42 @@
-> 中文文档。 [English Documentation](./README.md)
+<div align="center">
 
-# Web Collection
+🌐 **[中文文档](./README.zh-CN.md) · [English](./README.md)**
 
-[![GitHub stars](https://img.shields.io/github/stars/programmerguohuajing/web-collection?style=social)](https://github.com/programmerguohuajing/web-collection)
-[![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
-[![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
-[![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+# 🛰️ Web Collection
 
-Web Collection 是 pnpm monorepo 版前端监控系统，包含 Vue3 + Element Plus 控制台、Node API 服务和浏览器 SDK。
+> 前端监控、会话回放与产品分析 —— 一个 SDK，一个控制台。
 
-使用控制台定位错误、性能、回放、链路和埋点问题，请参阅 [用户手册](docs/user-manual.md)。
+[![GitHub stars](https://img.shields.io/github/stars/programmerguohuajing/web-collection?style=social)](https://github.com/programmerguohuajing/web-collection) [![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-## 目录
+</div>
+
+Web Collection 是 **pnpm monorepo** 前端监控系统：Vue 3 + Element Plus 控制台、Node API 服务与浏览器 SDK。用控制台定位 **错误、性能、回放、链路与埋点** 问题。
+
+👉 [阅读用户手册](docs/user-manual.zh-CN.md)
+
+<table>
+  <tr>
+    <td align="center">🐛<br><b>错误监控</b><br>JS · Promise · 资源 · Worker</td>
+    <td align="center">⚡<br><b>性能监控</b><br>Web Vitals · 长任务</td>
+    <td align="center">🎬<br><b>会话回放</b><br>rrweb · Canvas · iframe</td>
+  </tr>
+  <tr>
+    <td align="center">🔗<br><b>分布式链路</b><br>traceparent · 拓扑</td>
+    <td align="center">📊<br><b>行为与曝光</b><br>PV · 点击 · 漏斗</td>
+    <td align="center">🔒<br><b>隐私与治理</b><br>采样 · 脱敏</td>
+  </tr>
+</table>
+
+## 📑 目录
+
+- [🚀 快速开始](#快速开始)
+- [🔌 SDK 接入](#sdk-接入)
+- [🧩 能力说明](#能力说明)
+- [🗺️ SourceMap](#sourcemap)
+- [⚙️ 完整配置](#完整配置)
+- [📜 脚本一览](#脚本一览)
+
+## 📂 项目结构
 
 - `apps/web`: 前端监控控制台
 - `apps/api`: Node 后端服务
@@ -23,7 +47,7 @@ Web Collection 是 pnpm monorepo 版前端监控系统，包含 Vue3 + Element P
 - `packages/sdk/src/exposure`: 元素曝光采集
 - `packages/sdk/src/replay`: rrweb 会话回放采集
 
-## 快速开始
+## 🚀 快速开始
 
 ### 环境要求
 
@@ -197,7 +221,7 @@ Node/PostgreSQL 部署支持事件趋势、用户/会话去重、事件属性过
 
 Cloudflare Worker 保留原有产品分析能力，控制台会通过 `/api/capabilities` 自动隐藏 V2 入口。
 
-## SDK 接入
+## 🔌 SDK 接入
 
 ### NPM 接入
 
@@ -245,7 +269,7 @@ createApp(App).use(WebCollection, {
 }).mount('#app')
 ```
 
-## 能力说明
+## 🧩 能力说明
 
 ### 行为埋点
 
@@ -431,7 +455,7 @@ createEys({
 createEys({ replay: false })
 ```
 
-## SourceMap
+## 🗺️ SourceMap
 
 后台控制台可上传 SourceMap，也可调用接口：
 
@@ -444,7 +468,7 @@ curl -X POST http://127.0.0.1:8787/api/sourcemaps \
 
 错误堆栈里的 `app.js:line:column` 会按相同 `release + file` 自动反解到源码位置。
 
-## 完整配置
+## ⚙️ 完整配置
 
 ```js
 createEys({
@@ -491,7 +515,7 @@ await loadHomeData()
 eys.markPageReady()
 ```
 
-## 脚本一览
+## 📜 脚本一览
 
 | 命令 | 说明 |
 | --- | --- |

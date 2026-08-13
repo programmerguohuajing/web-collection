@@ -1,12 +1,38 @@
-# Web Collection 用户手册
+<div align="center">
 
-本文面向接入 Web Collection 的前端开发、测试、产品和运维人员，重点说明如何从“用户反馈一个问题”出发，在控制台中还原现场、定位原因、验证修复。
+<p>
+  <b>🇬🇧 English</b> ·
+  <a href="user-manual.zh-CN.md">🇨🇳 中文</a>
+</p>
 
-生产控制台：[https://web-collection.jingguohua.cc.cd](https://web-collection.jingguohua.cc.cd)
+# 📘 Web Collection User Manual
 
-## 1. 使用前准备
+> A complete troubleshooting guide — from "a user reports an issue" to on-site recreation, root-cause localization, and fix verification.
 
-### 1.1 确认 SDK 正常接入
+[![Docs](https://img.shields.io/badge/docs-user--manual-en-blue)](user-manual.md) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
+</div>
+
+This guide is for front-end developers, QA, product, and operations staff who have integrated Web Collection. It explains how to start from "a user reports an issue", recreate the on-site scenario in the console, locate the cause, and verify the fix.
+
+Production console 👉 [https://web-collection.jingguohua.cc.cd](https://web-collection.jingguohua.cc.cd)
+
+## 📑 Table of Contents
+
+- [🧰 1. Before You Start](#1-before-you-start)
+- [🖥️ 2. Common Console Operations](#2-common-console-operations)
+- [🔍 3. Standard Issue Localization Workflow](#3-standard-issue-localization-workflow)
+- [⚡ 4. Performance Issue Localization](#4-performance-issue-localization)
+- [📈 5. Product & Conversion Issue Localization](#5-product-conversion-issue-localization)
+- [🗺️ 6. SourceMap & Source Localization](#6-sourcemap-source-localization)
+- [🛡️ 7. Collection Governance](#7-collection-governance)
+- [🧪 8. Complete Troubleshooting Example](#8-complete-troubleshooting-example)
+- [❓ 9. FAQ](#9-faq)
+- [✅ 10. Issue Handling Checklist](#10-issue-handling-checklist)
+
+## 🧰 1. Before You Start
+
+### 1.1 Confirm the SDK is properly integrated
 
 ```html
 <script src="https://web-collection.jingguohua.cc.cd/sdk/web-collection-sdk.iife.js"></script>
@@ -19,7 +45,7 @@
 </script>
 ```
 
-登录成功后补充用户信息，后续才能按用户快速检索错误、行为和回放：
+After a successful login, supplement the user information so that errors, behaviors, and replays can later be quickly retrieved by user:
 
 ```js
 eys.setUser({
@@ -29,115 +55,115 @@ eys.setUser({
 })
 ```
 
-建议每次发布都更新 `release`。同一应用不要在不同环境复用同一个 `appId`，可使用 `mall-web-dev`、`mall-web-test`、`mall-web-prod` 区分环境。
+We recommend updating `release` on every release. Do not reuse the same `appId` across different environments; use `mall-web-dev`, `mall-web-test`, `mall-web-prod` to distinguish environments.
 
-### 1.2 验证数据是否进入平台
+### 1.2 Verify data is reaching the platform
 
-1. 打开被监控页面并完成一次页面访问、按钮点击和接口请求。
-2. 浏览器 Network 中确认 `/api/collect` 返回成功，不能长期处于 Pending，也不能出现 CORS 错误。
-3. 进入控制台“行为分析”，选择对应应用和最近时间范围。
-4. 能看到页面访问、点击、性能或请求事件即表示基础采集正常。
+1. Open the monitored page and complete one page view, button click, and API request.
+2. In the browser Network tab, confirm `/api/collect` returns success — it must not stay Pending for long, nor show CORS errors.
+3. Enter "Behavior Analytics", select the corresponding app and the most recent time range.
+4. If you can see page views, clicks, performance, or request events, basic collection is working.
 
-如果行为与埋点明细无数据，依次检查：
+If there is no data in behavior or tracking details, check in order:
 
-- SDK 文件是否成功加载，`window.WebCollection` 是否存在。
-- `endpoint` 是否为完整的 `/api/collect` 地址。
-- `appId`、`release` 是否填写正确。
-- “采集治理”中的应用是否启用、事件采样率是否大于 0、可信来源是否包含当前站点 Origin。
-- 页面是否被广告拦截器、代理、CSP 或浏览器隐私策略拦截。
+- Whether the SDK file loaded successfully and `window.WebCollection` exists.
+- Whether `endpoint` is the full `/api/collect` URL.
+- Whether `appId` and `release` are filled in correctly.
+- In "Collection Governance", whether the app is enabled, whether the event sample rate is greater than 0, and whether the trusted origins include the current site's Origin.
+- Whether the page is blocked by an ad blocker, proxy, CSP, or browser privacy policy.
 
-## 2. 控制台通用操作
+## 🖥️ 2. Common Console Operations
 
-页面顶部的应用、版本、时间范围和关键字是全局条件，会影响当前页面的数据。排查问题时推荐按以下顺序缩小范围：
+The app, version, time range, and keyword at the top of the page are global conditions that affect the data on the current page. When troubleshooting, we recommend narrowing the scope in this order:
 
-1. 选择正确的应用。
-2. 选择用户反馈时使用的版本。
-3. 将时间范围缩小到问题发生前后 10 至 30 分钟。
-4. 使用用户 ID、会话 ID、Trace ID、错误关键字或页面路径继续定位。
+1. Select the correct app.
+2. Select the version the user was on when the issue occurred.
+3. Narrow the time range to 10–30 minutes around when the issue happened.
+4. Use the user ID, session ID, Trace ID, error keyword, or page path to continue locating.
 
-页面内的筛选项只保留当前功能专属条件，例如错误状态、URL/path、用户信息和日志级别。
+Filters within a page keep only conditions specific to that feature, e.g. error status, URL/path, user info, and log level.
 
-## 3. 标准问题定位流程
+## 🔍 3. Standard Issue Localization Workflow
 
-用户反馈问题时，先收集以下最小信息：
+When a user reports an issue, first collect this minimum set of information:
 
-- 发生时间，尽量精确到分钟。
-- 页面地址和操作步骤。
-- 用户 ID；没有登录用户时记录会话 ID。
-- 应用版本。
-- 看到的错误提示、异常截图或失败接口。
+- Time of occurrence, ideally precise to the minute.
+- Page address and steps to reproduce.
+- User ID; if there is no logged-in user, record the session ID.
+- App version.
+- The error message seen, exception screenshot, or failed API.
 
-随后按“总览 → 错误监控 → 会话回放 → 链路追踪/日志 → 行为埋点 → 修复验证”的顺序排查。
+Then troubleshoot in the order: Overview → Error Monitoring → Session Replay → Distributed Tracing/Logs → Behavior Tracking → Fix Verification.
 
-### 3.1 从总览判断问题类型
+### 3.1 Identify the issue type from the Overview
 
-进入“总览”，选择应用、版本和问题发生时间：
+Enter "Overview", select the app, version, and the time the issue occurred:
 
-- **错误数上升**：优先进入“错误监控”。
-- **P95 页面加载耗时升高或页面健康度下降**：进入“性能监控”。
-- **受影响用户增加**：在统一活动中查找关联错误、用户、Trace、日志和回放。
-- **活跃会话异常但没有错误**：查看“行为埋点”“用户路径”和“漏斗分析”。
-- **高优先级问题提示**：点击提示进入关联问题，并优先检查影响用户数和版本范围。
+- **Rising error count**: prioritize "Error Monitoring".
+- **Elevated P95 page-load time or declining page health**: go to "Performance Monitoring".
+- **More affected users**: look for related errors, users, Traces, logs, and replays in Unified Activity.
+- **Abnormal active sessions but no errors**: check "Behavior Tracking", "User Paths", and "Funnel Analysis".
+- **High-priority issue alert**: click the alert to jump to the related issue, and prioritize checking the number of affected users and version scope.
 
-页面健康度基于 Web Vitals 和采集到的页面体验指标综合计算。它适合判断趋势，不代替单项指标诊断；分数下降后仍需查看 LCP、INP、CLS、白屏时间、长任务、慢接口和慢资源。
+Page health is calculated from a combination of Web Vitals and collected page-experience metrics. It is good for judging trends but does not replace single-metric diagnosis; after the score drops you still need to look at LCP, INP, CLS, blank-screen time, long tasks, slow APIs, and slow resources.
 
-### 3.2 在错误监控中确认具体错误
+### 3.2 Confirm the specific error in Error Monitoring
 
-进入“错误监控”后：
+After entering "Error Monitoring":
 
-1. 使用 URL/path、用户 ID、用户名、手机号或错误状态筛选。
-2. 在“错误列表”中按错误信息、类型、状态、版本、出现次数和源码位置确认问题聚合。
-3. 点击“详情”，查看错误消息、堆栈、附加信息、页面、用户、版本和首次/最近发生时间。
-4. 在“错误事件”中查看每一次实际发生的错误及源码行列。
-5. 记录错误对应的会话 ID、Trace ID、页面和发生时间，用于继续关联排查。
+1. Filter by URL/path, user ID, username, phone, or error status.
+2. In the "Error List", confirm the issue aggregation by error message, type, status, version, occurrence count, and source location.
+3. Click "Details" to view the error message, stack, additional info, page, user, version, and first/most-recent occurrence time.
+4. In "Error Events", view each actual occurrence and its source line/column.
+5. Record the session ID, Trace ID, page, and occurrence time corresponding to the error, for continued correlation.
 
-常见错误的处理方向：
+Direction for common errors:
 
-| 错误 | 优先检查 |
+| Error | Check first |
 | --- | --- |
-| `TypeError` / JS 运行时错误 | 具体消息、堆栈、源码行列、触发前操作 |
-| `UnhandledRejection` | 未捕获的异步调用、接口响应和 Promise 错误处理 |
-| `FetchError` | 请求 URL、网络状态、CORS、接口服务是否可用 |
-| `ResourceError` | JS/CSS/图片地址、CDN、缓存和发布产物 |
-| `SseError` | SSE 地址、鉴权、连接关闭状态；业务主动断开不一定是故障 |
-| `WebSocketError` | 建连地址、协议、鉴权、关闭码和网络环境 |
+| `TypeError` / JS runtime error | Specific message, stack, source line/column, action before trigger |
+| `UnhandledRejection` | Uncaught async calls, API responses, Promise error handling |
+| `FetchError` | Request URL, network status, CORS, whether the API service is available |
+| `ResourceError` | JS/CSS/image URLs, CDN, cache, and build artifacts |
+| `SseError` | SSE URL, auth, connection-close status; a business-initiated disconnect is not necessarily a fault |
+| `WebSocketError` | Connection URL, protocol, auth, close code, and network environment |
 
-修复发布后，点击“解决”将问题标记为已解决。如果同一错误指纹在后续版本再次出现，平台可按回归问题告警。
+After the fix is released, click "Resolve" to mark the issue as resolved. If the same error fingerprint reappears in a later version, the platform can alert it as a regression.
 
-### 3.3 用会话回放还原用户现场
+### 3.3 Recreate the user session with Session Replay
 
-从总览中的“播放会话”或“会话回放”页面进入：
+Enter from "Play Session" in Overview or the "Session Replay" page:
 
-1. 按 URL/path、用户 ID、用户名或手机号筛选。
-2. 选择与错误时间和页面一致的会话。
-3. 点击“播放”，观察错误发生前的路由切换、点击、输入、滚动和页面变化。
-4. 将播放时间点与错误事件、日志时间和接口请求时间对齐。
+1. Filter by URL/path, user ID, username, or phone.
+2. Select the session matching the error time and page.
+3. Click "Play" and observe the route changes, clicks, inputs, scrolls, and page changes before the error occurred.
+4. Align the playback timeline with the error event, log time, and API request time.
 
-回放为空时，不要直接判断为没有用户操作，先检查：
+When replay is empty, do not immediately judge that there were no user actions; first check:
 
-- 该会话是否只有结束记录但没有有效 rrweb 数据。
-- 应用的回放采样率是否大于 0。
-- SDK 是否配置了 `replay: false`。
-- 问题是否发生在回放开始前、路由切段间隙或单段最长录制时间之后。
-- 敏感区域是否使用 `.eys-block` 或 `.eys-ignore` 主动排除。
-- 回放缓冲是否因 `replay_buffer_full`（环形缓冲被容量 / 时间窗口淘汰）而压缩——长会话或高频操作可适当调大 `replayBufferSize` / `replayWindowMs`。
-- rrweb 是否内部报错（`replay_recorder_error`）——浏览器兼容性或自定义 `replayOptions` 导致录制失败，详见诊断事件。
-- 使用 IIFE 自托管时 rrweb 是否成功加载：`replayLibUrl` 指向的脚本是否可访问、是否暴露 `window.rrweb`；ESM 则由 SDK 自动按需加载，无需额外配置。
+- Whether the session only has an end record but no valid rrweb data.
+- Whether the app's replay sample rate is greater than 0.
+- Whether the SDK configured `replay: false`.
+- Whether the issue occurred before replay started, in the gap between route segments, or after a single segment's max recording time.
+- Whether sensitive areas used `.eys-block` or `.eys-ignore` to actively exclude them.
+- Whether the replay buffer was compressed due to `replay_buffer_full` (the ring buffer was evicted by capacity / time window) — for long sessions or high-frequency operations you can appropriately increase `replayBufferSize` / `replayWindowMs`.
+- Whether rrweb errored internally (`replay_recorder_error`) — browser incompatibility or a custom `replayOptions` caused recording to fail; see diagnostic events for details.
+- When self-hosting the IIFE, whether rrweb loaded successfully: whether the script at `replayLibUrl` is reachable and exposes `window.rrweb`; with ESM the SDK loads it on demand automatically, no extra config needed.
 
-> **错误触发升采样**：SDK 在页面发生错误时会自动对回放做**错误触发升采样**——把留存窗口从默认 30 秒扩展到 60 秒并升至全采样，同时打上 `replay_error_triggered` 标记。因此带来该标记的错误会话，其回放通常比普通会话更完整，排查时应优先选择这类会话还原现场。
+> **Error-triggered upsampling**: When an error occurs on the page, the SDK automatically performs **error-triggered upsampling** on the replay — extending the retention window from the default 30 seconds to 60 seconds and raising it to full sampling, while tagging it with the `replay_error_triggered` marker. Therefore, error sessions carrying this marker usually have more complete replays than ordinary sessions; when troubleshooting, prioritize these sessions to recreate the on-site scenario.
 
-回放用于还原操作，不应录制密码、验证码、身份证、银行卡等敏感内容。
+Replay is for recreating operations and should not record sensitive content such as passwords, verification codes, ID numbers, or bank cards.
 
-### 3.4 用链路追踪定位接口问题
+### 3.4 Locate API issues with Distributed Tracing
 
-当错误详情或统一活动中存在 Trace ID 时：
+When there is a Trace ID in the error details or Unified Activity:
 
-1. 进入“链路追踪”，搜索该 Trace ID。
-2. 打开链路详情，按时间查看 navigation、fetch、xhr 等 Span。
-3. 重点检查耗时、请求方法、请求 URL、状态码和错误数量。
-4. 判断慢点位于页面导航、前端等待、网络连接还是后端接口。
+1. Enter "Distributed Tracing" and search for that Trace ID.
+2. Open the trace detail and view Spans such as navigation, fetch, and xhr by time.
+3. Focus on duration, request method, request URL, status code, and error count.
+4. Determine whether the slow point is in page navigation, front-end waiting, network connection, or the back-end API.
 
-跨域接口要生成完整链路，必须在 SDK 中明确配置可信来源：
+For cross-origin APIs to generate a complete trace, you must explicitly configure trusted origins in the SDK:
 
 ```js
 window.WebCollection.createEys({
@@ -148,40 +174,40 @@ window.WebCollection.createEys({
 })
 ```
 
-后端服务还需要接收并继续传递标准 `traceparent`，否则平台只能看到前端请求 Span，不能自动展示服务端内部调用。
+The back-end service also needs to receive and continue propagating the standard `traceparent`; otherwise the platform can only see the front-end request Span and cannot automatically show the server-side internal calls.
 
-### 3.5 用日志补充上下文
+### 3.5 Add context with Logs
 
-进入“日志平台”，按级别、用户、会话、Trace ID 或关键字检索。推荐业务在关键步骤主动记录结构化日志：
+Enter "Log Platform" and search by level, user, session, Trace ID, or keyword. We recommend that business code actively records structured logs at key steps:
 
 ```js
-eys.log('info', '订单提交', {
+eys.log('info', 'order submitted', {
   orderId: 'SO10001',
   paymentType: 'wechat'
 })
 ```
 
-需要采集浏览器控制台日志时：
+When you need to collect browser console logs:
 
 ```js
 window.WebCollection.createEys({
-  // 其他配置省略
+  // other config omitted
   console: true,
   consoleLevels: ['info', 'warn', 'error']
 })
 ```
 
-日志中禁止写入密码、Token、Cookie、Authorization、完整手机号和身份证号。生产环境优先使用主动结构化日志，不建议无差别采集全部 `console.log`。
+Do not write passwords, Tokens, Cookies, Authorization, full phone numbers, or ID numbers into logs. In production, prefer active structured logging; do not collect all `console.log` indiscriminately.
 
-### 3.6 用行为埋点确认用户做了什么
+### 3.6 Confirm user actions with Behavior Tracking
 
-“行为埋点”展示页面访问、页面离开、路由切换、点击、滚动、曝光和自定义事件。按钮应提供可读名称：
+"Behavior Tracking" shows page views, page leaves, route changes, clicks, scrolls, exposures, and custom events. Buttons should provide readable names:
 
 ```html
-<button data-track data-track-name="提交订单">提交订单</button>
+<button data-track data-track-name="submit order">submit order</button>
 ```
 
-业务关键动作使用主动埋点，事件名应稳定、语义明确：
+For business-critical actions use active tracking; event names should be stable and semantically clear:
 
 ```js
 eys.track('checkout_submit', {
@@ -190,48 +216,48 @@ eys.track('checkout_submit', {
 })
 ```
 
-不要使用“点击1”“事件2”这类名称，也不要把订单号、用户 ID 等高基数字段拼进事件名；应放在属性中。
+Do not use names like "click1" or "event2", and do not concatenate high-cardinality fields such as order numbers or user IDs into the event name; put them in attributes.
 
-## 4. 性能问题定位
+## ⚡ 4. Performance Issue Localization
 
-进入“性能监控”，先看 Web Vitals，再看慢接口、慢资源和性能事件。
+Enter "Performance Monitoring"; look at Web Vitals first, then slow APIs, slow resources, and performance events.
 
-| 指标 | 含义 | 常见改进方向 |
+| Metric | Meaning | Common improvement direction |
 | --- | --- | --- |
-| LCP | 最大内容元素完成渲染时间 | 优化首屏图片、关键 CSS、接口和服务端响应 |
-| INP | 用户交互响应延迟 | 拆分长任务、减少同步计算、优化事件处理 |
-| CLS | 页面累计布局偏移 | 为图片/广告预留尺寸，避免异步插入内容顶开页面 |
-| FCP | 首次内容渲染时间 | 减少阻塞资源和首屏 JS，优化缓存 |
-| TTFB | 首字节时间 | 排查网络、CDN、网关和服务端处理 |
-| 白屏时间 | 首页首次出现有效内容的时间 | 检查 JS 初始化、路由、首屏接口和渲染阻塞 |
-| 首屏完成时间 | 首屏关键内容可用时间 | 优化关键接口和组件加载顺序 |
-| 长任务 / TBT | 主线程长时间被占用 | 拆分计算、延迟非关键逻辑、使用 Worker |
-| 慢接口率 | 超阈值请求占比 | 查看链路、接口 P75、错误率和请求体大小 |
-| 资源失败率 | 静态资源加载失败占比 | 检查 CDN、版本路径、缓存和跨域 |
+| LCP | Largest Contentful Paint | Optimize first-screen images, critical CSS, APIs, and server response |
+| INP | Interaction to Next Paint | Split long tasks, reduce synchronous computation, optimize event handlers |
+| CLS | Cumulative Layout Shift | Reserve dimensions for images/ads; avoid async-inserted content pushing the layout |
+| FCP | First Contentful Paint | Reduce blocking resources and first-screen JS; optimize caching |
+| TTFB | Time to First Byte | Check network, CDN, gateway, and server-side processing |
+| Blank-screen time | Time until the first valid content appears on the home page | Check JS initialization, routing, first-screen APIs, and render blocking |
+| First-screen completion time | Time when key first-screen content is usable | Optimize key APIs and component load order |
+| Long task / TBT | Main thread occupied for a long time | Split computation, defer non-critical logic, use a Worker |
+| Slow API rate | Proportion of requests exceeding the threshold | Check trace, API P75, error rate, and request body size |
+| Resource failure rate | Proportion of static resources failing to load | Check CDN, version path, cache, and cross-origin |
 
-推荐排查方法：
+Recommended troubleshooting method:
 
-1. 用页面路径筛选问题页面。
-2. 判断是所有用户都慢，还是特定版本、用户或网络环境慢。
-3. 在慢接口和慢资源中找到 P75 较高的对象。
-4. 打开关联 Trace，确认慢耗时的具体 Span。
-5. 对比发布前后版本；如果新版本明显变差，优先检查本次发布差异。
+1. Filter the problem page by page path.
+2. Determine whether all users are slow, or only specific versions, users, or network environments.
+3. Find the object with high P75 in slow APIs and slow resources.
+4. Open the associated Trace and confirm the specific slow Span.
+5. Compare versions before and after the release; if the new version is noticeably worse, prioritize checking the release diff.
 
-## 5. 产品与转化问题定位
+## 📈 5. Product & Conversion Issue Localization
 
-“产品分析”包含事件分析、用户会话、用户路径、漏斗分析、版本对比和自定义仪表盘。
+"Product Analytics" includes event analysis, user sessions, user paths, funnel analysis, version comparison, and custom dashboards.
 
-### 5.1 事件分析
+### 5.1 Event Analysis
 
-选择一个已采集事件，可按事件数、用户数或会话数查看趋势，并按版本、页面、浏览器、设备或事件属性拆分。过滤条件支持等于、属于集合和属性已设置。常用分析可保存后加入自定义仪表盘。
+Select an already-collected event and view trends by event count, user count, or session count, and split by version, page, browser, device, or event attribute. Filter conditions support equals, belongs-to-set, and attribute-is-set. Commonly used analyses can be saved and added to a custom dashboard.
 
-### 5.2 用户路径
+### 5.2 User Paths
 
-设置起始页面、结束页面和最大深度后生成交互式路径图。点击路径节点可查看对应的来源、去向、用户数和会话数。发现异常路径时，可结合行为事件和回放确认是用户主动离开、路由错误还是页面异常。
+After setting the start page, end page, and max depth, an interactive path graph is generated. Click a path node to view its source, destination, user count, and session count. When an abnormal path is found, combine behavior events and replay to confirm whether the user left actively, a route errored, or the page crashed.
 
-### 5.3 漏斗分析
+### 5.3 Funnel Analysis
 
-创建漏斗前，先确保每一步都有稳定的主动埋点。例如：
+Before creating a funnel, ensure each step has a stable active tracking event. For example:
 
 ```js
 eys.track('view_product')
@@ -240,131 +266,131 @@ eys.track('submit_order')
 eys.track('pay_success')
 ```
 
-在“漏斗分析”中填写名称、应用和至少两个步骤，步骤按发生顺序填写；每一步可增加事件属性过滤。漏斗只统计同一会话内按顺序完成的行为。点击“分析”后查看：
+In "Funnel Analysis", fill in the name, app, and at least two steps, in the order they occur; each step can add event attribute filters. The funnel only counts behaviors completed in order within the same session. After clicking "Analyze", view:
 
-- 每一步进入人数和转化率。
-- 步骤间流失人数。
-- 流失用户最后到达的步骤。
-- 流失会话关联的错误和回放。
-- 不同维度和日期的趋势。
+- The number of people entering each step and the conversion rate.
+- The number of users lost between steps.
+- The last step reached by lost users.
+- Errors and replays associated with lost sessions.
+- Trends across different dimensions and dates.
 
-漏斗没有数据时，先在“行为分析”的明细中确认步骤名称完全一致。事件名区分字符，命名不一致或步骤未上报都会导致结果为空。
+If the funnel has no data, first confirm in "Behavior Analytics" details that the step names are exactly consistent. Event names are case-sensitive; inconsistent naming or unreported steps will result in empty results.
 
-### 5.4 版本对比
+### 5.4 Version Comparison
 
-用于比较不同版本的事件数、用户数、错误数和平均 LCP。发布后错误增加或性能下降时，可快速判断是否与新版本相关。
+Used to compare event counts, user counts, error counts, and average LCP across versions. When errors increase or performance drops after a release, you can quickly determine whether it is related to the new version.
 
-## 6. SourceMap 与源码定位
+## 🗺️ 6. SourceMap & Source Localization
 
-生产代码被压缩后，错误堆栈通常只指向打包文件。应在业务构建完成后上传与当前 `appId`、`release` 完全一致的 SourceMap：
+After production code is minified, error stacks usually only point to the bundled file. You should upload the SourceMap that exactly matches the current `appId` and `release` after the business build completes:
 
 ```bash
 pnpm sourcemaps:upload -- --dir dist --app-id mall-web --release 1.0.0 \
   --endpoint https://web-collection.jingguohua.cc.cd
 ```
 
-上传后重新查看错误详情，平台会根据 `release + 打包文件名` 反解源码文件、行号和列号。
+After uploading, re-view the error details; the platform will resolve the source file, line, and column based on `release + bundled file name`.
 
-反解失败时检查：
+When resolution fails, check:
 
-- SDK 的 `release` 是否与上传参数一致。
-- SourceMap 中的打包文件名是否与错误堆栈一致。
-- 构建是否真的生成 `.map` 文件。
-- 发布产物和 SourceMap 是否来自同一次构建。
+- Whether the SDK's `release` matches the upload parameter.
+- Whether the bundled file name in the SourceMap matches the error stack.
+- Whether the build actually generated `.map` files.
+- Whether the released artifacts and SourceMap come from the same build.
 
-SourceMap 仅上传到监控服务，不要随生产静态资源公开发布。
+SourceMaps are uploaded only to the monitoring service and should not be publicly published alongside production static assets.
 
-## 7. 采集治理
+## 🛡️ 7. Collection Governance
 
-“采集治理”用于管理应用和采集成本：
+"Collection Governance" is used to manage apps and collection costs:
 
-- 新增或编辑应用、负责人和平台类型。
-- 设置事件采样率和回放采样率。
-- 配置可信来源、禁用事件类型和禁用事件名称。
-- 管理发布版本和采集密钥。
-- 设置数据保留周期、告警阈值和告警冷却时间。
-- 导出事件、错误和回放 CSV。
-- 执行过期数据清理。
+- Add or edit apps, owners, and platform types.
+- Set event sample rate and replay sample rate.
+- Configure trusted origins, disabled event types, and disabled event names.
+- Manage release versions and collection keys.
+- Set data retention period, alert threshold, and alert cooldown.
+- Export events, errors, and replay CSV.
+- Run expired-data cleanup.
 
-采样建议：
+Sampling recommendations:
 
-- 试点或低流量应用可先使用 100% 事件采样。
-- 回放数据量较大，生产环境根据流量逐步降低采样率。
-- 排查紧急问题时可临时提高采样率，问题结束后恢复。
-- 需要立即停止入库时，将事件采样率和回放采样率设为 0。
-- 降低全局 `sampleRate` **不会丢失错误**：错误事件及其关联的请求链路默认强制保留（优先级保留），即使采样率很低，错误监控与链路仍能查到对应数据；只有在显式配置 `errorSampleRate` 时才会对错误做确定性子采样。
+- Pilot or low-traffic apps can start with 100% event sampling.
+- Replay data volume is large; in production, gradually lower the sample rate based on traffic.
+- When troubleshooting urgent issues, temporarily raise the sample rate, then restore it after the issue is resolved.
+- To stop ingestion immediately, set both event and replay sample rates to 0.
+- Lowering the global `sampleRate` **does not lose errors**: error events and their associated request traces are forcibly retained by default (priority retention); even at a very low sample rate, Error Monitoring and tracing can still find the corresponding data; only when `errorSampleRate` is explicitly configured will errors be deterministically sub-sampled.
 
-**隐私保护（默认最小化采集）**：SDK 默认 `balanced` 档，已自动对 `userPhone` 做不可逆 hash、对邮箱 / 身份证 / 银行卡 / JWT 做值级脱敏、丢弃 `Authorization`/`Cookie` 等敏感请求头、剥离 URL 中的 `token`/`code`/`phone` 等参数。不要在 `baggage` 或埋点属性中放入密码、Token、手机号原文等敏感信息；强合规场景可将 `privacy.mode` 设为 `strict`（URL 丢弃整个 query、下拉框仅采索引与数量）。浏览器发出 **GPC** 或 **DNT** 信号时，未被显式授权的回放与请求体采样会自动降级关闭——如需在用户开启 DNT 时仍采集回放，应在 `privacy.consentCategories` 中显式授权 `replay`。
+**Privacy protection (minimal collection by default)**: The SDK defaults to the `balanced` profile, which already automatically applies an irreversible hash to `userPhone`, value-level masking to email / ID card / bank card / JWT, drops sensitive request headers such as `Authorization` / `Cookie`, and strips `token` / `code` / `phone` and other parameters from URLs. Do not put sensitive information such as passwords, Tokens, or raw phone numbers into `baggage` or tracking attributes; in strict-compliance scenarios, set `privacy.mode` to `strict` (drop the entire query from URLs, collect only indexes and counts for dropdowns). When the browser emits a **GPC** or **DNT** signal, replay and request-body sampling that have not been explicitly authorized are automatically downgraded and disabled — if you still want to collect replay when the user has DNT enabled, explicitly authorize `replay` in `privacy.consentCategories`.
 
-重置采集密钥后，旧密钥失效；必须及时更新业务 SDK 的 `collectKey`，否则新的采集请求会被拒绝。
+After resetting the collection key, the old key becomes invalid; you must promptly update the business SDK's `collectKey`, otherwise new collection requests will be rejected.
 
-## 8. 完整排障示例
+## 🧪 8. Complete Troubleshooting Example
 
-### 场景：用户反馈“提交订单后页面一直转圈”
+### Scenario: A user reports "the page keeps spinning after submitting the order"
 
-1. 向用户确认发生时间、用户 ID、订单号、页面地址和应用版本。
-2. 在“总览”选择应用、版本和发生时间，确认是否同时出现错误或 P95 升高。
-3. 在“错误监控”按用户 ID 和页面路径筛选，发现 `FetchError: Failed to fetch`。
-4. 打开错误详情，记录 Trace ID、会话 ID、请求页面和发生时间。
-5. 点击关联回放，确认用户点击“提交订单”后加载状态一直未结束。
-6. 在“链路追踪”搜索 Trace ID，发现订单接口没有成功状态码且耗时达到超时阈值。
-7. 在“日志平台”按 Trace ID 查询，发现提交前日志存在订单号，但没有成功回调日志。
-8. 在“行为埋点”确认用户只点击了一次“提交订单”，排除重复点击。
-9. 结合浏览器和服务端日志检查网关、CORS、超时或服务异常，并修复请求失败后的 loading 关闭逻辑。
-10. 发布新版本并上传对应 SourceMap，重复测试操作。
-11. 确认新版本接口 Span 成功、错误不再出现、回放中 loading 正常结束，然后将问题标记为“已解决”。
+1. Confirm with the user the time, user ID, order number, page address, and app version.
+2. In "Overview", select the app, version, and time, and confirm whether errors or elevated P95 occurred at the same time.
+3. In "Error Monitoring", filter by user ID and page path, and find `FetchError: Failed to fetch`.
+4. Open the error details and record the Trace ID, session ID, request page, and occurrence time.
+5. Click the associated replay and confirm that the loading state never ended after the user clicked "Submit Order".
+6. In "Distributed Tracing", search the Trace ID and find the order API has no successful status code and its duration hit the timeout threshold.
+7. In "Log Platform", query by Trace ID and find the order number exists in pre-submit logs but there is no success-callback log.
+8. In "Behavior Tracking", confirm the user clicked "Submit Order" only once, ruling out duplicate clicks.
+9. Combine browser and server-side logs to check the gateway, CORS, timeout, or service exception, and fix the loading-close logic after the request fails.
+10. Release a new version and upload the corresponding SourceMap, then repeat the test operation.
+11. Confirm the new version's API Span succeeds, the error no longer appears, and the loading ends normally in replay, then mark the issue as "Resolved".
 
-### 最终应形成的定位结论
+### Expected root-cause conclusion
 
 ```text
-问题：提交订单后页面持续 loading
-影响：版本 1.0.0，3 名用户，5 次
-时间：2026-07-22 15:30—15:45
-页面：/checkout
-错误：FetchError: Failed to fetch
-链路：traceId=...
-根因：订单接口跨域预检失败，前端失败分支未关闭 loading
-修复：补充 CORS 配置并在 finally 中关闭 loading
-验证：版本 1.0.1 已通过事件、链路和回放验证
+Issue: Page keeps loading after submitting the order
+Impact: Version 1.0.0, 3 users, 5 occurrences
+Time: 2026-07-22 15:30—15:45
+Page: /checkout
+Error: FetchError: Failed to fetch
+Trace: traceId=...
+Root cause: Order API CORS preflight failed; front-end failure branch did not close loading
+Fix: Add CORS config and close loading in finally
+Verification: Version 1.0.1 passed event, trace, and replay verification
 ```
 
-## 9. 常见问题
+## ❓ 9. FAQ
 
-### 控制台有总数但表格没有数据
+### Console shows a total but the table has no data
 
-先点击刷新并确认页码回到第一页，再缩短筛选条件。仍异常时查看浏览器 Network 中对应列表接口的响应，确认 `items`、`page`、`pageSize`、`total` 是否匹配。
+First click refresh and confirm the page number returns to the first page, then shorten the filter conditions. If it is still abnormal, view the corresponding list API response in the browser Network and confirm whether `items`, `page`, `pageSize`, and `total` match.
 
-### 受影响用户一直为 0
+### Affected users stays at 0
 
-确认登录成功后调用了 `setUser`。匿名会话可以用于回放和事件关联，但不能稳定代表真实用户数。
+Confirm `setUser` was called after a successful login. Anonymous sessions can be used for replay and event correlation, but cannot stably represent the real user count.
 
-### 日志平台没有数据
+### Log Platform has no data
 
-主动调用 `eys.log()`，或初始化时开启 `console: true` 并配置 `consoleLevels`。修改配置后重新部署业务应用，再产生一条测试日志。
+Call `eys.log()` actively, or enable `console: true` and configure `consoleLevels` during initialization. After changing the config, redeploy the business app, then generate a test log.
 
-### 行为分析按 URL/path 查询结果不匹配
+### Behavior Analytics query by URL/path does not match
 
-优先填写页面路径，例如 `/pages/login/login`。查询后检查全局应用、版本、时间和关键字是否仍有限制条件。
+Prefer filling in the page path, e.g. `/pages/login/login`. After querying, check whether the global app, version, time, and keyword still have restrictive conditions.
 
-### 回放列表有记录但播放为空
+### Replay list has records but playback is empty
 
-该记录可能没有有效 rrweb 事件。检查回放采样率、SDK 回放配置、录制时长和隐私排除选择器，并用新的测试会话验证。
+The record may have no valid rrweb events. Check the replay sample rate, SDK replay config, recording duration, and privacy-exclusion selectors, and verify with a new test session.
 
-### 漏斗分析返回空数据
+### Funnel Analysis returns empty data
 
-在行为分析明细中确认各步骤已按同一 `appId` 上报，并核对事件名称、发生顺序、时间范围和用户/会话标识。
+In Behavior Analytics details, confirm each step is reported under the same `appId`, and verify the event name, occurrence order, time range, and user/session identifiers.
 
-### `/api/collect` 出现 CORS 错误
+### `/api/collect` shows a CORS error
 
-在“采集治理”的应用配置中加入业务页面的完整 Origin，例如 `https://shop.example.com`，不要填写路径。确认预检请求允许所需的请求头和方法。
+In the app config in "Collection Governance", add the full Origin of the business page, e.g. `https://shop.example.com`, without a path. Confirm the preflight request allows the required headers and methods.
 
-### `/api/collect` 长期处于 Pending
+### `/api/collect` stays Pending for a long time
 
-检查请求体大小、回放批次、网络代理和 Worker 日志。先关闭回放或减小回放批次验证是否与大请求有关，但不要把临时关闭当作最终修复。
+Check the request body size, replay batch, network proxy, and Worker logs. First disable replay or reduce the replay batch to verify whether it is related to large requests, but do not treat the temporary disable as the final fix.
 
-### 如何观测 SDK 自身的传输与回放健康
+### How to observe the SDK's own transport and replay health
 
-通过初始化时的 `onDiagnostic` 回调监听非敏感健康事件，用于监控采集成本与异常，不在业务数据中出现：
+Monitor non-sensitive health events via the `onDiagnostic` callback at initialization, for monitoring collection cost and anomalies without appearing in business data:
 
 ```js
 window.WebCollection.createEys({
@@ -372,24 +398,24 @@ window.WebCollection.createEys({
   appId: 'mall-web',
   release: '1.0.0',
   onDiagnostic: (e) => {
-    // e.type 不含业务 PII，可上报到自有监控
-    if (e.type === 'queue_full') console.warn('本地队列溢出', e)
-    if (e.type === 'replay_buffer_full') console.warn('回放窗口被压缩', e)
-    if (e.type === 'replay_recorder_error') console.warn('rrweb 录制报错', e)
+    // e.type contains no business PII and can be reported to your own monitoring
+    if (e.type === 'queue_full') console.warn('local queue overflow', e)
+    if (e.type === 'replay_buffer_full') console.warn('replay window compressed', e)
+    if (e.type === 'replay_recorder_error') console.warn('rrweb recording error', e)
   }
 })
 ```
 
-常见类型：传输侧 `queue_full`（本地队列溢出）、`dropped_by_sampling`（被采样丢弃）、`beacon_rejected` / `beacon_oversize`（退出通道失败）、`next_session_recovered`（下一会话恢复）；回放侧 `replay_buffer_full`、`replay_worker_unavailable`（压缩降级）、`replay_compressed`（压缩字节数）、`replay_error_triggered`（错误会话标记）、`replay_recorder_error`（录制内部报错）、`replay_quality`（缓冲 / 丢帧 / 页数等质量指标）。
+Common types: transport-side `queue_full` (local queue overflow), `dropped_by_sampling` (dropped by sampling), `beacon_rejected` / `beacon_oversize` (exit-channel failures), `next_session_recovered` (recovered next session); replay-side `replay_buffer_full`, `replay_worker_unavailable` (compression fallback), `replay_compressed` (compressed byte count), `replay_error_triggered` (error-session marker), `replay_recorder_error` (internal recording error), `replay_quality` (buffer / dropped frames / page count and other quality metrics).
 
-## 10. 问题处理检查清单
+## ✅ 10. Issue Handling Checklist
 
-- [ ] 已确认应用、版本、发生时间、页面和用户。
-- [ ] 已在总览判断问题属于错误、性能还是行为/转化。
-- [ ] 已查看具体错误消息、堆栈和源码行列。
-- [ ] 已检查关联会话回放。
-- [ ] 已检查 Trace 和失败/慢请求。
-- [ ] 已检查结构化日志和用户行为。
-- [ ] 已确认 SourceMap 与发布版本一致。
-- [ ] 已记录影响范围、根因、修复内容和验证结果。
-- [ ] 新版本验证通过后已将问题标记解决。
+- [ ] Confirmed app, version, occurrence time, page, and user.
+- [ ] Determined in Overview whether the issue is an error, performance, or behavior/conversion issue.
+- [ ] Viewed the specific error message, stack, and source line/column.
+- [ ] Checked the associated session replay.
+- [ ] Checked the Trace and failed/slow requests.
+- [ ] Checked structured logs and user behavior.
+- [ ] Confirmed the SourceMap matches the release version.
+- [ ] Recorded the impact scope, root cause, fix content, and verification result.
+- [ ] After the new version passes verification, marked the issue resolved.
