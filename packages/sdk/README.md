@@ -1,11 +1,34 @@
-> English documentation. [中文文档](https://unpkg.com/@web-collection/sdk@latest/README.zh-CN.md)
+<div align="center">
 
-# Web Collection SDK
+🌐 **[English](./README.md) · [中文文档](./README.zh-CN.md)**
 
-[![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk)
-[![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/LICENSE)
+# 📦 Web Collection SDK
 
-## Getting Started
+> Drop-in browser SDK for errors, performance, replay, tracing & behavior.
+
+[![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/index.d.ts)
+
+</div>
+
+**Web Collection SDK** is the browser-side collector that powers the [Web Collection](https://github.com/programmerguohuajing/web-collection) console. It captures errors, performance, session replay, distributed tracing and behavior with a tiny, framework-agnostic core.
+
+## 📑 Table of Contents
+
+- [🚀 Getting Started](#getting-started)
+- [🔒 Privacy & Data Protection](#privacy-data-protection)
+- [🔗 Distributed Tracing and Call Topology](#distributed-tracing-and-call-topology)
+- [🎯 Manual Tracking](#manual-tracking)
+- [📊 Behavior Metrics](#behavior-metrics)
+- [⚡ Performance Metrics](#performance-metrics)
+- [🌐 Request Metrics](#request-metrics)
+- [🐛 Error Metrics](#error-metrics)
+- [💰 Sampling & Cost Control](#sampling-cost-control)
+- [🎬 Session Replay](#session-replay)
+- [📋 Common Fields](#common-fields)
+- [📡 Queue, Transport & Reporting](#queue-transport-reporting)
+- [📱 Mini Program and App Integration](#mini-program-and-app-integration)
+
+## 🚀 Getting Started
 
 ```js
 import { createEys } from '@web-collection/sdk'
@@ -116,9 +139,9 @@ eys.setConsent('denied')
 eys.setEnabled(false)
 ```
 
-`consent` defaults to `granted`; once denied, events are neither queued nor sent. Built-in redaction runs before `beforeSend`; do not restore sensitive data inside the callback.
+`consent` defaults to `granted`; once denied, events are neither queued nor sent. Built-in redaction runs before `beforeSend`; do not restore sensitive data inside the callback. Device environment fingerprinting is on by default (`environmentInfo: true`); runtime version enrichment is off by default (`runtimeInfo: false`) — enable it to attach runtime/SDK versions to context.
 
-## Privacy & Data Protection
+## 🔒 Privacy & Data Protection
 
 The SDK minimizes collected sensitive data by default. A unified sanitizer (`privacy.mode`) runs on every event **before** it is queued and **again after** `beforeSend`, so sensitive values are never transmitted even if a custom hook re-introduces them.
 
@@ -154,7 +177,7 @@ createEys({
 
 Replay masking still honors `.eys-block` (never recorded) and `.eys-ignore` (input not recorded) in the DOM.
 
-## Distributed Tracing and Call Topology
+## 🔗 Distributed Tracing and Call Topology
 
 The SDK can correlate page performance, Fetch and XHR events into one distributed call tree. The topology is not drawn in the SDK itself: the SDK reports `traceId`, `spanId` and `parentSpanId`, then the monitoring console groups nodes with the same `traceId` and connects each child to its parent.
 
@@ -205,6 +228,7 @@ All tracing switches default to enabled. A complete automatic request topology r
 | `baggage` | `{}` | Static, non-sensitive business context forwarded as the single standard W3C `baggage` header. |
 | `sampleRate` | `1` | Global session sampling rate from `0` to `1`; a session that is not sampled returns a no-op client. |
 | `categorySampleRates` | `{}` | Optional per-category sampling override. It also contributes to tracing sample flags where applicable. |
+| `spanExport` | `false` | When enabled, root/auto-request/custom Spans are exported in batches via the Processor/Exporter to `/api/spans` (0.2.0-beta can default on together with sampling). |
 
 ### How the topology is formed
 
@@ -270,7 +294,7 @@ If the page shows summary counters but no topology, check the following in order
 
 For production traffic, start with a conservative `sampleRate`, monitor ingestion volume, and increase it only when the storage and query budgets allow. Keep `baggage` small and non-sensitive because it is sent with every traced request.
 
-## Manual Tracking
+## 🎯 Manual Tracking
 
 ```js
 eys.track('submit_order', {
@@ -286,7 +310,7 @@ Stored fields:
 | `name` | Custom event name |
 | `props` | Custom business parameters |
 
-## Behavior Metrics
+## 📊 Behavior Metrics
 
 Enabled by default via `behavior: true`.
 | Metric | Trigger | Main props |
@@ -301,12 +325,21 @@ Enabled by default via `behavior: true`.
 | `hashchange` | Hash route change | `from`, `to` |
 | `exposure` | Element enters viewport at 50% and stays ~1s | element `tag/id/className/text/data-track-*` |
 
-Optional high-noise behaviors are disabled by default:
+Optional behaviors are disabled by default:
 ```js
-createEys({ formTracking: true, rageClick: true, deadClick: true, interactionTracking: true })
+createEys({
+  formTracking: true,       // form submit / field focus-blur
+  rageClick: true,          // rapid repeated clicks
+  deadClick: true,          // click with no effect (needs data-track-dead-click)
+  interactionTracking: true, // generic interaction events
+  selectTracking: true,     // <select> option changes
+  inputTracking: true,      // input focus / blur / change
+  keyboardTracking: true,   // key presses (Enter / Escape by default)
+  touchTracking: true       // touch start / end
+})
 ```
 
-`dead_click` requires adding `data-track-dead-click` to the element; form values and clipboard content are never captured.
+Form values and clipboard content are never captured. `dead_click` requires `data-track-dead-click` on the element. `keyboardTrackingKeys` (default `['Enter', 'Escape']`) controls which keys are recorded when `keyboardTracking` is on.
 
 Business transaction:
 ```js
@@ -328,28 +361,54 @@ Add business attributes to clickable elements:
 <button data-track data-track-action="save">Save</button>
 ```
 
-## Performance Metrics
+## ⚡ Performance Metrics
 
-Collected automatically by default.
-| Metric | Meaning | value |
+Collected automatically by default. Every metric carries the [common fields](#common-fields) plus its own `props`. Metrics are grouped below.
+
+### Page load & render
+
+| Metric | Meaning | `value` source |
 | --- | --- | --- |
+| `navigation` | Full Navigation Timing breakdown | `nav.duration` |
 | `ttfb` | Time to First Byte | `navigation.responseStart` |
 | `fp` | First Paint | `startTime` |
 | `fcp` | First Contentful Paint | `startTime` |
+| `first_screen` | First-screen complete (= LCP timestamp) | `lcpEntry.startTime` |
+| `data_ready` | Business data ready — emitted by `markPageReady()` | `performance.now()` |
+| `js_boot` | SDK init → first paint latency | `now − sdkStartedAt` |
 | `lcp` | Largest Contentful Paint | `startTime` |
-| `fid` | First Input Delay | `processingStart - startTime` |
-| `inp` | Interaction to Next Paint | `duration` |
-| `cls` | Cumulative Layout Shift | max CLS in the session window |
-| `longtask` | Long task | `duration` |
-| `resource` | Static resource load time | `duration` |
+| `tti` | Time to Interactive (long-task estimate) | estimate |
+| `tbt` | Total Blocking Time (Σ durations > 50 ms) | accumulated |
 
-`resource` props:
-| Field | Description |
+`navigation` props: `dns`, `tcp`, `tls`, `request`, `download`, `ttfb`, `dom_ready`, `page_load`, `redirect`, `redirect_count`.
+
+### Interaction, stability & health
+
+| Metric | Meaning |
 | --- | --- |
-| `name` | Resource URL |
-| `initiatorType` | Resource type, e.g. `img/script/css/fetch` |
-| `transferSize` | Transfer size |
-| `ttfb` | Resource response start time |
+| `fid` | First Input Delay |
+| `inp` | Interaction to Next Paint |
+| `cls` | Cumulative Layout Shift (session-window max) |
+| `longtask` | Long task (> 50 ms) with attribution (`name`, `attribution[]`) |
+| `white_screen` | Blank-screen detection latency — time until content appears |
+| `blank_screen_rate` | Blank-screen rate — `0` once content renders, `100` if `whiteScreenTimeout` exceeded |
+| `memory` | JS heap snapshot (`usedJSHeapSize`/`totalJSHeapSize`/`jsHeapSizeLimit`), sampled every `memoryInterval` |
+| `resource_failure_rate` | Resource load failure rate (`0` / `100`) |
+| `cache_hit_rate` | Cache hit rate (`100` when `transferSize === 0 && decodedBodySize > 0`) |
+| `route_render` | SPA route render latency (between route changes) |
+| `service_worker_*` | Service Worker lifecycle state (`installing`/`activated`/…) |
+
+White-screen detection is always on; tune it with `whiteScreenSelector` (default `'#app > *'`) and `whiteScreenTimeout` (default `5000` ms). `memory` requires Chrome's `performance.memory` and is sampled every `memoryInterval` (default `60000` ms); set `memoryInterval: 0` to disable periodic sampling.
+
+### Resource & bundle
+
+| Metric | Meaning | Key `props` |
+| --- | --- | --- |
+| `resource` | Static resource load time | `name`, `initiatorType`, `transferSize`, `ttfb` |
+| `bundle_summary` | JS/CSS bundle size summary at unload (enable `bundleMonitoring: true`) | `jsTotalBytes`, `cssTotalBytes`, `jsCount`, `cssCount`, `chunks[]` |
+| `fetch_body` / `xhr_body` | Sampled request/response body (enable `requestBodySampling > 0`) | request/response body (sanitized) |
+
+Server-Timing from fetch/XHR responses is parsed and attached to the corresponding `fetch`/`xhr` metric `props` (W3C Server-Timing).
 
 Custom performance metric:
 ```js
@@ -360,9 +419,9 @@ eys.metric('report_render', performance.now() - start, {
 })
 ```
 
-## Request Metrics
+## 🌐 Request Metrics
 
-Enabled by default via `requests: true`; captures `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`.
+Enabled by default via `requests: true`; captures `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`. Enable request/response body sampling with `requestBodySampling: <0..1>` (default `0`); sampled bodies are emitted as `fetch_body` / `xhr_body` and always pass through the privacy sanitizer.
 ### Fetch
 
 ```js
@@ -423,7 +482,7 @@ source.addEventListener('message', event => {
 | `phase: close` | Connection duration, message count, byte count |
 
 `SseError` is reported on failure.
-## Error Metrics
+## 🐛 Error Metrics
 
 Collected automatically by default.
 | Error | Trigger | Main props |
@@ -435,6 +494,8 @@ Collected automatically by default.
 | `WebSocketError` | WebSocket exception | `source`, `readyState` |
 | `SseError` | EventSource exception | `source`, `readyState` |
 
+Web Worker errors and Service Worker lifecycle can be monitored with `workerMonitoring: true` and `serviceWorkerMonitoring: true` (both off by default).
+
 Report errors manually:
 ```js
 try {
@@ -444,7 +505,7 @@ try {
 }
 ```
 
-## Sampling & Cost Control
+## 💰 Sampling & Cost Control
 
 Sampling is **deterministic** and **explainable**: the same `traceId` or `sessionId` always yields the same keep/drop decision, so a distributed trace is never split across the keep/drop boundary and error-linked data is never lost to sampling.
 
@@ -470,7 +531,7 @@ const eys = createEys({
 console.log(eys.getSamplingDecision())
 ```
 
-## Session Replay
+## 🎬 Session Replay
 
 Session Replay records the user's DOM via rrweb so you can replay the steps leading to an error. It is **opt-in by cost**: rrweb is **not** bundled into the core package. When `replay: false` (the default is `true`), neither the ESM nor the base IIFE build downloads, parses or compiles rrweb. When `replay: true`, rrweb is loaded on demand — ESM splits it into a separate `rrweb-*.js` chunk; the IIFE build expects rrweb to be provided externally via `window.rrweb` (or `replayLibUrl`).
 
@@ -490,6 +551,7 @@ const eys = createEys({
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `replay` | `true` | Enable replay; `false` ⇒ no rrweb download at all |
+| `replayMaxDuration` | `60000` | Max recording duration per segment (ms); a new segment starts on route change or when this is exceeded |
 | `replayLibUrl` | `''` | IIFE self-hosting: external rrweb script that exposes `window.rrweb` |
 | `replayWorkerUrl` | `''` | Compression Worker URL; when set, gzip runs off the main thread |
 | `replayCompression` | `true` | gzip the replay payload (`none` fallback if no `CompressionStream`) |
@@ -534,7 +596,7 @@ await eys.flushReplay(true)                   // force-flush the pre-error windo
 <input class="eys-ignore" />
 ```
 
-## Common Fields
+## 📋 Common Fields
 
 Every event carries:
 | Field | Description |
@@ -553,15 +615,14 @@ Every event carries:
 | `userAgent` | Browser UA |
 | `ts` | Event timestamp |
 
-## Queue, Transport & Reporting
+## 📡 Queue, Transport & Reporting
 
 Events are buffered in a memory **hot queue** that is mirrored to an **IndexedDB cold queue**, so they survive page refresh, crashes and offline periods and are recovered on the next session (`next_session_recovered` diagnostic). When the tab is hidden or the page is unloading, a **Beacon** exit channel flushes remaining events (UTF-8 byte-sliced, non-destructive — the server deduplicates by `eventId`).
 
 | Config | Default | Description |
 | --- | --- | --- |
-| `batchSize` | `10` | Batch size for normal event reporting |
-| `maxBatch` | `50` | Max events per transport batch |
-| `flushInterval` | `5000` | Interval for scheduled reporting |
+| `batchSize` | `10` | Batch size for normal event reporting (also the per-transport-batch cap) |
+| `flushInterval` | `60000` | Interval for scheduled reporting (ms) |
 | `maxQueue` | `200` | Max local queue cache (oldest dropped + `queue_full` when exceeded) |
 | `maxRetries` | `3` | Online-send retry attempts before permanent drop |
 | `transportTimeout` | `10000` | Per online-send timeout (ms) |
@@ -576,7 +637,7 @@ Manual flush:
 eys.flush()
 ```
 
-## Diagnostics (`onDiagnostic`)
+## 🩺 Diagnostics (`onDiagnostic`)
 
 Pass `onDiagnostic` to observe non-sensitive SDK health events. The callback never throws and never carries business PII, so it is safe to leave enabled in production for monitoring transport and replay cost:
 
@@ -593,7 +654,7 @@ Transport events: `queue_full`, `rate_limited`, `timeout`, `invalid_payload`, `s
 
 Replay events: `replay_buffer_full`, `replay_worker_unavailable`, `replay_compressed`, `replay_error_triggered`, `replay_recorder_error`, `replay_quality`.
 
-## Mini Program and App Integration
+## 📱 Mini Program and App Integration
 
 For non-Web runtimes, use the standalone entry `@web-collection/sdk/platform`, which does not load DOM, rrweb, `window` or `localStorage`. The same build artifact can also be imported via the `miniapp`, `uni-app`, `taro` and `react-native` subpaths.
 

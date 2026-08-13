@@ -3,6 +3,7 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
 import SearchPanel from '../../../components/SearchPanel.vue'
 import DistributedTraceTree from '../../../components/DistributedTraceTree.vue'
+import TopologyChart from '../../../components/TopologyChart.vue'
 import { formatDuration, formatSpanId, formatSpanStatus, spanStatusType } from '../../../utils/format.js'
 
 const traces = ref([])
@@ -12,6 +13,10 @@ const drawerOpen = ref(false)
 const pager = reactive({ page: 1, pageSize: 10, total: 0 })
 const spanPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const activeTab = ref('spans')
+const topology = ref({ nodes: [], edges: [] })
+const topoLoading = ref(false)
+const topoError = ref('')
+let topoRequestId = 0
 const listLoading = ref(false)
 const spanLoading = ref(false)
 const listError = ref('')
@@ -99,8 +104,32 @@ async function open(row) {
   drawerOpen.value = true
   spanPager.page = 1
   activeTab.value = 'spans'
+  topology.value = { nodes: [], edges: [] }
+  topoError.value = ''
+  topoRequestId++
   await loadSpans()
 }
+
+async function loadTopology() {
+  if (!active.value?.trace_id) return
+  const requestId = ++topoRequestId
+  topoLoading.value = true
+  topoError.value = ''
+  try {
+    const data = await api(`/api/traces/${encodeURIComponent(active.value.trace_id)}/topology`, { requestKey: `traces:topology:${active.value.trace_id}` })
+    if (requestId !== topoRequestId) return
+    topology.value = { nodes: data?.nodes || [], edges: data?.edges || [] }
+  } catch (error) {
+    if (requestId === topoRequestId && error?.code !== 'ABORT_ERR') topoError.value = error.message || '调用拓扑加载失败'
+  } finally {
+    if (requestId === topoRequestId) topoLoading.value = false
+  }
+}
+
+// 切到“调用拓扑”标签页时按需加载；切换不同 trace 时也会重新拉取。
+watch([activeTab, () => active.value?.trace_id], ([tab, traceId]) => {
+  if (tab === 'topology' && traceId) loadTopology()
+})
 
 function spanDuration(row = {}) {
   const value = row.value ?? row.duration ?? row.duration_ms
@@ -148,6 +177,10 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
       </el-tab-pane>
       <el-tab-pane label="分布式调用树" name="tree">
         <DistributedTraceTree :trace-id="active.trace_id" />
+      </el-tab-pane>
+      <el-tab-pane label="调用拓扑" name="topology">
+        <el-alert v-if="topoError" class="table-error" type="error" :title="topoError" show-icon :closable="false"><template #default><el-button link type="primary" @click="loadTopology">重试</el-button></template></el-alert>
+        <TopologyChart :nodes="topology.nodes" :edges="topology.edges" height="560px" v-loading="topoLoading" />
       </el-tab-pane>
     </el-tabs>
   </el-drawer>

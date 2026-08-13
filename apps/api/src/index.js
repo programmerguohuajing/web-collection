@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
 import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings, updateAlertStatus } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
-import { deleteDashboard, deleteFunnel, deleteInsight, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
+import { deleteDashboard, deleteFunnel, deleteInsight, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -215,6 +215,7 @@ app.get('/api/logs', async (req, res, next) => { try { res.json(await listLogs(f
 app.get('/api/traces', async (req, res, next) => { try { res.json(await listTraces(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await getTrace(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/traces/:traceId/distributed', async (req, res, next) => { try { res.json(await getDistributedTrace(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/traces/:traceId/topology', async (req, res, next) => { try { res.json(await getTraceTopology(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
 // 链路追踪 span 接收端点
 // 兼容两种契约（v1/v2 双读）：
 //   - v1：直接是 Span 数组（或单个 Span 对象），历史 SDK / 手动调用
@@ -253,6 +254,7 @@ app.post('/api/spans', async (req, res, next) => {
 app.get('/api/analytics/sessions', async (req, res, next) => { try { res.json(await getSessions(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId, filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/analytics/click-paths', async (req, res, next) => { try { res.json(await getClickPaths(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/heatmap', async (req, res, next) => { try { res.json(await getHeatmap(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(filters(req.query))) } catch (err) { next(err) } })
 app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(filters(req.query))) } catch (err) { next(err) } })

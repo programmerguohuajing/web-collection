@@ -1,18 +1,43 @@
-> English documentation. [中文文档](./README.zh-CN.md)
+<div align="center">
 
-# Web Collection
+🌐 **[English](./README.md) · [中文文档](./README.zh-CN.md)**
 
-[![GitHub stars](https://img.shields.io/github/stars/programmerguohuajing/web-collection?style=social)](https://github.com/programmerguohuajing/web-collection)
-[![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
-[![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk)
-[![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+# 🛰️ Web Collection
 
-Web Collection is a pnpm monorepo frontend monitoring system, consisting of a Vue3 + Element Plus web console, a Node API service, and a browser SDK.
+> Frontend monitoring, session replay & product analytics — one SDK, one console.
 
-Use the console to locate errors, performance, replays, traces and custom-tracking issues. See the [User Manual](docs/user-manual.md).
+[![GitHub stars](https://img.shields.io/github/stars/programmerguohuajing/web-collection?style=social)](https://github.com/programmerguohuajing/web-collection) [![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-## Table of Contents
+</div>
+
+Web Collection is a **pnpm monorepo** frontend monitoring system: a Vue 3 + Element Plus web console, a Node API service, and a browser SDK. Use the console to locate **errors, performance, replays, traces and custom-tracking** issues.
+
+👉 [Read the User Manual](docs/user-manual.md)
+
+<table>
+  <tr>
+    <td align="center">🐛<br><b>Error Monitoring</b><br>JS · Promise · Resource · Worker</td>
+    <td align="center">⚡<br><b>Performance</b><br>Web Vitals · Long Tasks</td>
+    <td align="center">🎬<br><b>Session Replay</b><br>rrweb · Canvas · iframe</td>
+  </tr>
+  <tr>
+    <td align="center">🔗<br><b>Distributed Tracing</b><br>traceparent · Topology</td>
+    <td align="center">📊<br><b>Behavior & Exposure</b><br>PV · Click · Funnel</td>
+    <td align="center">🔒<br><b>Privacy & Governance</b><br>Sampling · Redaction</td>
+  </tr>
+</table>
+
+## 📑 Table of Contents
+
+- [🚀 Quick Start](#quick-start)
+- [🔌 SDK Integration](#sdk-integration)
+- [🧩 Capabilities](#capabilities)
+- [🖥️ Console Pages](#console-pages)
+- [🗺️ SourceMap](#sourcemap)
+- [⚙️ Full Configuration](#full-configuration)
+- [📜 Script Reference](#script-reference)
+
+## 📂 Project Structure
 
 - `apps/web`: frontend monitoring console
 - `apps/api`: Node backend service
@@ -27,7 +52,7 @@ Use the console to locate errors, performance, replays, traces and custom-tracki
 - `packages/sdk/src/utils/environment.js`: device & environment fingerprint
 - `packages/sdk/src/utils/runtime.js`: build-time runtime info
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Requirements
 
@@ -201,7 +226,7 @@ The Node/PostgreSQL deployment supports event trends, user/session de-duplicatio
 
 The Cloudflare Worker retains the original product analytics capability; the console automatically hides the V2 entry via `/api/capabilities`.
 
-## SDK Integration
+## 🔌 SDK Integration
 
 ### NPM Integration
 
@@ -249,7 +274,7 @@ createApp(App).use(WebCollection, {
 }).mount('#app')
 ```
 
-## Capabilities
+## 🧩 Capabilities
 
 ### Behavior Tracking
 
@@ -463,7 +488,7 @@ createEys({ serviceWorkerMonitoring: true })
 
 Reports `service_worker_registered`, `service_worker_updated`, and `service_worker_error` events.
 
-## Console Pages
+## 🖥️ Console Pages
 
 The web console includes the following pages:
 
@@ -484,7 +509,7 @@ The web console includes the following pages:
 | **SourceMap** | SourceMap upload and management |
 | **Governance** | Application management, release management, alert channels, collection key rotation, data retention, CSV export |
 
-## SourceMap
+## 🗺️ SourceMap
 
 The backend console can upload SourceMaps, or you can call the API:
 
@@ -497,7 +522,7 @@ curl -X POST http://127.0.0.1:8787/api/sourcemaps \
 
 The `app.js:line:column` in the error stack is automatically resolved back to the source location by the same `release + file`.
 
-## Full Configuration
+## ⚙️ Full Configuration
 
 ```js
 createEys({
@@ -590,7 +615,7 @@ await loadHomeData()
 eys.markPageReady()
 ```
 
-## Script Reference
+## 📜 Script Reference
 
 | Command | Description |
 | --- | --- |
