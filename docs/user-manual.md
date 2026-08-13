@@ -15,7 +15,7 @@
 
 This guide is for front-end developers, QA, product, and operations staff who have integrated Web Collection. It explains how to start from "a user reports an issue", recreate the on-site scenario in the console, locate the cause, and verify the fix.
 
-Production console 👉 [https://web-collection.jingguohua.cc.cd](https://web-collection.jingguohua.cc.cd)
+Production console 👉 [https://your-domain.com](https://your-domain.com)
 
 ## 📑 Table of Contents
 
@@ -35,10 +35,10 @@ Production console 👉 [https://web-collection.jingguohua.cc.cd](https://web-co
 ### 1.1 Confirm the SDK is properly integrated
 
 ```html
-<script src="https://web-collection.jingguohua.cc.cd/sdk/web-collection-sdk.iife.js"></script>
+<script src="https://your-domain.com/sdk/web-collection-sdk.iife.js"></script>
 <script>
   const eys = window.WebCollection.createEys({
-    endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+    endpoint: 'https://your-domain.com/api/collect',
     appId: 'mall-web',
     release: '1.0.0'
   })
@@ -167,7 +167,7 @@ For cross-origin APIs to generate a complete trace, you must explicitly configur
 
 ```js
 window.WebCollection.createEys({
-  endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+  endpoint: 'https://your-domain.com/api/collect',
   appId: 'mall-web',
   release: '1.0.0',
   traceOrigins: ['https://api.example.com']
@@ -286,7 +286,7 @@ After production code is minified, error stacks usually only point to the bundle
 
 ```bash
 pnpm sourcemaps:upload -- --dir dist --app-id mall-web --release 1.0.0 \
-  --endpoint https://web-collection.jingguohua.cc.cd
+  --endpoint https://your-domain.com
 ```
 
 After uploading, re-view the error details; the platform will resolve the source file, line, and column based on `release + bundled file name`.
@@ -394,7 +394,7 @@ Monitor non-sensitive health events via the `onDiagnostic` callback at initializ
 
 ```js
 window.WebCollection.createEys({
-  endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+  endpoint: 'https://your-domain.com/api/collect',
   appId: 'mall-web',
   release: '1.0.0',
   onDiagnostic: (e) => {

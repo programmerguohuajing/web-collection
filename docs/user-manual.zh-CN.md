@@ -15,7 +15,7 @@
 
 本文面向接入 Web Collection 的前端开发、测试、产品和运维人员，重点说明如何从“用户反馈一个问题”出发，在控制台中还原现场、定位原因、验证修复。
 
-生产控制台 👉 [https://web-collection.jingguohua.cc.cd](https://web-collection.jingguohua.cc.cd)
+生产控制台 👉 [https://your-domain.com](https://your-domain.com)
 
 ## 📑 目录
 
@@ -35,10 +35,10 @@
 ### 1.1 确认 SDK 正常接入
 
 ```html
-<script src="https://web-collection.jingguohua.cc.cd/sdk/web-collection-sdk.iife.js"></script>
+<script src="https://your-domain.com/sdk/web-collection-sdk.iife.js"></script>
 <script>
   const eys = window.WebCollection.createEys({
-    endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+    endpoint: 'https://your-domain.com/api/collect',
     appId: 'mall-web',
     release: '1.0.0'
   })
@@ -167,7 +167,7 @@ eys.setUser({
 
 ```js
 window.WebCollection.createEys({
-  endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+  endpoint: 'https://your-domain.com/api/collect',
   appId: 'mall-web',
   release: '1.0.0',
   traceOrigins: ['https://api.example.com']
@@ -286,7 +286,7 @@ eys.track('pay_success')
 
 ```bash
 pnpm sourcemaps:upload -- --dir dist --app-id mall-web --release 1.0.0 \
-  --endpoint https://web-collection.jingguohua.cc.cd
+  --endpoint https://your-domain.com
 ```
 
 上传后重新查看错误详情，平台会根据 `release + 打包文件名` 反解源码文件、行号和列号。
@@ -394,7 +394,7 @@ SourceMap 仅上传到监控服务，不要随生产静态资源公开发布。
 
 ```js
 window.WebCollection.createEys({
-  endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+  endpoint: 'https://your-domain.com/api/collect',
   appId: 'mall-web',
   release: '1.0.0',
   onDiagnostic: (e) => {
