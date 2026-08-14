@@ -1,7 +1,8 @@
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
+import KpiGrid from '../components/KpiGrid.vue'
 import { api, normalizePageResponse, queryFromFilters, pageLoading } from '../dashboard.js'
 
 const events = ref([])
@@ -11,6 +12,12 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 const query = reactive({ userId: '', path: '', keyword: '' })
+const liveKpis = computed(() => [
+  { label: '近 5 分钟会话', value: events.value.filter(item => item.sessionId || item.session_id).length.toLocaleString(), delta: '实时', valueClass: 'value-primary' },
+  { label: '近 5 分钟事件', value: Number(total.value || events.value.length).toLocaleString(), delta: '实时事件流', valueClass: 'value-purple' },
+  { label: '实时在线', value: events.value.filter(item => item.userId || item.user_id).length.toLocaleString(), delta: '实时', valueClass: 'value-success' },
+  { label: '实时错误率', value: events.value.length ? `${Math.round(events.value.filter(item => item.type === 'error').length / events.value.length * 10000) / 100}%` : '-', delta: '当前窗口', valueClass: 'value-danger' }
+])
 let pollTimer = 0
 let pollInFlight = false
 
@@ -51,7 +58,7 @@ onBeforeUnmount(() => clearInterval(pollTimer))
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>实时监控</h1><p>最近事件流与系统状态</p></div><div><el-button :loading="initialLoading" @click="pollLive">刷新</el-button></div></div>
+  <KpiGrid :items="liveKpis" />
   <el-card shadow="never" class="section panel">
     <SearchPanel :fields="['path', 'userId', 'keyword']" @search="onSearch" />
     <el-alert v-if="liveError" class="table-error" type="error" :title="liveError" show-icon :closable="false"><template #default><el-button link type="primary" @click="pollLive">重试</el-button></template></el-alert>

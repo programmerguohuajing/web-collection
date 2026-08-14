@@ -1,15 +1,23 @@
 <script setup>
-import { ref } from 'vue'
-import { behavior, behaviorEvents, behaviorPager, setPage, setPageSize, tableLoading, refreshAll } from '../../../dashboard.js'
+import { computed, ref } from 'vue'
+import { behavior, behaviorEvents, behaviorPager, setPage, setPageSize, summary, tableLoading, refreshAll } from '../../../dashboard.js'
 import EventTable from '../../../components/EventTable.vue'
 import HeatmapPanel from '../../../components/HeatmapPanel.vue'
+import KpiGrid from '../../../components/KpiGrid.vue'
 import RankPanel from '../../../components/RankPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
 
 const activeTab = ref('overview')
+const behaviorKpis = computed(() => [
+  { label: '会话数', value: Number(summary.value?.sessions ?? summary.value?.users ?? 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-primary', deltaClass: 'delta-good' },
+  { label: '页面浏览 PV', value: Number(summary.value?.behavior?.pv ?? 0).toLocaleString(), delta: '行为事件', valueClass: 'value-purple', deltaClass: 'delta-good' },
+  { label: '平均停留', value: summary.value?.behavior?.stay ?? '-', delta: '当前筛选范围', valueClass: 'value-success', deltaClass: 'delta-good' },
+  { label: '跳出率', value: summary.value?.behavior?.bounceRate != null ? `${summary.value.behavior.bounceRate}%` : '-', delta: '页面会话', valueClass: 'value-danger', deltaClass: 'delta-good' }
+])
 </script>
 
 <template>
+  <KpiGrid :items="behaviorKpis" />
   <SearchPanel :fields="['path', 'userId', 'keyword']" @search="refreshAll" />
 
   <el-card shadow="never" class="panel section">

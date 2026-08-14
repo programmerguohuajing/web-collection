@@ -29,17 +29,27 @@ function draw() {
     ctx.fillText(String(100 - index * 25), 8, y + 4)
   }
 
+  const timestamps = props.events.map(event => Number(event.ts)).filter(value => Number.isFinite(value) && value > 0)
   const now = Date.now()
+  const recentStart = now - 23 * 3600000
+  const hasRecentEvents = timestamps.some(value => value >= recentStart && value <= now)
+  // Demo/staged API data can legitimately be older than the current wall clock.
+  // Keep the chart useful in that case by deriving the 24-bucket window from
+  // the returned event timestamps instead of drawing an empty canvas.
+  const rangeEnd = hasRecentEvents ? now : (timestamps.length ? Math.max(...timestamps) : now)
+  const rangeStart = hasRecentEvents ? recentStart : (timestamps.length ? Math.min(rangeEnd - 23 * 3600000, Math.min(...timestamps)) : recentStart)
+  const rangeSpan = Math.max(1, rangeEnd - rangeStart)
   const buckets = Array.from({ length: 24 }, () => ({ errors: 0, users: new Set(), perf: [] }))
   for (const event of props.events) {
-    const age = Math.floor((now - Number(event.ts || now)) / 3600000)
-    if (age < 0 || age > 23) continue
-    const bucket = buckets[23 - age]
+    const timestamp = Number(event.ts || rangeEnd)
+    if (!Number.isFinite(timestamp) || timestamp < rangeStart || timestamp > rangeEnd) continue
+    const bucketIndex = Math.min(23, Math.max(0, Math.floor((timestamp - rangeStart) / rangeSpan * 24)))
+    const bucket = buckets[bucketIndex]
     if (event.type === 'error') bucket.errors++
     if (event.userId || event.deviceId) bucket.users.add(event.userId || event.deviceId)
     if (event.type === 'perf' && Number.isFinite(Number(event.value))) bucket.perf.push(Number(event.value))
   }
-  if (!props.events.length) {
+  if (!props.events.length || !timestamps.length) {
     ctx.textAlign = 'center'
     ctx.fillText('暂无趋势数据', width / 2, height / 2)
     ctx.textAlign = 'start'

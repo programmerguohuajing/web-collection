@@ -1,8 +1,9 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { api, normalizePageResponse, pageLoading, queryFromFilters } from '../dashboard.js'
 import SearchPanel from '../components/SearchPanel.vue'
 import TopologyChart from '../components/TopologyChart.vue'
+import KpiGrid from '../components/KpiGrid.vue'
 
 const rows = ref([])
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
@@ -13,6 +14,12 @@ const viewMode = ref('list')
 const clickPaths = ref({ nodes: [], edges: [] })
 const clickLoading = ref(false)
 const clickError = ref('')
+const pathKpis = computed(() => [
+  { label: '路径总数', value: Number(pager.total || rows.value.length).toLocaleString(), delta: '近 24h', valueClass: 'value-primary' },
+  { label: 'Top 路径占比', value: rows.value.length ? '—' : '-', delta: '等待路径数据', valueClass: 'value-purple' },
+  { label: '平均路径深度', value: rows.value.length ? `${(rows.value.reduce((sum, row) => sum + Number(row.depth || row.steps || 0), 0) / rows.value.length).toFixed(1)} 步` : '-', delta: '当前筛选范围', valueClass: 'value-success' },
+  { label: '跳出路径', value: rows.value.filter(row => Number(row.depth || row.steps || 0) <= 1).length.toLocaleString(), delta: '当前筛选范围', valueClass: 'value-danger' }
+])
 let clickRequestId = 0
 
 async function load() {
@@ -75,7 +82,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>用户路径</h1><p>用户最常见的前后页面流转路径</p></div></div>
+  <KpiGrid :items="pathKpis" />
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><div><b>访问路径</b><small style="margin-left:8px">共 {{ pager.total }} 条</small></div><el-button :loading="loading || clickLoading" @click="onSearch">刷新</el-button></div></template>
     <el-tabs v-model="viewMode" @tab-change="onViewModeChange">

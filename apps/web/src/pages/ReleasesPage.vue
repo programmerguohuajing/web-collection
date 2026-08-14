@@ -60,7 +60,6 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>发布管理</h1><p>版本对比、影响分析与回滚建议</p></div></div>
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><div><b>版本列表</b><small style="margin-left:8px">共 {{ pager.total }} 个版本</small></div><el-button :loading="loading" @click="load">刷新</el-button></div></template>
     <el-alert v-if="loadError" class="table-error" type="error" :title="loadError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>

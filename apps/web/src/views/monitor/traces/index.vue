@@ -70,6 +70,10 @@ async function load() {
     const normalized = normalizePageResponse(data, pager)
     traces.value = normalized.items.map(normalizeTrace)
     Object.assign(pager, normalized)
+    // Keep the detail workbench populated when the trace list has data. This
+    // mirrors the design-b split view and avoids an apparently blank topology
+    // until the user discovers that a row must be clicked first.
+    if (!active.value && traces.value.length) await selectTrace(traces.value[0])
   } catch (error) {
     if (requestId === listRequestId && error?.code !== 'ABORT_ERR') listError.value = error.message || '链路列表加载失败'
   } finally {

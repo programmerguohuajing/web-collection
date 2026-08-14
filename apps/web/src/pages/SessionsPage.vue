@@ -113,8 +113,6 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>用户会话</h1><p>单个用户的完整操作轨迹与事件时间线</p></div></div>
-
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><div><b>会话列表</b><small style="margin-left:8px">共 {{ total }} 个会话</small></div><el-button :loading="listLoading" @click="load">刷新</el-button></div></template>
     <SearchPanel :fields="['userId', 'userName', 'userPhone']" @search="onSearch" />
