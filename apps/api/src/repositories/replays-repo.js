@@ -82,10 +82,10 @@ export async function listReplayEventRows(idOrSessionId, limit = 500) {
 }
 
 /** 插入一条回放事件详情记录 */
-export async function insertReplayEventRow({ appId, sessionId, userId, userName, userPhone, createdAt, url, release, endReason, eventsJson }) {
+export async function insertReplayEventRow({ appId, sessionId, userId, userName, userPhone, createdAt, url, release, endReason, eventsJson, baseSessionId }) {
   await run(
-    'insert into replay_events (app_id, session_id, user_id, user_name, user_phone, created_at, url, release, end_reason, events_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)',
-    [appId || 'default', sessionId, userId || null, userName || null, userPhone || null, createdAt, url, release, endReason || null, eventsJson]
+    'insert into replay_events (app_id, session_id, user_id, user_name, user_phone, created_at, url, release, end_reason, events_json, base_session_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)',
+    [appId || 'default', sessionId, userId || null, userName || null, userPhone || null, createdAt, url, release, endReason || null, eventsJson, baseSessionId || null]
   )
 }
 

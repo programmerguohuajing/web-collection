@@ -247,6 +247,7 @@ async function recordReplay(event) {
     url: event.url || null,
     release: event.release || null,
     endReason: event.segmentEndReason || undefined,
+    baseSessionId: event.baseSessionId || null,
     eventsJson: JSON.stringify(events.slice(0, 5000))
   })
 }

@@ -376,6 +376,7 @@ function sanitize(event) {
       userName: clip(event.userName || '', 128),
       userPhone: clip(event.userPhone || '', 32),
       sessionId: clip(event.sessionId || '', 128),
+      baseSessionId: clip(event.baseSessionId || '', 128) || null,
       url: cleanUrl(event.url || ''),
       ts: Number.isFinite(Number(event.ts)) ? Number(event.ts) : Date.now(),
       events: Array.isArray(event.events) ? event.events.slice(0, 200) : [],
