@@ -22,7 +22,18 @@ export function createMiniProgramAdapter(api = detectMiniProgramApi()) {
     getContext: () => miniContext(api, name),
     onError: listener => subscribe(api, 'onError', 'offError', listener),
     onUnhandledRejection: listener => subscribe(api, 'onUnhandledRejection', 'offUnhandledRejection', listener),
-    onNetworkStatusChange: listener => subscribe(api, 'onNetworkStatusChange', 'offNetworkStatusChange', listener)
+    onNetworkStatusChange: listener => subscribe(api, 'onNetworkStatusChange', 'offNetworkStatusChange', listener),
+    // 能力位声明（P1-4）：小程序无 DOM / 曝光 / 回放 / Beacon，但具备网络状态与存储。
+    capabilities: {
+      dom: false,
+      exposure: false,
+      replay: false,
+      networkStatus: typeof api.onNetworkStatusChange === 'function',
+      navigation: false,
+      storage: typeof api.getStorageSync === 'function',
+      beacon: false,
+      visibility: false
+    }
   }
 }
 
@@ -55,7 +66,18 @@ export function createReactNativeAdapter(runtime = {}) {
     onError: runtime.onError,
     onUnhandledRejection: runtime.onUnhandledRejection,
     onNetworkStatusChange: runtime.onNetworkStatusChange,
-    onNavigationStateChange: runtime.onNavigationStateChange
+    onNavigationStateChange: runtime.onNavigationStateChange,
+    // 能力位声明（P1-4）：RN 无 DOM / 曝光 / 回放 / Beacon；网络/导航/存储取决于运行时注入。
+    capabilities: {
+      dom: false,
+      exposure: false,
+      replay: false,
+      networkStatus: typeof runtime.onNetworkStatusChange === 'function',
+      navigation: typeof runtime.onNavigationStateChange === 'function',
+      storage: typeof storage?.getItem === 'function',
+      beacon: false,
+      visibility: false
+    }
   }
 }
 

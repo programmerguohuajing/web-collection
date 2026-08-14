@@ -7,6 +7,9 @@ export const defaultSettings = {
   alerts: { enabled: true, cooldownMinutes: 10, errorCount: 1, error: true, logError: true, regression: true, lcp: 4000, inp: 500, cls: 0.25, longtask: 200 }
 }
 
+/** 应用隐私模式（存储意图）：balanced=SDK 采集层脱敏后入库；raw=全量采集、下游查询层脱敏。 */
+const APP_PRIVACY_MODES = new Set(['balanced', 'raw'])
+
 const knownVersions = new Set()
 const applicationCache = new Map()
 const rulesCache = new Map()
@@ -44,7 +47,7 @@ export async function shouldCollect(appId, type) {
 
 export async function listApplications(filters = {}) {
   const page = pageOf(filters)
-  const select = `select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.created_at, a.updated_at,
+  const select = `select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.privacy_mode, a.created_at, a.updated_at,
     (a.collect_key_hash is not null) as collect_key_enabled, count(distinct r.release_name)::integer as release_count
     from applications a left join releases r on r.app_id = a.app_id
     group by a.app_id order by a.updated_at desc`
@@ -61,12 +64,13 @@ export async function saveApplication(input) {
   const now = Date.now()
   const sampleRate = clampRate(input.sampleRate)
   const replaySampleRate = clampRate(input.replaySampleRate)
+  const privacyMode = normalizeAppPrivacyMode(input.privacyMode)
   await run(
-    `insert into applications (app_id, name, platform, owner, enabled, sample_rate, replay_sample_rate, rules_json, created_at, updated_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
+    `insert into applications (app_id, name, platform, owner, enabled, sample_rate, replay_sample_rate, rules_json, privacy_mode, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)
      on conflict(app_id) do update set name=excluded.name, platform=excluded.platform, owner=excluded.owner,
-       enabled=excluded.enabled, sample_rate=excluded.sample_rate, replay_sample_rate=excluded.replay_sample_rate, rules_json=excluded.rules_json, updated_at=excluded.updated_at`,
-    [appId, String(input.name || appId).slice(0, 128), String(input.platform || 'web').slice(0, 32), String(input.owner || '').slice(0, 128), input.enabled !== false, sampleRate, replaySampleRate, JSON.stringify(normalizeRules(input.rules)), now, now]
+       enabled=excluded.enabled, sample_rate=excluded.sample_rate, replay_sample_rate=excluded.replay_sample_rate, rules_json=excluded.rules_json, privacy_mode=excluded.privacy_mode, updated_at=excluded.updated_at`,
+    [appId, String(input.name || appId).slice(0, 128), String(input.platform || 'web').slice(0, 32), String(input.owner || '').slice(0, 128), input.enabled !== false, sampleRate, replaySampleRate, JSON.stringify(normalizeRules(input.rules)), privacyMode, now, now]
   )
   applicationCache.delete(appId)
   rulesCache.delete(appId)
@@ -275,5 +279,11 @@ function clampInt(value, min, max) { return Math.max(min, Math.min(max, Math.rou
 function cutoff(now, days) { return now - Number(days) * 86400000 }
 function hashKey(value) { return createHash('sha256').update(value).digest('hex') }
 function normalizeRules(input = {}) { return { allowedOrigins: strings(input?.allowedOrigins), blockedTypes: strings(input?.blockedTypes), blockedNames: strings(input?.blockedNames) } }
+function normalizeAppPrivacyMode(value) {
+  // 应用隐私模式：balanced（默认，SDK 采集层脱敏后入库）/ raw（全量采集，下游查询层脱敏）。
+  // 仅这两档用于表达「存储意图」；SDK 的 off/strict 等采集档由 Phase 3 按此映射消费。
+  const v = String(value || '').trim().toLowerCase()
+  return APP_PRIVACY_MODES.has(v) ? v : 'balanced'
+}
 function strings(value) { return Array.isArray(value) ? value.map(String).map(item => item.trim()).filter(Boolean).slice(0, 100) : [] }
 function originOf(value) { try { return new URL(value).origin } catch { return '' } }

@@ -232,6 +232,19 @@ export function resolveConsent(config = {}, navigatorLike = {}) {
 
 /**
  * 创建隐私 sanitizer 实例。
+ *
+ * 两级分类（与项目"全采集、入库全量、脱敏在下游"原则对齐，见 ADR-007）：
+ * - 第一级 · 凭据（credentials）：password/token/secret/authorization/cookie/apikey/privatekey/jwt…
+ *   及其对应请求头（Authorization/Cookie/Set-Cookie/Proxy-Authorization）。这类**不是遥测数据**，
+ *   下游无合法分析用途，明文存储是安全 / 合规负债，因此**在所有档位（含 off）下都常驻剥离**。
+ *   这是有意的 carve-out，不违反"采集层不丢弃"原则（原则针对行为 / 观测遥测，不含凭证）。
+ * - 第二级 · 通用 PII（general PII）：自由文本中的邮箱 / 手机 / 身份证 / 银行卡 / JWT、
+ *   表单值、URL query 敏感参数、请求 / 响应 body PII。这部分**受 mode 控制**：
+ *   balanced / strict 在采集层脱敏；off 保留原文供全量采集。
+ *
+ * 默认 balanced 是**显式且刻意的隐私安全出厂默认**（非隐式），off 是显式 opt-in ——
+ * 用于需要原始第二级 PII、且已具备下游（查询层）按角色脱敏能力的应用。
+ *
  * @param {object} [privacy={}]
  * @param {('off'|'balanced'|'strict')} [privacy.mode='balanced']
  * @param {string[]} [privacy.redactKeys=[]]        - 额外脱敏字段名

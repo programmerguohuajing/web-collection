@@ -14,6 +14,7 @@ import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIs
 import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings, updateAlertStatus } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
 import { deleteDashboard, deleteFunnel, deleteInsight, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
+import { createMaskingMiddleware } from './privacy.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -42,6 +43,13 @@ const app = express()
 app.disable('x-powered-by')
 app.use(express.json({ limit: '20mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8') } }))
 app.use(corsMiddleware)
+
+// 查询侧隐私脱敏（mask-at-query，见 ADR-007）：默认对所有 /api 查询响应递归掩码
+// PII（邮箱/手机/身份证/银行卡/JWT）与凭据字段，作为 raw 模式全量采集的下游兜底，
+// 对 balanced 档（SDK 采集层已脱敏）则是幂等安全网。
+// 授权查看者（请求头 x-eys-raw-access 匹配环境变量 EYS_RAW_ACCESS_TOKEN）可看原文；
+// 写入 / 配置 / 静态类路由不掩码，避免破坏采集、治理配置与资源分发。
+app.use(createMaskingMiddleware())
 
 // 健康检查，给部署平台和监控系统使用。
 app.get('/health', (req, res) => {
