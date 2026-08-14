@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading, toList } from '../../../dashboard.js'
 import AnalyticsChart from '../../../components/AnalyticsChart.vue'
+import FunnelChart from '../../../components/FunnelChart.vue'
 import EventInsightPanel from '../../../components/EventInsightPanel.vue'
 import PathInsightPanel from '../../../components/PathInsightPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
@@ -31,7 +32,7 @@ const analyticsLoading = ref(false)
 const sessionPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const sessionEventPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const funnelPager = reactive({ page: 1, pageSize: 10, total: 0 })
-const funnelForm = reactive({ name: '', appId: '', steps: [emptyFunnelStep(), emptyFunnelStep()] })
+const funnelForm = reactive({ name: '', appId: '', windowMinutes: 0, steps: [emptyFunnelStep(), emptyFunnelStep()] })
 const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors', 'releases'] })
 let timer = 0
 let loadRequestId = 0
@@ -39,6 +40,18 @@ let loadRequestId = 0
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
 const insightOptions = computed(() => insights.value.map(item => ({ label: item.name, value: `insight:${item.id}` })))
 const funnelOptions = computed(() => funnels.value.map(item => ({ label: item.name, value: `funnel:${item.id}` })))
+const funnelTrendChart = computed(() => {
+  const trend = funnelResult.value?.trend || []
+  if (!trend.length) return null
+  const toBucket = date => new Date(`${date}T00:00:00`).getTime()
+  return {
+    table: trend.map(item => ({ bucket: toBucket(item.date), value: 0 })),
+    series: [
+      { name: '进入', points: trend.map(item => ({ bucket: toBucket(item.date), value: item.entered })) },
+      { name: '完成', points: trend.map(item => ({ bucket: toBucket(item.date), value: item.converted })) }
+    ]
+  }
+})
 
 function setPaged(target, pager, data) {
   const normalized = normalizePageResponse(data, pager)
@@ -99,8 +112,9 @@ async function saveFunnel() {
       ? [{ field: step.filterField.startsWith('props.') ? step.filterField : `props.${step.filterField}`, operator: step.filterOperator, value: step.filterOperator === 'in' ? step.filterValue.split(',').map(value => value.trim()).filter(Boolean) : step.filterValue }]
       : []
   })) : selectedSteps.map(step => step.eventName)
-  await api('/api/funnels', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...funnelForm, steps }) })
-  funnelForm.name = ''; funnelForm.steps = [emptyFunnelStep(), emptyFunnelStep()]; funnelPager.page = 1; await loadFunnels()
+  const windowMs = funnelForm.windowMinutes > 0 ? funnelForm.windowMinutes * 60000 : null
+  await api('/api/funnels', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...funnelForm, windowMs, steps }) })
+  funnelForm.name = ''; funnelForm.windowMinutes = 0; funnelForm.steps = [emptyFunnelStep(), emptyFunnelStep()]; funnelPager.page = 1; await loadFunnels()
 }
 async function run(item) { funnelResult.value = await api(`/api/funnels/${item.id}/run?${queryFromFilters()}`) }
 async function removeFunnel(item) {
@@ -134,6 +148,20 @@ function emptyFunnelStep() {
 function stepName(step) { return typeof step === 'string' ? step : step?.eventName || '-' }
 function presentValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '') ?? '-'
+}
+function formatDuration(ms) {
+  if (ms == null) return '-'
+  const totalSeconds = Math.round(ms / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}秒`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes < 60) return seconds ? `${minutes}分${seconds}秒` : `${minutes}分`
+  const hours = Math.floor(minutes / 60)
+  const remMinutes = minutes % 60
+  if (hours < 24) return remMinutes ? `${hours}时${remMinutes}分` : `${hours}时`
+  const days = Math.floor(hours / 24)
+  const remHours = hours % 24
+  return remHours ? `${days}天${remHours}时` : `${days}天`
 }
 function normalizeReleaseRow(row = {}) {
   return {
@@ -241,6 +269,10 @@ watch(selectedDashboardId, loadDashboardResults)
         <el-form class="funnel-meta" label-position="top" @submit.prevent="saveFunnel">
           <el-form-item label="漏斗名称"><el-input v-model="funnelForm.name" placeholder="例如：注册转化" /></el-form-item>
           <el-form-item label="应用 ID"><el-input v-model="funnelForm.appId" placeholder="全部应用（可选）" /></el-form-item>
+          <el-form-item label="转化时间窗(分钟)">
+            <el-input-number v-model="funnelForm.windowMinutes" :min="0" :step="30" controls-position="right" style="width: 160px" />
+            <span class="funnel-window-hint">0 = 不限；限定相邻步骤之间的最大间隔</span>
+          </el-form-item>
         </el-form>
         <div class="funnel-section-head">
           <div><b>转化步骤</b><span>已配置 {{ funnelForm.steps.filter(step => step.eventName).length }}/{{ funnelForm.steps.length }} 步</span></div>
@@ -269,10 +301,19 @@ watch(selectedDashboardId, loadDashboardResults)
       <el-table :data="funnels" border empty-text="暂无漏斗，请填写名称和至少两个步骤后保存"><el-table-column prop="name" label="名称" /><el-table-column prop="app_id" label="应用" /><el-table-column label="步骤"><template #default="{ row }">{{ row.steps_json?.map(stepName).join(' → ') }}</template></el-table-column><el-table-column label="操作" width="140"><template #default="{ row }"><el-button link type="primary" @click="run(row)">分析</el-button><el-button link type="danger" @click="removeFunnel(row)">删除</el-button></template></el-table-column></el-table>
       <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="funnelPager.page" :page-size="funnelPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="funnelPager.total" @current-change="value => { funnelPager.page = value; loadFunnels() }" @size-change="value => { funnelPager.page = 1; funnelPager.pageSize = value; loadFunnels() }" />
       <template v-if="funnelResult">
-        <h2 class="analysis-title">转化与流失</h2>
-        <el-table :data="funnelResult.steps" border><el-table-column prop="step" label="步骤" /><el-table-column prop="count" label="用户数" /><el-table-column prop="rate" label="转化率(%)" /><el-table-column prop="lost" label="流失" /></el-table>
+        <h2 class="analysis-title">转化漏斗</h2>
+        <FunnelChart :steps="funnelResult.steps" :title="funnelResult.windowMs ? `转化窗口 ${formatDuration(funnelResult.windowMs)}` : ''" />
+        <el-table :data="funnelResult.steps" border class="section">
+          <el-table-column prop="step" label="步骤" />
+          <el-table-column prop="count" label="用户数" />
+          <el-table-column prop="rate" label="整体转化率(%)" />
+          <el-table-column prop="stepRate" label="步骤间转化率(%)" />
+          <el-table-column prop="lost" label="流失" />
+          <el-table-column label="步骤间耗时(中位)"><template #default="{ row }">{{ formatDuration(row.timeToConvert) }}</template></el-table-column>
+        </el-table>
         <h2 class="analysis-title">每日趋势</h2>
-        <el-table :data="funnelResult.trend" border><el-table-column prop="date" label="日期" /><el-table-column prop="entered" label="进入" /><el-table-column prop="converted" label="完成" /></el-table>
+        <AnalyticsChart v-if="funnelTrendChart" kind="trend" :result="funnelTrendChart" />
+        <el-table v-else :data="funnelResult.trend" border><el-table-column prop="date" label="日期" /><el-table-column prop="entered" label="进入" /><el-table-column prop="converted" label="完成" /></el-table>
         <h2 class="analysis-title">流失会话</h2>
         <el-table :data="funnelResult.lostSessions" border><el-table-column prop="actor" label="用户" /><el-table-column prop="lastEvent" label="最后步骤" /><el-table-column prop="errors" label="错误" /><el-table-column prop="sessionId" label="会话" /><el-table-column label="回放"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><span v-else>-</span></template></el-table-column></el-table>
         <h2 class="analysis-title">版本 / 浏览器 / 设备维度</h2>
@@ -296,7 +337,7 @@ watch(selectedDashboardId, loadDashboardResults)
         <el-card v-if="typeof widget === 'object' && dashboardResults[widgetKey(widget)]" class="section dashboard-insight" shadow="never">
           <template #header><b>{{ widgetLabel(widget) }}</b></template>
           <AnalyticsChart v-if="widget.type === 'insight'" :kind="insightById(widget.id)?.kind === 'path' ? 'path' : 'trend'" :result="dashboardResults[widgetKey(widget)]" />
-          <el-table v-else :data="dashboardResults[widgetKey(widget)].steps" border><el-table-column prop="step" label="步骤" /><el-table-column prop="count" label="用户数" /><el-table-column prop="rate" label="转化率(%)" /><el-table-column prop="lost" label="流失" /></el-table>
+          <FunnelChart v-else :steps="dashboardResults[widgetKey(widget)].steps" />
         </el-card>
       </template>
     </el-tab-pane>
@@ -315,6 +356,7 @@ watch(selectedDashboardId, loadDashboardResults)
 .funnel-builder-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .funnel-meta { display: grid; grid-template-columns: repeat(2, minmax(220px, 320px)); gap: 16px; }
 .funnel-meta :deep(.el-form-item) { margin-bottom: 14px; }
+.funnel-window-hint { margin-left: 10px; color: var(--muted); font-size: 12px; }
 .funnel-section-head,
 .funnel-candidates-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .funnel-section-head { padding-top: 14px; border-top: 1px solid var(--line); }
