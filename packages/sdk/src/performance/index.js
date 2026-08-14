@@ -3,6 +3,7 @@ import { setupSseMonitor } from './sse.js'
 import { setupWebSocketMonitor } from './websocket.js'
 import { setupXhrMonitor } from './xhr.js'
 import { setupTtiMonitor } from './tti.js'
+import { setupServerTimingMonitor } from './server-timing.js'
 import { observe, onReady } from '../utils/performance.js'
 
 /**
