@@ -17,6 +17,11 @@
   "peerDependencies": {
     "react": ">=16.8.0"
   },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "main": "dist/web-collection-sdk.iife.js",
   "module": "dist/web-collection-sdk.es.js",
   "types": "index.d.ts",

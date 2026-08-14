@@ -81,6 +81,13 @@ importers:
       vite:
         specifier: ^6.3.5
         version: 6.4.3(@types/node@26.1.0)(terser@5.49.0)
+    peerDependencies:
+      react:
+        specifier: '>=16.8.0'
+        version: '>=16.8.0'
+    peerDependenciesMeta:
+      react:
+        optional: true
 
 packages:
 
