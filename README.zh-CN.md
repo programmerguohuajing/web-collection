@@ -223,51 +223,11 @@ Cloudflare Worker 保留原有产品分析能力，控制台会通过 `/api/capa
 
 ## 🔌 SDK 接入
 
-### NPM 接入
+Web Collection SDK 通过 npm 包 [`@web-collection/sdk`](https://www.npmjs.com/package/@web-collection/sdk) 提供，支持 **NPM、Script（IIFE 无构建）、Vue3 插件、React 以及小程序 / 跨端 App** 等多种接入方式。
 
-```js
-import { createEys } from '@web-collection/sdk'
+> 安装：`npm install @web-collection/sdk`
 
-const eys = createEys({
-  endpoint: 'https://your-domain.com/api/collect',
-  appId: 'web',
-  release: '1.0.0',
-  userId: 'u_10001',
-  userName: '张三',
-  userPhone: '13800138000'
-})
-
-eys.setUser({ id: 'u_10002', name: '李四', phone: '13900139000' })
-```
-
-SDK 已发布至 npm：[@web-collection/sdk](https://www.npmjs.com/package/@web-collection/sdk)。完整的 API 参考见 [SDK 文档（中文）](packages/sdk/README.zh-CN.md)（[English](packages/sdk/README.md)）。
-
-### Script 接入
-
-```html
-<script src="https://your-domain.com/sdk/web-collection-sdk.iife.js"></script>
-<script>
-  window.WebCollection.createEys({
-    endpoint: 'https://your-domain.com/api/collect',
-    appId: 'web',
-    release: '1.0.0'
-  })
-</script>
-```
-
-### Vue3 插件接入
-
-```js
-import { createApp } from 'vue'
-import WebCollection from '@web-collection/sdk'
-import App from './App.vue'
-
-createApp(App).use(WebCollection, {
-  endpoint: 'https://your-domain.com/api/collect',
-  appId: 'web',
-  release: '1.0.0'
-}).mount('#app')
-```
+完整接入教程、全部配置项与 API 参考请直接查阅 **[SDK 文档（中文）](packages/sdk/README.zh-CN.md)**（[English](packages/sdk/README.md)）。
 
 ## 🧩 能力说明
 

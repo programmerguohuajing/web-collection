@@ -228,51 +228,11 @@ The Cloudflare Worker retains the original product analytics capability; the con
 
 ## 🔌 SDK Integration
 
-### NPM Integration
+The Web Collection SDK is published as the [`@web-collection/sdk`](https://www.npmjs.com/package/@web-collection/sdk) npm package and supports **NPM, Script (IIFE, no build), the Vue3 plugin, React, and Mini Program / cross-platform App** integrations.
 
-```js
-import { createEys } from '@web-collection/sdk'
+> Install: `npm install @web-collection/sdk`
 
-const eys = createEys({
-  endpoint: 'https://your-domain.com/api/collect',
-  appId: 'web',
-  release: '1.0.0',
-  userId: 'u_10001',
-  userName: 'Zhang San',
-  userPhone: '13800138000'
-})
-
-eys.setUser({ id: 'u_10002', name: 'Li Si', phone: '13900139000' })
-```
-
-The SDK is published on npm: [@web-collection/sdk](https://www.npmjs.com/package/@web-collection/sdk). See the [SDK documentation](packages/sdk/README.md) for the full API reference (also available in [中文](packages/sdk/README.zh-CN.md)).
-
-### Script Integration
-
-```html
-<script src="https://your-domain.com/sdk/web-collection-sdk.iife.js"></script>
-<script>
-  window.WebCollection.createEys({
-    endpoint: 'https://your-domain.com/api/collect',
-    appId: 'web',
-    release: '1.0.0'
-  })
-</script>
-```
-
-### Vue3 Plugin Integration
-
-```js
-import { createApp } from 'vue'
-import WebCollection from '@web-collection/sdk'
-import App from './App.vue'
-
-createApp(App).use(WebCollection, {
-  endpoint: 'https://your-domain.com/api/collect',
-  appId: 'web',
-  release: '1.0.0'
-}).mount('#app')
-```
+For the full integration tutorial, all configuration options, and the API reference, see the **[SDK documentation](packages/sdk/README.md)** (also in [中文](packages/sdk/README.zh-CN.md)).
 
 ## 🧩 Capabilities
 
