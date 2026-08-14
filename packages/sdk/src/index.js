@@ -34,6 +34,23 @@ import { createSanitizer, resolveConsent } from './core/sanitizer.js'
 import { getId } from './utils/id.js'
 import { setupEnvironmentMonitor } from './utils/environment.js'
 import { setupRuntimeMonitor } from './utils/runtime.js'
+// 能力缺口新增监控模块（基于 MDN Web API 全量清单调研）
+import { setupReportingMonitor } from './runtime/reporting.js'
+import { setupLifecycleMonitor } from './runtime/lifecycle.js'
+import { setupComputePressureMonitor } from './runtime/pressure.js'
+import { setupFullscreenMonitor } from './runtime/fullscreen.js'
+import { setupGraphicsMonitor } from './error/graphics.js'
+import { setupMediaMonitor } from './error/media.js'
+import { setupSharedWorkerMonitor } from './error/shared-worker.js'
+import { setupNetworkInfoMonitor } from './performance/network-info.js'
+import { setupOrientationMonitor } from './performance/orientation.js'
+import { setupElementTimingMonitor } from './performance/element-timing.js'
+import { setupWebRtcMonitor } from './performance/webrtc.js'
+import { setupWorkerContextProbe } from './utils/worker-context.js'
+import { setupStorageMonitor } from './utils/storage-monitor.js'
+import { setupPermissionsMonitor } from './utils/permissions-monitor.js'
+import { setupWebShareMonitor } from './behavior/web-share.js'
+import { setupClipboardMonitor } from './behavior/clipboard.js'
 // 链路追踪模块
 import { createTracer, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcessor, WebCollectionSpanExporter } from './trace/index.js'
 // Phase 6 · 确定性采样（U06 / SDK-208）：基于 traceId/sessionId 的一致性采样 + 优先级保留。
@@ -99,6 +116,22 @@ function deriveSpansUrl(endpoint) {
  * @param {boolean} [options.touchTracking=false] - 是否采集 Touch 手势
  * @param {boolean} [options.workerMonitoring=false] - 是否监控 Web Worker 错误
  * @param {boolean} [options.serviceWorkerMonitoring=false] - 是否监控 Service Worker 状态
+ * @param {boolean} [options.reportingMonitoring=true] - 是否监控 ReportingObserver（弃用/干预/CSP/崩溃报告）
+ * @param {boolean} [options.lifecycleMonitoring=true] - 是否监控页面生命周期与 bfcache（freeze/resume/pageshow.persisted）
+ * @param {boolean} [options.graphicsMonitoring=false] - 是否监控 WebGL/WebGPU 上下文丢失
+ * @param {boolean} [options.mediaMonitoring=false] - 是否监控 video/audio 播放错误
+ * @param {boolean} [options.networkInfoMonitoring=true] - 是否监控网络质量变化（connection change）
+ * @param {boolean} [options.orientationMonitoring=true] - 是否监控屏幕方向变化
+ * @param {boolean} [options.elementTimingMonitoring=false] - 是否监控元素级性能（Element Timing）
+ * @param {boolean} [options.sharedWorkerMonitoring=false] - 是否监控 SharedWorker 错误
+ * @param {boolean} [options.workerContextProbe=false] - 是否生成探针采集 Worker 上下文（WorkerNavigator/WorkerLocation）
+ * @param {boolean} [options.webrtcMonitoring=false] - 是否监控 WebRTC 连接质量
+ * @param {boolean} [options.computePressureMonitoring=false] - 是否监控计算压力（CPU/散热）
+ * @param {boolean} [options.fullscreenMonitoring=false] - 是否监控全屏状态变化
+ * @param {boolean} [options.webShareMonitoring=false] - 是否监控 Web Share 意图
+ * @param {boolean} [options.clipboardMonitoring=false] - 是否监控剪贴板操作（仅元数据，不记内容）
+ * @param {boolean} [options.storageEstimateMonitoring=false] - 是否采集存储配额用量
+ * @param {boolean} [options.permissionsMonitoring=false] - 是否采集权限状态快照
  * @returns {object} SDK 客户端实例，包含 track/error/metric/flush/destroy 等方法
  */
 export function createEys(options = {}) {
@@ -207,6 +240,23 @@ export function createEys(options = {}) {
     touchTracking: false,
     workerMonitoring: false,
     serviceWorkerMonitoring: false,
+    // ---- 能力缺口新增配置（基于 MDN Web API 全量清单调研） ----
+    reportingMonitoring: true,        // ReportingObserver：弃用/干预/CSP/崩溃报告
+    lifecycleMonitoring: true,        // 页面生命周期 & bfcache
+    graphicsMonitoring: false,        // WebGL/WebGPU 上下文丢失
+    mediaMonitoring: false,           // video/audio 错误
+    networkInfoMonitoring: true,      // 网络质量变化
+    orientationMonitoring: true,      // 屏幕方向变化
+    elementTimingMonitoring: false,   // 元素级性能（Element Timing）
+    sharedWorkerMonitoring: false,    // SharedWorker 错误
+    workerContextProbe: false,        // Worker 上下文环境探针
+    webrtcMonitoring: false,          // WebRTC 连接质量
+    computePressureMonitoring: false, // 计算压力
+    fullscreenMonitoring: false,      // 全屏状态
+    webShareMonitoring: false,        // Web Share 意图
+    clipboardMonitoring: false,       // 剪贴板操作（仅元数据）
+    storageEstimateMonitoring: false, // 存储配额用量
+    permissionsMonitoring: false,     // 权限状态快照
     // onDiagnostic 暴露传输层自诊断事件（队列满/限流/超时/丢弃/Beacon 等），不含业务敏感数据。
     onDiagnostic: null,
     // transportTimeout 单次在线发送超时（ms），超时按网络错误重试。
@@ -383,6 +433,23 @@ export function createEys(options = {}) {
   let stopWorker = () => {}
   let stopServiceWorker = () => {}
   let stopBundle = () => {}
+  // 能力缺口新增 monitor 清理句柄
+  let stopReporting = () => {}
+  let stopPageLifecycle = () => {}
+  let stopGraphics = () => {}
+  let stopMedia = () => {}
+  let stopNetworkInfo = () => {}
+  let stopOrientation = () => {}
+  let stopElementTiming = () => {}
+  let stopSharedWorker = () => {}
+  let stopWorkerContext = () => {}
+  let stopWebrtc = () => {}
+  let stopPressure = () => {}
+  let stopFullscreen = () => {}
+  let stopWebShare = () => {}
+  let stopClipboard = () => {}
+  let stopStorage = () => {}
+  let stopPermissions = () => {}
   let captureStarted = false
   let performanceStarted = false
   // P2-5 · 启动排队：Web SDK 同步就绪（无异步初始化），但保留缓冲机制以结构统一并保护潜在异步初始化。
@@ -515,6 +582,23 @@ export function createEys(options = {}) {
     if (cfg.workerMonitoring) stopWorker = safe('worker', () => setupWorkerMonitor({ error }))
     if (cfg.serviceWorkerMonitoring) stopServiceWorker = safe('serviceWorker', () => setupServiceWorkerMonitor({ metric, error }))
     if (cfg.bundleMonitoring) stopBundle = safe('bundle', () => setupBundleMonitor({ metric }))
+    // 14) 能力缺口新增监控模块（按 MDN 调研清单逐项接入）
+    if (cfg.reportingMonitoring) stopReporting = safe('reporting', () => setupReportingMonitor({ metric, error }))
+    if (cfg.lifecycleMonitoring) stopPageLifecycle = safe('lifecycle', () => setupLifecycleMonitor({ metric }))
+    if (cfg.graphicsMonitoring) stopGraphics = safe('graphics', () => setupGraphicsMonitor({ metric, error }))
+    if (cfg.mediaMonitoring) stopMedia = safe('media', () => setupMediaMonitor({ error }))
+    if (cfg.networkInfoMonitoring) stopNetworkInfo = safe('networkInfo', () => setupNetworkInfoMonitor({ metric }))
+    if (cfg.orientationMonitoring) stopOrientation = safe('orientation', () => setupOrientationMonitor({ metric }))
+    if (cfg.elementTimingMonitoring) stopElementTiming = safe('elementTiming', () => setupElementTimingMonitor({ metric }))
+    if (cfg.sharedWorkerMonitoring) stopSharedWorker = safe('sharedWorker', () => setupSharedWorkerMonitor({ error }))
+    if (cfg.workerContextProbe) stopWorkerContext = safe('workerContext', () => setupWorkerContextProbe({ context: globalContext }))
+    if (cfg.webrtcMonitoring) stopWebrtc = safe('webrtc', () => setupWebRtcMonitor({ metric }))
+    if (cfg.computePressureMonitoring) stopPressure = safe('pressure', () => setupComputePressureMonitor({ metric }))
+    if (cfg.fullscreenMonitoring) stopFullscreen = safe('fullscreen', () => setupFullscreenMonitor({ metric }))
+    if (cfg.webShareMonitoring) stopWebShare = safe('webShare', () => setupWebShareMonitor({ push }))
+    if (cfg.clipboardMonitoring) stopClipboard = safe('clipboard', () => setupClipboardMonitor({ push }))
+    if (cfg.storageEstimateMonitoring) stopStorage = safe('storage', () => setupStorageMonitor({ context: globalContext, enabled: true }))
+    if (cfg.permissionsMonitoring) stopPermissions = safe('permissions', () => setupPermissionsMonitor({ context: globalContext, enabled: true }))
   }
 
   /**
@@ -634,6 +718,22 @@ export function createEys(options = {}) {
     stopWorker()
     stopServiceWorker()
     stopBundle()
+    stopReporting()
+    stopPageLifecycle()
+    stopGraphics()
+    stopMedia()
+    stopNetworkInfo()
+    stopOrientation()
+    stopElementTiming()
+    stopSharedWorker()
+    stopWorkerContext()
+    stopWebrtc()
+    stopPressure()
+    stopFullscreen()
+    stopWebShare()
+    stopClipboard()
+    stopStorage()
+    stopPermissions()
     clearInterval(whiteScreenTimer)
     whiteScreenTimer = 0
     stopCurrentReplay()
