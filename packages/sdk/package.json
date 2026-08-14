@@ -64,8 +64,6 @@
     "test": "node --test test/event.test.js && node test/platform.test.js && node test/performance.test.js && node test/console.test.js && node test/click.test.js && node test/error.test.js && node --test test/fetch.test.js && node --test test/trace.test.js && node --test test/exporter.test.js && node --test test/propagation.test.js && node --test test/privacy.test.js && node --test test/sampling.test.js && node --test test/transport.test.js && node --test test/replay.test.js"
   },
   "devDependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "rrweb": "2.1.0",
     "terser": "^5.49.0",
     "typescript": "^7.0.2",
