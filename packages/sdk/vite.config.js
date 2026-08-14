@@ -6,10 +6,17 @@
  * 独立的按需 chunk，核心 es 包**不包含** rrweb；只有当 replay 真正开启时才下载该 chunk。
  * IIFE 形态（需外部化 rrweb）见 vite.iife.config.js。
  */
-import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { resolve, resolve as resolvePath } from 'node:path'
 import { defineConfig } from 'vite'
 
+// 取 package.json 版本，构建时注入 SDK_VERSION（避免手写常量漏改导致版本失真）。
+const SDK_VERSION = JSON.parse(
+  readFileSync(resolvePath(process.cwd(), 'package.json'), 'utf8')
+).version
+
 export default defineConfig({
+  define: { __SDK_VERSION__: JSON.stringify(SDK_VERSION) },
   build: {
     lib: {
       entry: resolve(process.cwd(), 'src/index.js'),

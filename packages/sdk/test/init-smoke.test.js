@@ -15,6 +15,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createEys } from '../src/index.js'
+import { SDK_VERSION } from '../src/core/event.js'
 
 function createEysForTest(opts) {
   return createEys({ appId: 'smoke', endpoint: '/api/collect', ...opts })
@@ -128,4 +129,12 @@ test('web: exposure:true 但无 IntersectionObserver 时走 diagnostic 分支也
   } finally {
     await uninstallDom(env)
   }
+})
+
+test('SDK_VERSION 非空且为合法版本串（防止手写常量漏改导致版本失真）', () => {
+  // 直引 src（无构建 define）时回退 '0.0.0-dev'，构建后注入真实 package.json 版本。
+  // 此处仅守护「不为 undefined / 空串」，真实值由构建产物 grep 校验。
+  assert.equal(typeof SDK_VERSION, 'string')
+  assert.ok(SDK_VERSION.length > 0, 'SDK_VERSION 不应为空')
+  assert.match(SDK_VERSION, /^\d+\.\d+\.\d+/, 'SDK_VERSION 应为 semver 形态')
 })

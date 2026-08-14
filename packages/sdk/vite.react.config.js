@@ -9,13 +9,20 @@
  * - 核心 SDK（src/index.js）通过 output.paths 重写为裸标识符 `@web-collection/sdk`，
  *   运行时由消费方打包器解析到同一份核心实例，避免重复打包导致两份 SDK / 重复上报。
  */
-import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { resolve, resolve as resolvePath } from 'node:path'
 import { defineConfig } from 'vite'
+
+// 取 package.json 版本，构建时注入 SDK_VERSION（避免手写常量漏改导致版本失真）。
+const SDK_VERSION = JSON.parse(
+  readFileSync(resolvePath(process.cwd(), 'package.json'), 'utf8')
+).version
 
 // 归一化为正斜杠：Windows 下 resolve() 产出反斜杠，而 Rollup 传入的 id 为正斜杠，需统一比对。
 const CORE_ENTRY = resolve(process.cwd(), 'src/index.js').replace(/\\/g, '/')
 
 export default defineConfig({
+  define: { __SDK_VERSION__: JSON.stringify(SDK_VERSION) },
   resolve: {
     alias: {
       // 源码以裸标识符 '@web-collection/sdk' 引用核心；构建时解析到核心源码。
