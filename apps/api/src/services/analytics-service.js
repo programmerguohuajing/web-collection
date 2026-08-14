@@ -136,7 +136,10 @@ export async function getTraceTopology(traceId, filters = {}) {
   if (!traceId?.trim()) return { nodes: [], edges: [] }
   const { where, params } = whereFor(filters, ['trace_id=?'])
   params.unshift(traceId)
-  const rows = await all(`select * from events ${where} order by ts asc limit 5000`, params)
+  const [rows, backendSpans] = await Promise.all([
+    all(`select * from events ${where} order by ts asc limit 5000`, params),
+    all('select * from spans where trace_id=? order by start_ts asc limit 5000', [traceId])
+  ])
   const events = rows.map(mapEvent)
 
   // 根节点：取 trace 中的页面 path
@@ -147,6 +150,8 @@ export async function getTraceTopology(traceId, filters = {}) {
   nodes.set(pageId, { id: pageId, label: pagePath, type: 'page', value: 1 })
 
   const edges = new Map()
+
+  // 1) 前端 fetch/xhr 事件 → api 节点
   for (const event of events) {
     if (!['fetch', 'xhr'].includes(event.metric)) continue
     const method = event.props?.method || 'GET'
@@ -172,6 +177,45 @@ export async function getTraceTopology(traceId, filters = {}) {
         target: apiId,
         calls: 1,
         avgDuration: Number(event.value || 0),
+        errors: isError ? 1 : 0
+      })
+    }
+  }
+
+  // 2) 后端服务 span → service 节点（前端 fetch 已用 api 节点覆盖，这里跳过 frontend）
+  //    先建立 spanId → 拓扑节点 的映射，再按 parentSpanId 串联父子关系。
+  const spanToNode = new Map()
+  for (const span of backendSpans) {
+    const svc = span.service_name || 'unknown'
+    if (svc === 'frontend') continue
+    spanToNode.set(span.span_id, `svc:${svc}`)
+  }
+  for (const span of backendSpans) {
+    const svc = span.service_name || 'unknown'
+    if (svc === 'frontend') continue
+    const targetId = `svc:${svc}`
+    if (!nodes.has(targetId)) {
+      nodes.set(targetId, { id: targetId, label: svc, type: 'service', value: 0 })
+    }
+    nodes.get(targetId).value++
+
+    const parentNode = span.parent_span_id ? spanToNode.get(span.parent_span_id) : null
+    const sourceId = parentNode && parentNode !== targetId ? parentNode : pageId
+    const status = String(span.status_code || '').toUpperCase()
+    const isError = status === 'ERROR' || status === 'FAILED' || (Number(span.status_code) >= 400)
+    const dur = Number(span.duration || 0)
+    const edgeKey = `${sourceId}|${targetId}`
+    const existing = edges.get(edgeKey)
+    if (existing) {
+      existing.calls++
+      existing.avgDuration = Math.round((existing.avgDuration * (existing.calls - 1) + dur) / existing.calls)
+      if (isError) existing.errors++
+    } else {
+      edges.set(edgeKey, {
+        source: sourceId,
+        target: targetId,
+        calls: 1,
+        avgDuration: Math.round(dur),
         errors: isError ? 1 : 0
       })
     }
@@ -407,12 +451,13 @@ export async function saveFunnel(input) {
   const name = String(input.name || '').trim().slice(0, 128)
   const steps = normalizeFunnelSteps(input.steps)
   if (!name || steps.length < 2) throw new Error('漏斗名称和至少两个步骤不能为空')
+  const windowMs = finiteWindow(input.windowMs)
   const now = Date.now()
   if (input.id) {
-    await run('update funnel_definitions set name=?, app_id=?, steps_json=?::jsonb, updated_at=? where id=?', [name, input.appId || null, JSON.stringify(steps), now, input.id])
+    await run('update funnel_definitions set name=?, app_id=?, steps_json=?::jsonb, window_ms=?, updated_at=? where id=?', [name, input.appId || null, JSON.stringify(steps), windowMs, now, input.id])
     return { id: Number(input.id) }
   }
-  const rows = await all('insert into funnel_definitions (name, app_id, steps_json, created_at, updated_at) values (?, ?, ?::jsonb, ?, ?) returning id', [name, input.appId || null, JSON.stringify(steps), now, now])
+  const rows = await all('insert into funnel_definitions (name, app_id, steps_json, window_ms, created_at, updated_at) values (?, ?, ?::jsonb, ?, ?, ?) returning id', [name, input.appId || null, JSON.stringify(steps), windowMs, now, now])
   return { id: Number(rows[0].id) }
 }
 
@@ -434,26 +479,45 @@ export async function runFunnel(id, filters = {}) {
   const replayWhere = replayAppId ? 'where app_id=?' : ''
   const replayParams = replayAppId ? [replayAppId, MAX_REPLAY_SEGMENTS] : [MAX_REPLAY_SEGMENTS]
   const replayRows = await all(`select distinct session_id from replay_events ${replayWhere} limit ?`, replayParams)
-  return { definition: def, ...computeFunnel(rows, steps, replayRows) }
+  return { definition: def, ...computeFunnel(rows, steps, replayRows, { windowMs: def.window_ms }) }
 }
 
-export function computeFunnel(rows, steps, replayRows = []) {
+export function computeFunnel(rows, steps, replayRows = [], options = {}) {
   const normalizedSteps = normalizeFunnelSteps(steps)
+  const windowMs = finiteWindow(options.windowMs)
   const sessions = Object.values(groupBy(rows, row => row.session_id || ''))
     .filter(events => events[0]?.session_id)
     .map(events => events.sort((a, b) => Number(a.ts) - Number(b.ts)))
   const reachedActors = normalizedSteps.map(() => new Set())
+  const timeToConvertByStep = normalizedSteps.map(() => [])
   for (const events of sessions) {
-    normalizedSteps.forEach((_, target) => {
-      if (reaches(events, normalizedSteps, target) && events[0].actor) reachedActors[target].add(events[0].actor)
+    const timestamps = matchSteps(events, normalizedSteps, windowMs)
+    const actor = events[0].actor
+    timestamps.forEach((ts, index) => {
+      if (ts != null && actor) reachedActors[index].add(actor)
     })
+    for (let index = 1; index < timestamps.length; index++) {
+      if (timestamps[index] != null && timestamps[index - 1] != null) {
+        timeToConvertByStep[index].push(timestamps[index] - timestamps[index - 1])
+      }
+    }
   }
   const counts = reachedActors.map(items => items.size)
   return {
-    steps: normalizedSteps.map((step, index) => ({ step: step.eventName, filters: step.filters, count: counts[index], rate: counts[0] ? Number((counts[index] / counts[0] * 100).toFixed(2)) : 0, lost: index ? counts[index - 1] - counts[index] : 0 })),
-    lostSessions: sessions.filter(events => reaches(events, normalizedSteps, 0) && !reaches(events, normalizedSteps, normalizedSteps.length - 1)).slice(0, 100).map(events => ({ sessionId: events[0].session_id, actor: events[0].actor, lastEvent: events.filter(item => item.type !== 'error').at(-1)?.name, errors: events.filter(item => item.type === 'error').length, ts: Number(events.at(-1).ts), replaySessionId: replayRows.find(row => row.session_id.startsWith(events[0].session_id))?.session_id })),
-    dimensions: ['release_name', 'browser', 'device'].map(field => ({ field, items: dimensionFunnels(sessions, normalizedSteps, field) })),
-    trend: funnelTrend(sessions, normalizedSteps)
+    steps: normalizedSteps.map((step, index) => ({
+      step: step.eventName,
+      filters: step.filters,
+      count: counts[index],
+      rate: counts[0] ? Number((counts[index] / counts[0] * 100).toFixed(2)) : 0,
+      stepRate: index ? (counts[index - 1] ? Number((counts[index] / counts[index - 1] * 100).toFixed(2)) : 0) : 100,
+      lost: index ? counts[index - 1] - counts[index] : 0,
+      timeToConvert: index ? median(timeToConvertByStep[index]) : null,
+      timeToConvertP90: index ? percentile(timeToConvertByStep[index], 0.9) : null
+    })),
+    lostSessions: sessions.filter(events => reaches(events, normalizedSteps, 0, windowMs) && !reaches(events, normalizedSteps, normalizedSteps.length - 1, windowMs)).slice(0, 100).map(events => ({ sessionId: events[0].session_id, actor: events[0].actor, lastEvent: events.filter(item => item.type !== 'error').at(-1)?.name, errors: events.filter(item => item.type === 'error').length, ts: Number(events.at(-1).ts), replaySessionId: replayRows.find(row => row.session_id.startsWith(events[0].session_id))?.session_id })),
+    dimensions: ['release_name', 'browser', 'device'].map(field => ({ field, items: dimensionFunnels(sessions, normalizedSteps, field, windowMs) })),
+    trend: funnelTrend(sessions, normalizedSteps, windowMs),
+    windowMs
   }
 }
 
@@ -472,27 +536,60 @@ export async function saveDashboard(input) {
   return { id: Number(rows[0].id) }
 }
 
-function reaches(events, steps, target) {
+/**
+ * 按顺序匹配步骤，返回每一步首次达成时的时间戳数组（未达成步骤为 null）。
+ * 当设置了 windowMs 时，相邻步骤的时间间隔不得超过该上限，否则不视为达成。
+ * windowMs 为 null/0 时退化为原始的严格有序语义（与历史行为一致）。
+ */
+export function matchSteps(events, steps, windowMs) {
+  const timestamps = new Array(steps.length).fill(null)
   let cursor = 0
+  let lastTs = null
   for (const event of events) {
-    if (matchesStep(event, steps[cursor]) && cursor++ === target) return true
+    if (cursor >= steps.length) break
+    if (matchesStep(event, steps[cursor])) {
+      const ts = Number(event.ts)
+      if (windowMs == null || lastTs == null || ts - lastTs <= windowMs) {
+        timestamps[cursor] = ts
+        lastTs = ts
+        cursor++
+      }
+    }
   }
-  return false
+  return timestamps
 }
 
-function dimensionFunnels(sessions, steps, field) {
+function reaches(events, steps, target, windowMs) {
+  return matchSteps(events, steps, windowMs)[target] != null
+}
+
+function median(values) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = sorted.length >> 1
+  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+}
+
+function percentile(values, p) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))
+  return sorted[index]
+}
+
+function dimensionFunnels(sessions, steps, field, windowMs) {
   return Object.entries(groupBy(sessions, events => events[0]?.[field] || '未知')).map(([name, items]) => ({
     name,
-    entered: new Set(items.filter(events => reaches(events, steps, 0)).map(events => events[0].actor).filter(Boolean)).size,
-    converted: new Set(items.filter(events => reaches(events, steps, steps.length - 1)).map(events => events[0].actor).filter(Boolean)).size
+    entered: new Set(items.filter(events => reaches(events, steps, 0, windowMs)).map(events => events[0].actor).filter(Boolean)).size,
+    converted: new Set(items.filter(events => reaches(events, steps, steps.length - 1, windowMs)).map(events => events[0].actor).filter(Boolean)).size
   }))
 }
 
-function funnelTrend(sessions, steps) {
+function funnelTrend(sessions, steps, windowMs) {
   return Object.entries(groupBy(sessions, events => new Date(Number(events[0]?.ts)).toISOString().slice(0, 10))).map(([date, items]) => ({
     date,
-    entered: new Set(items.filter(events => reaches(events, steps, 0)).map(events => events[0].actor).filter(Boolean)).size,
-    converted: new Set(items.filter(events => reaches(events, steps, steps.length - 1)).map(events => events[0].actor).filter(Boolean)).size
+    entered: new Set(items.filter(events => reaches(events, steps, 0, windowMs)).map(events => events[0].actor).filter(Boolean)).size,
+    converted: new Set(items.filter(events => reaches(events, steps, steps.length - 1, windowMs)).map(events => events[0].actor).filter(Boolean)).size
   }))
 }
 
@@ -705,6 +802,11 @@ function cleanText(value, max) {
 function finiteTime(value) {
   const number = Number(value)
   return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function finiteWindow(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : null
 }
 
 function clampInt(value, min, max, fallback) {
