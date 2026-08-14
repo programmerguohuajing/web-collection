@@ -10,10 +10,17 @@
  * 与 ESM 构建 (`vite.config.js`) 共用 dist 目录，本条配置 emptyOutDir: false，
  * 以免覆盖已生成的 es 产物。构建顺序须先 es 后 iife。
  */
-import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { resolve, resolve as resolvePath } from 'node:path'
 import { defineConfig } from 'vite'
 
+// 取 package.json 版本，构建时注入 SDK_VERSION（避免手写常量漏改导致版本失真）。
+const SDK_VERSION = JSON.parse(
+  readFileSync(resolvePath(process.cwd(), 'package.json'), 'utf8')
+).version
+
 export default defineConfig({
+  define: { __SDK_VERSION__: JSON.stringify(SDK_VERSION) },
   build: {
     lib: {
       entry: resolve(process.cwd(), 'src/index.js'),

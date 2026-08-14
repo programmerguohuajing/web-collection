@@ -1,5 +1,11 @@
-/** 当前 SDK 版本号 */
-export const SDK_VERSION = '0.1.16'
+/**
+ * 当前 SDK 版本号。
+ * 构建时由 Vite `define` 注入真实版本（取自 package.json），确保运行时上报的
+ * sdkVersion 与发包版本始终一致，杜绝手写常量漏改导致的版本失真。
+ * 测试 / 直引 src（无 define 注入）时回退占位值，不影响逻辑。
+ */
+export const SDK_VERSION =
+  typeof __SDK_VERSION__ !== 'undefined' ? __SDK_VERSION__ : '0.0.0-dev'
 
 // Privacy v2：脱敏能力统一下沉到 sanitizer.js（single source of truth）。
 // 这里 import 供本模块 sanitizeEvent 使用，并 re-export 以保持对既有调用方（platform/core.js、测试）的兼容。
