@@ -5,6 +5,7 @@ import { formatDuration } from '../../../utils/format.js'
 import TraceTopology from '../../../components/TraceTopology.vue'
 import TraceWaterfall from '../../../components/TraceWaterfall.vue'
 import DistributedTraceTree from '../../../components/DistributedTraceTree.vue'
+import { buildTopologyFromDistributed } from '../../../utils/trace-topology.js'
 
 const traces = ref([])
 const pager = reactive({ page: 1, pageSize: 12, total: 0 })
@@ -19,6 +20,7 @@ const activeView = ref('topology') // topology | tree | waterfall
 const topology = ref({ nodes: [], edges: [] })
 const topoLoading = ref(false)
 const topoError = ref('')
+const topoNotice = ref('')
 let topoRequestId = 0
 
 // 分布式 trace（用于瀑布图）
@@ -88,20 +90,63 @@ async function selectTrace(row) {
   if (!trace.trace_id.trim()) return
   active.value = trace
   closeDetail()
-  loadForView(activeView.value)
 }
 
 async function loadTopology() {
   if (!active.value?.trace_id) return
+  const traceId = active.value.trace_id
   const requestId = ++topoRequestId
   topoLoading.value = true
   topoError.value = ''
+  topoNotice.value = ''
+  topology.value = { nodes: [], edges: [] }
+  let distributedError = null
   try {
-    const data = await api(`/api/traces/${encodeURIComponent(active.value.trace_id)}/topology`, { requestKey: `traces:topology:${active.value.trace_id}` })
+    const data = await api(`/api/traces/${encodeURIComponent(traceId)}/distributed`, { requestKey: `traces:topology:${traceId}` })
     if (requestId !== topoRequestId) return
-    topology.value = { nodes: data?.nodes || [], edges: data?.edges || [] }
+    const distributed = {
+      nodes: Array.isArray(data?.nodes) ? data.nodes : [],
+      edges: Array.isArray(data?.edges) ? data.edges : []
+    }
+    const result = buildTopologyFromDistributed(distributed)
+    dist.value = distributed
+    if (result.nodes.length) {
+      topology.value = result
+      if (!result.edges.length) topoNotice.value = `该 Trace 目前只有 ${result.nodes.length} 个采集节点，暂无上下游调用关系。`
+      topoLoading.value = false
+      return
+    }
+    topology.value = result
+    topoNotice.value = '该 Trace 没有可用于生成调用拓扑的 Span 数据。'
+    topoLoading.value = false
+    return
   } catch (error) {
-    if (requestId === topoRequestId && error?.code !== 'ABORT_ERR') topoError.value = error.message || '调用拓扑加载失败'
+    if (error?.code === 'ABORT_ERR' || requestId !== topoRequestId) {
+      if (requestId === topoRequestId) topoLoading.value = false
+      return
+    }
+    distributedError = error
+  }
+
+  try {
+    const data = await api(`/api/traces/${encodeURIComponent(traceId)}/topology`, { requestKey: `traces:topology-fallback:${traceId}` })
+    if (requestId !== topoRequestId) return
+    const result = {
+      nodes: Array.isArray(data?.nodes) ? data.nodes : [],
+      edges: Array.isArray(data?.edges) ? data.edges : []
+    }
+    topology.value = result
+    if (!result.nodes.length) {
+      topoNotice.value = '该 Trace 没有可用于生成调用拓扑的 Span 数据。'
+    } else if (!result.edges.length) {
+      topoNotice.value = `该 Trace 目前只有 ${result.nodes.length} 个采集节点，暂无上下游调用关系。`
+    } else if (distributedError) {
+      topoNotice.value = 'Span 明细接口不可用，当前展示服务端聚合拓扑。'
+    }
+  } catch (error) {
+    if (requestId === topoRequestId && error?.code !== 'ABORT_ERR') {
+      topoError.value = distributedError?.message || error.message || '调用拓扑加载失败'
+    }
   } finally {
     if (requestId === topoRequestId) topoLoading.value = false
   }
@@ -273,12 +318,13 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
         </div>
 
         <div class="canvas">
-          <div class="view" :class="{ active: activeView === 'topology' }">
+          <div v-loading="topoLoading" class="view" :class="{ active: activeView === 'topology' }">
             <el-alert v-if="topoError" class="view-error" type="error" :title="topoError" show-icon :closable="false" />
+            <el-alert v-else-if="topoNotice" class="view-notice" type="info" :title="topoNotice" show-icon :closable="false" />
             <TraceTopology ref="topoRef" :nodes="topology.nodes" :edges="topology.edges" height="100%" @select="openNodeDetail" />
           </div>
           <div class="view" :class="{ active: activeView === 'tree' }">
-            <DistributedTraceTree :trace-id="active.trace_id" />
+            <DistributedTraceTree v-if="activeView === 'tree'" :trace-id="active.trace_id" />
           </div>
           <div class="view" :class="{ active: activeView === 'waterfall' }">
             <el-alert v-if="distError" class="view-error" type="error" :title="distError" show-icon :closable="false" />
@@ -373,6 +419,7 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 .view { position: absolute; inset: 0; display: none; }
 .view.active { display: block; }
 .view-error { margin: 10px; }
+.view-notice { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 2; width: auto; }
 .empty-state { display: grid; place-items: center; height: 100%; }
 
 /* 详情面板 */
