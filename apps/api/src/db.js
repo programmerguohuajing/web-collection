@@ -252,6 +252,7 @@ export async function ensureSchema() {
   )`)
   await run(`alter table applications add column if not exists collect_key_hash varchar(64)`)
   await run(`alter table applications add column if not exists rules_json jsonb`)
+  await run(`alter table applications add column if not exists privacy_mode varchar(16) not null default 'balanced'`)
   await run(`create table if not exists releases (
     app_id varchar(64) not null references applications(app_id) on delete cascade,
     release_name varchar(64) not null,

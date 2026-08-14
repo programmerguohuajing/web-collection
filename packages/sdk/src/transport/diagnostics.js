@@ -26,7 +26,9 @@ export const DIAGNOSTIC_TYPES = Object.freeze([
   'flush_failed', // 在线发送失败（不可重试被丢弃）
   'retry', // 可重试错误（429/5xx/超时），保留并重试
   'dropped_non_retryable', // 超过最大重试次数或 4xx 契约错误，永久丢弃
-  'offline' // 处于离线状态，暂缓发送
+  'offline', // 处于离线状态，暂缓发送
+  'capability_missing', // 模块需要某平台能力但该适配器未声明支持，已静默跳过（P1-4）
+  'pending_replayed' // 采集就绪前缓冲的事件在 ready 后回放的数量（P2-5 启动排队）
 ])
 
 /**

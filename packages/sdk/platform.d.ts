@@ -1,5 +1,30 @@
 import type { CaptureCategory, ConsentStatus, EysDiagnosticEvent, EysPrivacyOptions, EysTransaction, EysUser, SamplingDecision } from './index.js'
 
+/**
+ * 平台能力位（P1-4 · 能力位 + 静默降级）。
+ * 每个适配器声明自身宿主支持的能力；SDK 在装配模块时按能力位静默跳过不支持的能力，
+ * 不抛错、不影响其他采集，并通过 `capability_missing` 诊断暴露（仅在 required 时）。
+ * 未声明（或显式 false）即视为不支持。
+ */
+export interface PlatformCapabilities {
+  /** DOM 元素 / 选择器查询能力（曝光、回放录制依赖） */
+  dom?: boolean
+  /** IntersectionObserver 曝光采集能力 */
+  exposure?: boolean
+  /** MutationObserver / rrweb 回放录制能力 */
+  replay?: boolean
+  /** 网络状态变化监听能力 */
+  networkStatus?: boolean
+  /** 路由 / 页面导航状态监听能力 */
+  navigation?: boolean
+  /** 本地持久化（storage）能力 */
+  storage?: boolean
+  /** navigator.sendBeacon 非阻塞上报能力 */
+  beacon?: boolean
+  /** 页面可见性（visibilitychange）监听能力 */
+  visibility?: boolean
+}
+
 /** 平台上下文信息 */
 export interface PlatformContext {
   /** 完整页面 URL */
@@ -44,6 +69,8 @@ export interface PlatformAdapter {
   onNetworkStatusChange?(listener: (event: unknown) => void): void | (() => void)
   /** 注册页面路由变化监听 */
   onNavigationStateChange?(listener: (event: unknown) => void): void | (() => void)
+  /** 平台能力位声明（P1-4）。未声明即视为不支持，SDK 据此静默降级。 */
+  capabilities?: PlatformCapabilities
 }
 
 /** 平台 SDK 初始化配置项（精简版，仅包含平台层需要的配置） */
@@ -116,6 +143,12 @@ export interface PlatformEysClient {
   instrumentPage<T extends Record<string, any>>(config: T): T
   /** 获取最近一次采样决策（含规则 / 采样率 / 单元 / 键），用于 SDK 自诊断与调试；无决策时返回 null */
   getSamplingDecision(): SamplingDecision | null
+  /** 获取当前平台适配器声明的能力位（P1-4），用于自查 SDK 在宿主环境的可用采集能力 */
+  getCapabilities(): PlatformCapabilities
+  /** 双 ID 身份：设置已登录用户 ID（appUserId），并与匿名设备 ID 关联；已入队事件回填 userId */
+  identify(userId: string, traits?: Record<string, unknown>): void
+  /** 获取匿名设备 ID（anonymousId），即设备级稳定标识，与 identify 后的 userId 共同构成双 ID 模型（P2-5） */
+  getAnonymousId(): string
 }
 
 /** 创建通用平台 SDK 实例（需传入自定义适配器） */

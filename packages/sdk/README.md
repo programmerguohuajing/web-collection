@@ -177,9 +177,22 @@ The SDK minimizes collected sensitive data by default. A unified sanitizer (`pri
 
 | Mode | Behavior | Use |
 | --- | --- | --- |
-| `off` | No privacy protection beyond the legacy `redactKeys` field redaction | Explicitly disabled, trusted internal networks |
+| `off` | General-PII text/value redaction **disabled** — full PII is captured raw. Credential-key redaction and header dropping still apply (see carve-out below). | Apps that opt into full capture **and** run a downstream (query-layer) masking service. Never use `off` without one. |
 | `balanced` (**default**) | Field-key redaction + value-level PII redaction + irreversible phone hash + sensitive URL-query stripping + header dropping + body sanitization | Production default, minimal collection |
 | `strict` | Like `balanced`, plus: entire URL query dropped (hash kept), `<select>` keeps only index/count (no label hash) | Strong-compliance scenarios |
+
+**Two-tier classification (important).** The SDK splits sensitive data into two tiers, and only Tier 2 is governed by `mode`:
+
+- **Tier 1 — credentials (always stripped at the collection layer, in *every* mode including `off`).** Keys matching `password`/`token`/`secret`/`authorization`/`cookie`/`apikey`/`privatekey`/`jwt`… are replaced with `[REDACTED]`, and `Authorization`/`Cookie`/`Set-Cookie`/`Proxy-Authorization` headers are dropped. These are *not* telemetry — they have no legitimate analytics use, and storing them raw is a security/compliance liability. This carve-out is **intentional and does not violate** the project's "collect-everything / mask-downstream" principle, which governs behavioral/observational telemetry, not credentials.
+- **Tier 2 — general PII (mode-driven).** Emails, phone numbers, ID cards, bank cards, JWTs in free text; form values; sensitive URL-query params; request/response body PII. `balanced`/`strict` redact these at the collection layer; `off` keeps them raw for full capture.
+
+This project's collection principle is *full-capture, store-everything, mask-on-read* — the SDK should not drop Tier-2 fields it might later need. `balanced` is therefore a **deliberate privacy-safe shipping default**, not an implicit one: it protects users out of the box, while `off` is the explicit opt-in for apps that need raw Tier-2 data **and** accept the obligation to mask it downstream (at query time, per viewer role). See `outputs/adr-privacy-collection-layer.md`.
+
+**End-to-end wiring (governance ↔ SDK).** The backend governance console exposes an app-level `privacy_mode` (`balanced` | `raw`) that expresses the *storage intent*:
+- `balanced` (default) → keep the SDK at `privacy.mode: 'balanced'` (collection-layer masking); the stored values are already masked.
+- `raw` → set the SDK to `privacy.mode: 'off'` so Tier-2 PII is sent raw for full capture; the backend then masks it **at query time** (`apps/api/src/privacy.js`) unless the viewer is authorized (`x-eys-raw-access` vs `EYS_RAW_ACCESS_TOKEN`).
+
+The downstream mask-at-query is always on, so enabling `raw` on an app never exposes bare PII to ordinary viewers — that is the hard prerequisite (ADR-007) for per-app raw opt-in.
 
 What `balanced` does automatically:
 

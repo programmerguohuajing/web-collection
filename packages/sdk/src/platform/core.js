@@ -89,11 +89,24 @@ export function createPlatformEys(options = {}, adapter) {
   const globalContext = {}
   const stats = { enqueued: 0, dropped: 0, droppedByConsent: 0, droppedBySample: 0, sent: 0, failed: 0 }
   let errorsRegistered = false
+  // P2-5 · 启动排队：SDK 就绪（hydrate 完成）前的事件先入 pendingTracks，ready 后回放，
+  // 保证异步初始化窗口内的早期事件不丢失，且全量入库（不丢数据）。
+  const pendingTracks = []
+  let readyResolved = false
 
   // ========== 初始化 ==========
   const ready = hydrate()                    // 从存储恢复队列和 deviceId
   const timer = setInterval(flush, cfg.flushInterval)  // 定时上报
   if (cfg.enabled && cfg.consent !== 'denied') registerGlobalErrors()  // 注册全局错误监听
+  // P2-5 · ready 后回放启动前缓冲的事件（不丢初始化早期事件）；hydrate 恒 resolve，catch 兜底确保不卡死。
+  ready.then(() => {
+    readyResolved = true
+    const pending = pendingTracks.splice(0)
+    if (pending.length) {
+      diagnostic.emit('pending_replayed', { count: pending.length })
+      pending.forEach(({ event, urgent }) => push(event, urgent))
+    }
+  }).catch(() => { readyResolved = true })
 
   // ========== 公开 API ==========
   return {
@@ -120,7 +133,13 @@ export function createPlatformEys(options = {}, adapter) {
     getPrivacyMode: () => sanitizer.mode,
     getConsentCategories: () => ({ ...consentMap }),
     // 采样自查：返回最近一次采样决策（含规则/采样率/单元），用于 SDK 自诊断页（P2）与调试。
-    getSamplingDecision: () => lastSamplingDecision
+    getSamplingDecision: () => lastSamplingDecision,
+    // P1-4 · 暴露平台能力位，便于消费方自查当前宿主支持的采集能力。
+    getCapabilities: () => ({ ...(adapter.capabilities || {}) }),
+    // P2-5 · 双 ID 身份：设置已登录用户 ID（appUserId），并与匿名设备 ID 关联；已入队事件回填 userId。
+    identify: (userId, traits = {}) => setUser({ id: userId, ...traits }),
+    // P2-5 · 获取匿名设备 ID（anonymousId），与 identify 后的 userId 共同构成双 ID 模型。
+    getAnonymousId: () => deviceId
   }
 
   // ================================================================
@@ -221,6 +240,8 @@ export function createPlatformEys(options = {}, adapter) {
    */
   function push(event, urgent = false) {
     if (destroyed) return
+    // P2-5 · 采集就绪前缓冲：hydrate 未完成时事件先入 pendingTracks，ready 后回放（不丢初始化早期事件）。
+    if (!readyResolved) { pendingTracks.push({ event, urgent }); return }
     // 禁用或拒绝时直接丢弃
     if (!cfg.enabled || cfg.consent === 'denied') {
       stats.dropped++
@@ -491,8 +512,23 @@ export function createPlatformEys(options = {}, adapter) {
     errorsRegistered = true
     if (adapter.onError) disposers.push(adapter.onError(reason => error(reason, { source: 'global' })))
     if (adapter.onUnhandledRejection) disposers.push(adapter.onUnhandledRejection(event => error(event?.reason || event, { source: 'unhandledrejection' })))
-    if (adapter.onNetworkStatusChange) disposers.push(adapter.onNetworkStatusChange(event => behavior('network_change', { network: event?.networkType || event?.type || event?.detail })))
-    if (adapter.onNavigationStateChange) disposers.push(adapter.onNavigationStateChange(event => behavior('navigation_change', { route: event?.route || event?.name || event?.state?.routes?.at?.(-1)?.name || '' })))
+    // P1-4 · 能力位门控：未声明 networkStatus / navigation 能力的宿主，静默跳过对应监听（不抛错）。
+    if (requireCapability('networkStatus') && adapter.onNetworkStatusChange) disposers.push(adapter.onNetworkStatusChange(event => behavior('network_change', { network: event?.networkType || event?.type || event?.detail })))
+    if (requireCapability('navigation') && adapter.onNavigationStateChange) disposers.push(adapter.onNavigationStateChange(event => behavior('navigation_change', { route: event?.route || event?.name || event?.state?.routes?.at?.(-1)?.name || '' })))
+  }
+
+  /**
+   * P1-4 · 能力位校验：检查适配器是否声明支持某平台能力。
+   * 不抛错；能力缺失时按需（required）emit `capability_missing` 诊断，便于运维感知降级。
+   * @param {string} name - 能力名（见 PlatformCapabilities）
+   * @param {object} [opts]
+   * @param {boolean} [opts.required=false] - 为 true 且能力缺失时 emit 诊断
+   * @returns {boolean} 适配器是否支持该能力
+   */
+  function requireCapability(name, opts = {}) {
+    const ok = adapter.capabilities?.[name] === true
+    if (!ok && opts.required) diagnostic.emit('capability_missing', { capability: name, adapter: adapter.name })
+    return ok
   }
 
   // ================================================================

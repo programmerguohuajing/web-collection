@@ -28,7 +28,15 @@ export interface EysUser {
 /** 隐私同意状态 */
 export type ConsentStatus = 'granted' | 'denied'
 
-/** 隐私策略档位 */
+/**
+ * 隐私策略档位。
+ * 注意两级分类（见 ADR-007）：第一级凭据（password/token/secret/authorization/cookie/apikey/jwt…
+ * 及对应请求头）在**所有档位（含 off）**常驻剥离，是有意的 carve-out、不违反"采集层不丢弃"原则；
+ * 第二级通用 PII（自由文本邮箱/手机/身份证/银行卡/JWT、表单值、URL query、body PII）才受本档位控制。
+ * - `off`：关闭第二级通用 PII 的采集层脱敏（全量采集）；凭据剥离仍生效。仅用于已具备下游查询层脱敏的应用。
+ * - `balanced`（默认，刻意的隐私安全出厂默认）：对第二级 PII 做采集层脱敏。
+ * - `strict`：在 balanced 基础上进一步收紧（丢弃整个 URL query、<select> 仅留索引/数量）。
+ */
 export type PrivacyMode = 'off' | 'balanced' | 'strict'
 
 /** 同意分类（用于按分类门控高风险采集模块，并支持 GPC / DNT 映射） */
@@ -60,6 +68,8 @@ export type DiagnosticType =
   | 'retry' // 可重试错误（429/5xx/超时），保留并重试
   | 'dropped_non_retryable' // 超过最大重试次数或 4xx 契约错误，永久丢弃
   | 'offline' // 处于离线状态，暂缓发送
+  | 'capability_missing' // 模块需要某平台能力但该环境未支持，已静默跳过（P1-4）
+  | 'pending_replayed' // 采集就绪前缓冲的事件在 ready 后回放的数量（P2-5 启动排队）
 
 /** 传输诊断事件对象（随 `onDiagnostic` 回调派发） */
 export interface EysDiagnosticEvent {
@@ -114,7 +124,14 @@ export interface SamplingDecision {
 
 /** 隐私保护配置（Privacy v2 统一 sanitizer） */
 export interface EysPrivacyOptions {
-  /** 隐私策略档位：off=不保护；balanced=默认最小化采集（生产默认）；strict=最严格。默认 'balanced'。 */
+  /**
+   * 隐私策略档位。默认 'balanced'（刻意的隐私安全出厂默认）。
+   * 仅控制**第二级通用 PII** 的采集层脱敏；**第一级凭据**（password/token/secret/authorization/cookie/apikey/jwt 及对应请求头）在所有档位（含 off）常驻剥离，属有意 carve-out。
+   * - `off`：关闭第二级 PII 采集层脱敏（全量采集），仅用于已具备下游查询层脱敏的应用。
+   * - `balanced`：对第二级 PII 做采集层脱敏（生产默认）。
+   * - `strict`：在 balanced 基础上收紧。
+   * 详见 ADR-007。
+   */
   mode?: PrivacyMode
   /** 需要脱敏的字段名列表（在默认敏感字段基础上追加） */
   redactKeys?: string[]
@@ -336,6 +353,12 @@ export interface EysClient {
   getConsentCategories(): Record<ConsentCategory, boolean>
   /** 获取最近一次采样决策（含规则 / 采样率 / 单元 / 键），用于 SDK 自诊断与调试；无决策时返回 null */
   getSamplingDecision(): SamplingDecision | null
+  /** 获取当前环境能力位（P1-4），用于自查 SDK 在本环境支持的采集能力 */
+  getCapabilities(): Record<string, boolean>
+  /** 双 ID 身份：设置已登录用户 ID（appUserId），并与匿名设备 ID 关联；已入队事件回填 userId */
+  identify(userId: string, traits?: Record<string, unknown>): void
+  /** 获取匿名设备 ID（anonymousId），与 identify 后的 userId 共同构成双 ID 模型（P2-5） */
+  getAnonymousId(): string
   /** 启用/禁用 SDK */
   setEnabled(enabled: boolean): void
   /** 设置全局上下文（会附加到所有上报事件中） */

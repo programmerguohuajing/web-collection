@@ -254,6 +254,17 @@ export function createEys(options = {}) {
     }
     if (typeof cfg.onDiagnostic === 'function') cfg.onDiagnostic(event)
   })
+  // P1-4 · Web 平台能力位（基于特征检测）：浏览器环境默认全开；SSR / Node / 测试环境按需降级。
+  const webCapabilities = {
+    dom: typeof document !== 'undefined',
+    exposure: typeof IntersectionObserver !== 'undefined',
+    replay: typeof document !== 'undefined' && typeof window !== 'undefined',
+    networkStatus: typeof navigator !== 'undefined',
+    navigation: typeof document !== 'undefined',
+    storage: typeof indexedDB !== 'undefined' || typeof localStorage !== 'undefined',
+    beacon: typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function',
+    visibility: typeof document !== 'undefined' && typeof document.visibilityState !== 'undefined'
+  }
   // 跨标签页锁引用（SDK-219）：destroy 时 close() 释放 BroadcastChannel，避免进程泄漏。
   let multiTabLock = null
   const sender = new ReliableSender({
@@ -359,6 +370,9 @@ export function createEys(options = {}) {
   let stopBundle = () => {}
   let captureStarted = false
   let performanceStarted = false
+  // P2-5 · 启动排队：Web SDK 同步就绪（无异步初始化），但保留缓冲机制以结构统一并保护潜在异步初始化。
+  const pendingTracks = []
+  let readyResolved = false
   const timer = setInterval(flushAll, cfg.flushInterval)
   addEventListener('pagehide', () => {
     finalizePerformance()
@@ -373,6 +387,14 @@ export function createEys(options = {}) {
   })
 
   if (cfg.enabled && cfg.consent !== 'denied') startCapture()
+
+  // P2-5 · Web SDK 同步就绪：标记 ready 并回放启动前缓冲的事件（通常为空，结构统一）。
+  readyResolved = true
+  const pending = pendingTracks.splice(0)
+  if (pending.length) {
+    diagnostic.emit('pending_replayed', { count: pending.length })
+    pending.forEach(({ event, urgent }) => push(event, urgent))
+  }
 
   return {
     track,
@@ -403,7 +425,13 @@ export function createEys(options = {}) {
     getPrivacyMode: () => sanitizer.mode,
     getConsentCategories: () => ({ ...consentMap }),
     // 采样自查：返回最近一次采样决策（含规则/采样率/单元），用于 SDK 自诊断页（P2）与调试。
-    getSamplingDecision: () => lastSamplingDecision
+    getSamplingDecision: () => lastSamplingDecision,
+    // P1-4 · 暴露 Web 平台能力位（基于特征检测），便于消费方自查当前环境支持的采集能力。
+    getCapabilities: () => ({ ...webCapabilities }),
+    // P2-5 · 双 ID 身份：设置已登录用户 ID（appUserId），并与匿名设备 ID 关联；已入队事件回填 userId。
+    identify: (userId, traits = {}) => setUser({ id: userId, ...traits }),
+    // P2-5 · 获取匿名设备 ID（anonymousId），与 identify 后的 userId 共同构成双 ID 模型。
+    getAnonymousId: () => deviceId
   }
 
   function startCapture() {
@@ -449,8 +477,8 @@ export function createEys(options = {}) {
     // 9) 行为监控 + 回放路由分段
     if (cfg.behavior) stopBehavior = safe('behavior', () => setupBehaviorMonitor({ push, sanitizer, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute && consentMap.replay) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking }))
     else if (cfg.replay && consentMap.replay && cfg.replaySegmentByRoute) stopRoute = safe('route', () => setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') }))
-    // 10) 曝光采集
-    if (cfg.exposure) stopExposure = safe('exposure', () => setupExposureMonitor({ push }))
+    // 10) 曝光采集（P1-4 · 能力位门控：无 IntersectionObserver 的环境静默跳过并发诊断）
+    if (cfg.exposure && requireCapability('exposure', { required: true })) stopExposure = safe('exposure', () => setupExposureMonitor({ push }))
     // 11) 网络状态变化 & App 前后台切换
     const onOnline = () => push({ type: 'behavior', name: 'network_change', props: { online: true } })
     const onOffline = () => push({ type: 'behavior', name: 'network_change', props: { online: false } })
@@ -648,6 +676,8 @@ export function createEys(options = {}) {
    * @param {boolean} [urgent=false] - 是否立即触发上报
    */
   function push(event, urgent = false) {
+    // P2-5 · 采集就绪前缓冲：ready 前事件先入 pendingTracks，就绪后回放（不丢初始化早期事件）。
+    if (!readyResolved) { pendingTracks.push({ event, urgent }); return }
     if (!cfg.enabled || cfg.consent === 'denied') {
       stats.dropped++
       stats.droppedByConsent++
@@ -983,6 +1013,20 @@ export function install(app, options = {}) {
     previous?.(err, instance, info)
   }
   app.config.globalProperties.$eys = eys
+}
+
+/**
+ * P1-4 · 能力位校验：检查 Web 环境是否支持某平台能力（基于特征检测）。
+ * 不抛错；能力缺失且 required 时 emit `capability_missing` 诊断，便于运维感知降级。
+ * @param {string} name - 能力名（见 PlatformCapabilities）
+ * @param {object} [opts]
+ * @param {boolean} [opts.required=false] - 为 true 且能力缺失时 emit 诊断
+ * @returns {boolean}
+ */
+function requireCapability(name, opts = {}) {
+  const ok = webCapabilities[name] === true
+  if (!ok && opts.required) diagnostic.emit('capability_missing', { capability: name, adapter: 'web' })
+  return ok
 }
 
 /**
