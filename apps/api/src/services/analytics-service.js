@@ -134,8 +134,8 @@ export async function getSessions(filters = {}) {
 
 export async function getTraceTopology(traceId, filters = {}) {
   if (!traceId?.trim()) return { nodes: [], edges: [] }
-  const { where, params } = whereFor(filters, [`trace_id = ?`])
-  params.push(traceId)
+  const { where, params } = whereFor(filters, ['trace_id=?'])
+  params.unshift(traceId)
   const rows = await all(`select * from events ${where} order by ts asc limit 5000`, params)
   const events = rows.map(mapEvent)
 
