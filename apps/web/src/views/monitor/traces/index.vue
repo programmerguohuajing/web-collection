@@ -234,7 +234,7 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
         <el-empty v-if="!listLoading && !traces.length" :image-size="60" description="暂无链路" />
       </div>
       <div v-if="pager.total > 0" class="side-pager">
-        <el-pagination background layout="prev, pager, next" :current-page="pager.page" :page-size="pager.pageSize" :total="pager.total" @current-change="value => { pager.page = value; load() }" />
+        <el-pagination background layout="prev, pager, next" :pager-count="5" :current-page="pager.page" :page-size="pager.pageSize" :total="pager.total" @current-change="value => { pager.page = value; load() }" />
       </div>
     </aside>
 
@@ -343,7 +343,7 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 .pill.dur { color: #344258; }
 .pill.err { color: #ef4444; border-color: #f3b6b6; background: #fff7f7; }
 .pill.ok { color: #0ea765; border-color: #bfe9d4; background: #f0fbf5; }
-.side-pager { padding: 10px; border-top: 1px solid var(--line, #dfe5ec); display: flex; justify-content: center; }
+.side-pager { padding: 10px; border-top: 1px solid var(--line, #dfe5ec); display: flex; justify-content: center; overflow-x: auto; }
 
 /* 右侧主区 */
 .trace-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
