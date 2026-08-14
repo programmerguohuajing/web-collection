@@ -33,7 +33,7 @@ test('funnel counts ordered conversion, dropoff, errors and replay correlation',
     { ...base, actor: 'u2', session_id: 's2', name: 'view', type: 'track', ts: 3 },
     { ...base, actor: 'u2', session_id: 's2', name: 'Error', type: 'error', ts: 4 }
   ]
-  const result = computeFunnel(rows, ['view', 'pay'], [{ session_id: 's2_replay' }])
+  const result = computeFunnel(rows, ['view', 'pay'], [{ session_id: 's2_replay', base_session_id: 's2' }])
   assert.deepEqual(result.steps.map(item => [item.count, item.lost]), [[2, 0], [1, 1]])
   assert.equal(result.lostSessions[0].errors, 1)
   assert.equal(result.lostSessions[0].replaySessionId, 's2_replay')
@@ -104,4 +104,20 @@ test('funnel conversion window drops steps beyond the allowed gap', () => {
   ]
   assert.deepEqual(computeFunnel(rows, ['view', 'pay']).steps.map(item => item.count), [1, 1])
   assert.deepEqual(computeFunnel(rows, ['view', 'pay'], [], { windowMs: 30 * 60000 }).steps.map(item => item.count), [1, 0])
+})
+
+test('funnel replay correlation uses base_session_id exact match and ignores legacy replays', () => {
+  const rows = [
+    { actor: 'u1', session_id: 's1', name: 'view', type: 'track', ts: 1 },
+    { actor: 'u1', session_id: 's1', name: 'pay', type: 'track', ts: 2 },
+    { actor: 'u2', session_id: 's2', name: 'view', type: 'track', ts: 3 }
+  ]
+  const replayRows = [
+    { session_id: 'legacy_seg1', base_session_id: null },
+    { session_id: 'new_seg1', base_session_id: 's2' }
+  ]
+  const result = computeFunnel(rows, ['view', 'pay'], replayRows)
+  const lost = result.lostSessions.find(item => item.sessionId === 's2')
+  assert.equal(lost.replaySessionId, 'new_seg1')
+  assert.equal(result.lostSessions.find(item => item.sessionId === 's1')?.replaySessionId, undefined)
 })

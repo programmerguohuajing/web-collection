@@ -947,6 +947,8 @@ export function createEys(options = {}) {
       const item = withBase({ type: 'replay' })
       // 回放事件使用分段 sessionId（而非全局 sessionId），每个分段独立成一条记录。
       item.sessionId = currentReplaySessionId
+      // 显式携带全局事件会话 UUID，供后端「漏斗流失会话 → 回放」精确关联（不再依赖分段 sessionId 字符串前缀）。
+      item.baseSessionId = sessionId
       item.events = payload
       item.compression = compression
       // SDK-211 · 分页加载元数据：当前页序号与总页数（从 1 计数）。

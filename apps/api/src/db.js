@@ -164,6 +164,8 @@ export async function ensureSchema() {
 
   // 为已有的 replay_events 表补充 end_reason 列（兼容旧数据）
   await run(`alter table replay_events add column if not exists end_reason varchar(32)`)
+  // 为已有的 replay_events 表补充 base_session_id 列（漏斗「流失会话 → 回放」精确关联；历史数据为 NULL）
+  await run(`alter table replay_events add column if not exists base_session_id varchar(128)`)
 
   // replay_events 表注释
   await run(`comment on table replay_events is '会话回放事件表，存储 rrweb 录制的 DOM 操作事件，按会话和分段组织'`)

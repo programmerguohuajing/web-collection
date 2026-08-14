@@ -122,7 +122,7 @@ export async function getSessions(filters = {}) {
       left join lateral (
         select r.session_id
         from replay_events r
-        where r.session_id like s.session_id || '%'${replayScope}
+        where r.base_session_id = s.session_id${replayScope}
         order by r.created_at desc
         limit 1
       ) replay on true
@@ -478,7 +478,7 @@ export async function runFunnel(id, filters = {}) {
   const replayAppId = def.app_id || filters.appId
   const replayWhere = replayAppId ? 'where app_id=?' : ''
   const replayParams = replayAppId ? [replayAppId, MAX_REPLAY_SEGMENTS] : [MAX_REPLAY_SEGMENTS]
-  const replayRows = await all(`select distinct session_id from replay_events ${replayWhere} limit ?`, replayParams)
+  const replayRows = await all(`select distinct session_id, base_session_id from replay_events ${replayWhere} limit ?`, replayParams)
   return { definition: def, ...computeFunnel(rows, steps, replayRows, { windowMs: def.window_ms }) }
 }
 
@@ -514,7 +514,7 @@ export function computeFunnel(rows, steps, replayRows = [], options = {}) {
       timeToConvert: index ? median(timeToConvertByStep[index]) : null,
       timeToConvertP90: index ? percentile(timeToConvertByStep[index], 0.9) : null
     })),
-    lostSessions: sessions.filter(events => reaches(events, normalizedSteps, 0, windowMs) && !reaches(events, normalizedSteps, normalizedSteps.length - 1, windowMs)).slice(0, 100).map(events => ({ sessionId: events[0].session_id, actor: events[0].actor, lastEvent: events.filter(item => item.type !== 'error').at(-1)?.name, errors: events.filter(item => item.type === 'error').length, ts: Number(events.at(-1).ts), replaySessionId: replayRows.find(row => row.session_id.startsWith(events[0].session_id))?.session_id })),
+    lostSessions: sessions.filter(events => reaches(events, normalizedSteps, 0, windowMs) && !reaches(events, normalizedSteps, normalizedSteps.length - 1, windowMs)).slice(0, 100).map(events => ({ sessionId: events[0].session_id, actor: events[0].actor, lastEvent: events.filter(item => item.type !== 'error').at(-1)?.name, errors: events.filter(item => item.type === 'error').length, ts: Number(events.at(-1).ts), replaySessionId: replayRows.find(row => row.base_session_id === events[0].session_id)?.session_id })),
     dimensions: ['release_name', 'browser', 'device'].map(field => ({ field, items: dimensionFunnels(sessions, normalizedSteps, field, windowMs) })),
     trend: funnelTrend(sessions, normalizedSteps, windowMs),
     windowMs
