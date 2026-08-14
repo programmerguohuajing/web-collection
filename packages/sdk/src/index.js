@@ -265,6 +265,21 @@ export function createEys(options = {}) {
     beacon: typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function',
     visibility: typeof document !== 'undefined' && typeof document.visibilityState !== 'undefined'
   }
+  /**
+   * P1-4 · 能力位校验：检查 Web 环境是否支持某平台能力（基于特征检测）。
+   * 不抛错；能力缺失且 required 时 emit `capability_missing` 诊断，便于运维感知降级。
+   * 定义于 createEys 内部：需闭包访问本实例的 webCapabilities 与 diagnostic，
+   * 若提到模块顶层会因作用域错位触发「webCapabilities / diagnostic is not defined」。
+   * @param {string} name - 能力名（见 PlatformCapabilities）
+   * @param {object} [opts]
+   * @param {boolean} [opts.required=false] - 为 true 且能力缺失时 emit 诊断
+   * @returns {boolean}
+   */
+  function requireCapability(name, opts = {}) {
+    const ok = webCapabilities[name] === true
+    if (!ok && opts.required) diagnostic.emit('capability_missing', { capability: name, adapter: 'web' })
+    return ok
+  }
   // 跨标签页锁引用（SDK-219）：destroy 时 close() 释放 BroadcastChannel，避免进程泄漏。
   let multiTabLock = null
   const sender = new ReliableSender({
@@ -1015,20 +1030,6 @@ export function install(app, options = {}) {
     previous?.(err, instance, info)
   }
   app.config.globalProperties.$eys = eys
-}
-
-/**
- * P1-4 · 能力位校验：检查 Web 环境是否支持某平台能力（基于特征检测）。
- * 不抛错；能力缺失且 required 时 emit `capability_missing` 诊断，便于运维感知降级。
- * @param {string} name - 能力名（见 PlatformCapabilities）
- * @param {object} [opts]
- * @param {boolean} [opts.required=false] - 为 true 且能力缺失时 emit 诊断
- * @returns {boolean}
- */
-function requireCapability(name, opts = {}) {
-  const ok = webCapabilities[name] === true
-  if (!ok && opts.required) diagnostic.emit('capability_missing', { capability: name, adapter: 'web' })
-  return ok
 }
 
 /**
