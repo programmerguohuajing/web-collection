@@ -80,3 +80,28 @@ test('path analysis creates layered nodes, transitions and user counts', () => {
   assert.equal(result.edges.find(item => item.source === '0:/home' && item.target === '1:/list').users, 2)
   assert.equal(result.dropoffs.find(item => item.step === 1).users, 1)
 })
+
+test('funnel computes step-to-step rate and median time-to-convert', () => {
+  const rows = [
+    { actor: 'u1', session_id: 's1', name: 'view', type: 'track', ts: 1000 },
+    { actor: 'u1', session_id: 's1', name: 'cart', type: 'track', ts: 4000 },
+    { actor: 'u1', session_id: 's1', name: 'pay', type: 'track', ts: 10000 },
+    { actor: 'u2', session_id: 's2', name: 'view', type: 'track', ts: 2000 },
+    { actor: 'u2', session_id: 's2', name: 'cart', type: 'track', ts: 5000 }
+  ]
+  const result = computeFunnel(rows, ['view', 'cart', 'pay'])
+  assert.deepEqual(result.steps.map(item => item.count), [2, 2, 1])
+  assert.deepEqual(result.steps.map(item => item.stepRate), [100, 100, 50])
+  assert.equal(result.steps[1].timeToConvert, 3000)
+  assert.equal(result.steps[2].timeToConvert, 6000)
+  assert.equal(result.steps[0].timeToConvert, null)
+})
+
+test('funnel conversion window drops steps beyond the allowed gap', () => {
+  const rows = [
+    { actor: 'u1', session_id: 's1', name: 'view', type: 'track', ts: 1000 },
+    { actor: 'u1', session_id: 's1', name: 'pay', type: 'track', ts: 1000 + 31 * 60000 }
+  ]
+  assert.deepEqual(computeFunnel(rows, ['view', 'pay']).steps.map(item => item.count), [1, 1])
+  assert.deepEqual(computeFunnel(rows, ['view', 'pay'], [], { windowMs: 30 * 60000 }).steps.map(item => item.count), [1, 0])
+})

@@ -338,6 +338,7 @@ export async function ensureSchema() {
     coalesce((select max(id) from funnel_definitions), 1),
     exists(select 1 from funnel_definitions)
   )`)
+  await run(`alter table funnel_definitions add column if not exists window_ms bigint`)
   await run(`create table if not exists dashboard_definitions (
     id bigserial primary key,
     name varchar(128) not null,
