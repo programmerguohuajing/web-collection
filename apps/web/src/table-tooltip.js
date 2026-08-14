@@ -33,15 +33,29 @@ export function keepTableTooltipWithinTable({ state }, viewportWidth = currentVi
   const popper = state?.elements?.popper
   const tableRect = table?.getBoundingClientRect?.()
   const popperRect = popper?.getBoundingClientRect?.()
-  const currentLeft = Number.parseFloat(popper?.style?.left)
-  if (!tableRect || !popperRect || !Number.isFinite(currentLeft)) return
+  if (!tableRect || !popperRect) return
 
   const minLeft = Math.max(tableRect.left, VIEWPORT_GUTTER / 2)
   const maxRight = Math.min(tableRect.right, Number(viewportWidth) - VIEWPORT_GUTTER / 2)
   let shift = 0
   if (popperRect.left < minLeft) shift = minLeft - popperRect.left
   else if (popperRect.right > maxRight) shift = maxRight - popperRect.right
-  if (shift) popper.style.left = `${currentLeft + shift}px`
+  if (!shift) return
+
+  // transform 定位（Element Plus 默认 gpuAcceleration）：在 translate 基础上叠加水平位移
+  const transform = popper.style.transform
+  const m = /translate3d\(\s*([-\d.]+)px,\s*([-\d.]+)px/.exec(transform) ||
+    /translate\(\s*([-\d.]+)px,\s*([-\d.]+)px/.exec(transform)
+  if (m) {
+    const x = parseFloat(m[1]) + shift
+    const y = parseFloat(m[2])
+    popper.style.transform = transform.replace(m[0], `translate3d(${x}px, ${y}px, 0)`)
+    return
+  }
+
+  // 兜底：left/top 定位（gpuAcceleration:false 时）
+  const currentLeft = Number.parseFloat(popper.style.left)
+  if (Number.isFinite(currentLeft)) popper.style.left = `${currentLeft + shift}px`
 }
 
 export const tableConfig = {
@@ -54,13 +68,6 @@ export const tableConfig = {
     offset: 8,
     popperOptions: {
       modifiers: [
-        {
-          name: 'computeStyles',
-          options: {
-            adaptive: false,
-            gpuAcceleration: false
-          }
-        },
         {
           name: 'keepTableTooltipWithinTable',
           enabled: true,
