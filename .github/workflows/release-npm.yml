@@ -2,17 +2,18 @@ name: Release SDK to npm
 
 # 架构约定：tag 是唯一真相源。
 # 一次发布必须由推送 `vX.Y.Z` 版本 tag 触发，工作流在同一流程里完成
-# 「校验版本 → 发布 npm → 建 GitHub Release」。
-# 这样 npm 版本、git tag、GitHub Release 三者永远一致，不会再出现
-# “npm 发了但没打 tag / 没建 Release” 的漂移。
-# （历史上曾保留 workflow_dispatch 走 main 直接发，导致 npm 发了而 tag 缺失。）
+# 「校验版本 → 发布 npm → 建 GitHub Release → 上传 SDK tgz」。
+# 这样 npm 版本、git tag、GitHub Release、Release 上的 tgz 四者永远一致，
+# 不会再出现“npm 发了但没打 tag / 没建 Release / Release 没带 tgz”的漂移。
+# （历史上曾保留 workflow_dispatch 走 main 直接发、且缺少打包上传 tgz 步骤，
+#   导致 0.1.7 之后多个 release 缺 tgz。）
 on:
   push:
     tags:
       - 'v*.*.*'
 
 permissions:
-  contents: write   # 创建 GitHub Release 需要写权限
+  contents: write   # 创建 GitHub Release / 上传 asset 需要写权限
 
 jobs:
   publish:
@@ -84,13 +85,35 @@ jobs:
       # 两种情况都建：① npm 已存在（跳过发布，补建 Release）；② npm 发布成功。
       # 若 npm 发布失败，则不建 Release，避免“发了 Release 却没上 npm”。
       - name: Create GitHub Release
+        id: release
         if: steps.npmcheck.outputs.skip == 'true' || steps.publish.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.target.outputs.package_version }}"
           if gh release view "v$version" >/dev/null 2>&1; then
-            echo "Release v$version already exists — skipping."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$version already exists — will upload tgz to existing release."
           else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
             gh release create "v$version" --generate-notes --title "v$version"
           fi
+
+      # 打包 SDK 为 tgz 并作为 Release asset 上传。
+      # 命名沿用历史风格（v0.1.5/6/7 为 web-collection-sdk-{ver}.tgz），保持前后一致。
+      # 放在建 Release 之后上传，确保重试安全（release 已存在则仅追加 asset）。
+      - name: Pack and upload SDK tgz
+        if: steps.release.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="${{ steps.target.outputs.package_version }}"
+          tgz="web-collection-sdk-${version}.tgz"
+          (cd packages/sdk && pnpm pack)
+          mv "packages/sdk/${tgz}" "$tgz"
+          # 若该 asset 已存在则先删后传，避免重复上传报错
+          if gh release view "v$version" --json assets --jq ".assets[].name" | grep -qx "$tgz"; then
+            gh release delete-asset "v$version" "$tgz" -y || true
+          fi
+          gh release upload "v$version" "$tgz" --clobber
