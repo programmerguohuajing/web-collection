@@ -1,15 +1,21 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import TrendChart from '../../../components/TrendChart.vue'
+import KpiGrid from '../../../components/KpiGrid.vue'
+import OverviewDistribution from '../../../components/OverviewDistribution.vue'
 import { events, issues, replays, summary } from '../../../dashboard.js'
-import { formatDuration, readableText, scoreWebVitals } from '../../../utils/format.js'
+import { formatDuration, readableText } from '../../../utils/format.js'
 
 const router = useRouter()
 const primaryIssue = computed(() => issues.value.find(item => item.status !== 'resolved') || issues.value[0])
-const affectedUsers = computed(() => issues.value.reduce((sum, item) => sum + Number(item.affectedUsers || 0), 0))
-const p95 = computed(() => summary.value?.perf?.lcp || summary.value?.performance?.lcp?.p95 || 0)
-const health = computed(() => summary.value?.perfScore || scoreWebVitals(summary.value?.perf))
+const overviewKpis = computed(() => [
+  { label: '今日错误数', value: Number(summary.value?.errors ?? summary.value?.issueCount ?? issues.value.length).toLocaleString(), delta: '当前筛选范围内', valueClass: 'value-danger' },
+  { label: '平均首屏 FCP', value: summary.value?.perf?.fcp != null ? formatDuration(summary.value.perf.fcp) : '-', delta: 'Core Web Vitals', valueClass: 'value-primary' },
+  { label: 'Apdex 体验分', value: summary.value?.apdex != null ? Number(summary.value.apdex).toFixed(2) : '-', delta: '体验评分', valueClass: 'value-purple' },
+  { label: '在线用户', value: Number(summary.value?.users ?? replays.value.length).toLocaleString(), delta: '实时', valueClass: 'value-success' }
+])
+const selectedRange = ref('7d')
 const activityRows = computed(() => {
   const errorRows = issues.value.slice(0, 3).map(item => ({
     ts: item.lastSeen, title: readableText(item.message, item.name), level: item.status === 'regression' ? 'P1' : 'P2',
@@ -29,29 +35,20 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>总览</h1><p>全局健康与活动概览</p></div></div>
+  <div class="page-heading"><div><h1>实时概览</h1><p>过去 24 小时全站遥测数据汇总</p></div><div class="segmented"><button v-for="item in [{ label: '1h', value: '1h' }, { label: '24h', value: '24h' }, { label: '7d', value: '7d' }, { label: '30d', value: '30d' }]" :key="item.value" type="button" :class="{ active: selectedRange === item.value }" @click="selectedRange = item.value">{{ item.label }}</button></div></div>
 
-  <section v-if="primaryIssue" class="incident-banner">
-    <el-tag type="danger" effect="dark">P1</el-tag>
-    <div><b>检测到高优先级问题</b><strong>{{ readableText(primaryIssue.message, primaryIssue.name) }}</strong><small>发生于 {{ new Date(primaryIssue.lastSeen).toLocaleString() }} · 影响用户 {{ primaryIssue.affectedUsers || primaryIssue.count || 0 }}</small></div>
-    <el-button type="primary" @click="openIssue">查看高优先级问题</el-button>
+  <KpiGrid :items="overviewKpis" />
+
+  <section class="grid overview-insights">
+    <el-card shadow="never" class="panel trend-panel">
+      <template #header><div class="panel-head"><div><h2>错误 &amp; 请求趋势</h2><small>last 24h</small></div><div class="chart-legend"><span class="red-dot">错误数</span><span class="blue-dot">请求数</span></div></div></template>
+      <TrendChart :events="events" />
+    </el-card>
+    <OverviewDistribution :summary="summary" :events="events" />
   </section>
-
-  <section class="metrics overview-metrics">
-    <el-card shadow="never"><span>错误数</span><strong class="danger-value">{{ summary?.errors ?? summary?.issueCount ?? issues.length }}</strong><small>当前筛选范围内</small></el-card>
-    <el-card shadow="never"><span>受影响用户</span><strong class="violet-value">{{ affectedUsers }}</strong><small>关联错误与会话</small></el-card>
-    <el-card shadow="never"><span>P95 页面加载耗时</span><strong class="primary-value">{{ p95 ? formatDuration(p95) : '-' }}</strong><small>Core Web Vitals</small></el-card>
-    <el-card shadow="never"><span>活跃会话</span><strong class="success-value">{{ summary?.users ?? replays.length }}</strong><small>当前筛选范围内</small></el-card>
-    <el-card shadow="never"><span>页面健康度</span><strong class="health-value">{{ health ? `${health.score} / 100` : '-' }}</strong><small>{{ health ? `Web Vitals · ${health.grade} 级` : '暂无 Web Vitals 数据' }}</small></el-card>
-  </section>
-
-  <el-card shadow="never" class="panel section trend-panel">
-    <template #header><div class="panel-head"><div><h2>错误与性能趋势</h2><small>错误数、受影响用户与页面性能关联</small></div><div class="chart-legend"><span class="red-dot">错误数</span><span class="violet-dot">受影响用户</span><span class="blue-dot">P95 加载耗时</span></div></div></template>
-    <TrendChart :events="events" />
-  </el-card>
 
   <el-card shadow="never" class="panel section activity-panel">
-    <template #header><div class="panel-head"><div><h2>统一活动（相关性视图）</h2><small>问题、追踪、日志与回放聚合</small></div><el-button>筛选</el-button></div></template>
+    <template #header><div class="panel-head"><div><h2>最近错误</h2><small>问题、追踪、日志与回放聚合</small></div><el-button>筛选</el-button></div></template>
     <el-table :data="activityRows" empty-text="暂无活动数据">
       <el-table-column label="发生时间" width="150"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column>
       <el-table-column label="问题 / 级别" min-width="250"><template #default="{ row }"><b class="activity-title">{{ row.title }}</b><el-tag v-if="row.level !== '-'" size="small" :type="row.level === 'P1' ? 'danger' : row.level === 'P2' ? 'warning' : 'primary'">{{ row.level }}</el-tag></template></el-table-column>
@@ -63,6 +60,12 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
       <el-table-column prop="release" label="发布版本" width="110" />
     </el-table>
   </el-card>
+
+  <section v-if="primaryIssue" class="incident-banner incident-banner--secondary">
+    <el-tag type="danger" effect="dark">P1</el-tag>
+    <div><b>检测到高优先级问题</b><strong>{{ readableText(primaryIssue.message, primaryIssue.name) }}</strong><small>发生于 {{ new Date(primaryIssue.lastSeen).toLocaleString() }} · 影响用户 {{ primaryIssue.affectedUsers || primaryIssue.count || 0 }}</small></div>
+    <el-button type="primary" @click="openIssue">查看高优先级问题</el-button>
+  </section>
 </template>
 
 <style scoped>

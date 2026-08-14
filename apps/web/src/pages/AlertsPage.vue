@@ -1,13 +1,13 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel, pageLoading, toList } from '../dashboard.js'
 import { buildAlertChannelPayload, channelEndpointStatus, channelFilters, channelScope, createAlertChannelForm } from '../alert-channels.js'
+import KpiGrid from '../components/KpiGrid.vue'
 
 const router = useRouter()
 const rows = ref([])
-const total = ref(0)
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
 const query = reactive({ level: '', status: '', metric: '', keyword: '' })
 const channels = ref([])
@@ -19,6 +19,12 @@ const channelForm = reactive(createAlertChannelForm())
 const alertsLoading = ref(false)
 const alertsError = ref('')
 const channelsLoading = ref(false)
+const alertKpis = computed(() => [
+  { label: '今日告警', value: Number(pager.total || rows.value.length).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-danger' },
+  { label: '已触达', value: rows.value.filter(row => row.notified).length.toLocaleString(), delta: '通知已发送', valueClass: 'value-success' },
+  { label: '告警规则', value: channels.value.length.toLocaleString(), delta: '启用中的通知渠道', valueClass: 'value-primary' },
+  { label: '未发送', value: rows.value.filter(row => !row.notified).length.toLocaleString(), delta: '待重试', valueClass: 'value-purple' }
+])
 let alertsRequestId = 0
 let channelsRequestId = 0
 
@@ -174,12 +180,12 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>告警中心</h1><p>告警规则触发记录与处理状态</p></div></div>
+  <KpiGrid :items="alertKpis" />
 
   <el-card shadow="never" class="section panel">
     <template #header>
       <div class="panel-head">
-        <div><b>告警记录</b><small style="margin-left:8px">共 {{ total }} 条</small></div>
+        <div><b>告警记录</b><small style="margin-left:8px">共 {{ pager.total || rows.length }} 条</small></div>
         <el-button @click="load">刷新</el-button>
       </div>
     </template>

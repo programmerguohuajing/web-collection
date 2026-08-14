@@ -11,7 +11,7 @@ import SearchPanel from '../../../components/SearchPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
-const tab = ref('sessions')
+const tab = ref('funnels')
 const sessions = ref([])
 const sessionEvents = ref([])
 const activeSession = ref(null)
