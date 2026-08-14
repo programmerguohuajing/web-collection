@@ -57,7 +57,7 @@ function rebuild() {
   })
   nodes = props.nodes.map((n, i) => {
     const calls = Number(n.value ?? n.calls ?? 1)
-    let p95 = 0
+    let p95 = Number(n.p95 ?? n.duration ?? 0)
     props.edges.forEach(e => {
       if (e.source === n.id || e.target === n.id) p95 = Math.max(p95, Number(e.avgDuration || 0))
     })
@@ -67,7 +67,7 @@ function rebuild() {
       type: n.type || 'default',
       calls,
       p95,
-      err: errByNode[n.id] || 0,
+      err: Math.max(Number(n.errors || 0), errByNode[n.id] || 0),
       x: W / 2 + Math.cos((i / len) * Math.PI * 2) * 200,
       y: H / 2 + Math.sin((i / len) * Math.PI * 2) * 200,
       vx: 0,
