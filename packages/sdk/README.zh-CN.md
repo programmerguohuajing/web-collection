@@ -94,6 +94,23 @@ const eys: EysClient = createEys(options)
 eys.track('submit_order', { orderId: 'SO202607100001' })
 ```
 
+### Script 接入（无构建步骤）
+
+无需打包工具时，直接通过 `<script>` 引入 IIFE 构建，挂载在 `window.WebCollection` 上：
+
+```html
+<script src="https://your-domain.com/sdk/web-collection-sdk.iife.js"></script>
+<script>
+  window.WebCollection.createEys({
+    endpoint: 'https://your-domain.com/api/collect',
+    appId: 'web',
+    release: '1.0.0'
+  })
+</script>
+```
+
+`replay: true` 时 rrweb 不会打入核心包，IIFE 场景需由外部环境提供 `window.rrweb`（或用 `replayLibUrl` 指向自托管的 rrweb 脚本），详见[会话回放](#会话回放)。
+
 ### Vue 接入
 
 ```js
