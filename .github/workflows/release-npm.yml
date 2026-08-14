@@ -75,6 +75,7 @@ jobs:
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
 
       - name: Publish SDK
+        id: publish
         if: steps.npmcheck.outputs.skip != 'true'
         working-directory: packages/sdk
         env:
