@@ -228,10 +228,17 @@ button, input, textarea, select { font-family: inherit; }
 
 .el-table { --el-table-border-color: var(--c-border-2); --el-table-header-bg-color: var(--c-surface-2); --el-table-row-hover-bg-color: var(--c-surface-2); color: var(--c-text); font-size: 13px; }
 .el-table th.el-table__cell { height: 42px; color: var(--c-text-muted); font-size: 11px; font-weight: 700; letter-spacing: .45px; text-transform: uppercase; }
+
+/* 表格单元格 tooltip：修复悬浮时左上角 (0,0) 闪现
+   - onBeforeEnter 不 await 定位，popper 首帧会停在 (0,0)；关闭进入动画让其在算好位置后才出现，避免该帧被绘制 */
+.table-cell-tooltip.el-popper { transition: none !important; }
 .el-table td.el-table__cell { height: 48px; padding: 10px 12px; }
 .el-table .cell {
   overflow: hidden;
   line-height: 1.45;
+}
+/* 仅对显式 show-overflow-tooltip 的列（带 .el-tooltip）省略，避免所有单元格被全局截断 */
+.el-table .cell.el-tooltip {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
