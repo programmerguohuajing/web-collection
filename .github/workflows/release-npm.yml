@@ -104,7 +104,7 @@ jobs:
       # 命名沿用历史风格（v0.1.5/6/7 为 web-collection-sdk-{ver}.tgz），保持前后一致。
       # 放在建 Release 之后上传，确保重试安全（release 已存在则仅追加 asset）。
       - name: Pack and upload SDK tgz
-        if: steps.release.result == 'success'
+        if: steps.release.result != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
