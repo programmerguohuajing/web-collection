@@ -27,8 +27,8 @@ function trendOption(result, chartType) {
   return {
     aria: { enabled: true },
     tooltip: { trigger: 'axis' },
-    legend: { type: 'scroll' },
-    grid: { left: 55, right: 24, top: 45, bottom: 45 },
+    legend: { type: 'scroll', top: 8 },
+    grid: { left: 55, right: 24, top: 72, bottom: 45 },
     xAxis: { type: 'category', data: buckets.map(formatBucket), boundaryGap: chartType === 'bar' },
     yAxis: { type: 'value', minInterval: 1 },
     series: (result.series || []).map(item => ({
