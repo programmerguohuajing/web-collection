@@ -550,6 +550,56 @@ try {
 }
 ```
 
+## 🌟 扩展能力（基于 MDN Web API 全量清单调研）
+
+为补全「前端遥测 / 可观测性」范畴内的平台能力，SDK 对照 MDN Web API 参考逐项新增了以下采集能力。所有新增监控默认走 `safe()` 容错 + 能力位自降级（浏览器不支持时静默跳过）；涉及隐私 / 敏感上下文的项默认关闭，需显式开启。
+
+### 环境指纹扩展（随 `environmentInfo` 自动采集，无新增开关）
+
+- `uaClientHints`：UA Client Hints（品牌 / 型号 / 架构 / 位数 / 移动端 / 表单因子），结构化替代脆弱的 UA 字符串解析
+- `hardwareConcurrency`：CPU 逻辑核数
+- `deviceMemory`：设备内存（GB，2 的幂）
+- `secureContext`：是否 HTTPS 安全上下文
+- `maxTouchPoints`：最大触摸点数
+- `screenOrientation`：屏幕方向类型与角度
+- `features` 能力位新增：`uaClientHints` / `hardwareConcurrency` / `deviceMemory` / `secureContext` / `maxTouchPoints` / `screenOrientation` / `storageManager` / `permissions` / `reportingObserver` / `pageLifecycle` / `gpu` / `webrtc` / `sharedWorker` / `fullscreen` / `clipboard` / `webShare` / `computePressure` / `elementTiming` / `webgl`
+- `workerContext`（需 `workerContextProbe: true`）：由探针 Worker 回传的 `WorkerNavigator` / `WorkerLocation`（含 `globalScope` 类型），回应「SDK 是否采集 Worker 作用域属性」
+
+### 指标 / 错误新增
+
+| 指标 / 错误 | 触发时机 | 配置项 | 默认 |
+| --- | --- | --- | --- |
+| `browser_report` / `BrowserReport`(csp/crash 归错误级) | ReportingObserver 弃用 / 干预 / CSP / 崩溃报告 | `reportingMonitoring` | `true` |
+| `page_lifecycle` | freeze / resume / bfcache_restore / bfcache_attempt / page_unload | `lifecycleMonitoring` | `true` |
+| `network_quality` | 网络连接质量变化（类型 / 下行 / RTT / saveData） | `networkInfoMonitoring` | `true` |
+| `orientation_change` | 屏幕方向变化 | `orientationMonitoring` | `true` |
+| `element_timing` | 元素级性能（Element Timing，元素级耗时与归属） | `elementTimingMonitoring` | `false` |
+| `graphics_event` / `GraphicsError` | WebGL / WebGPU 上下文丢失 / 恢复 / 创建失败 | `graphicsMonitoring` | `false` |
+| `MediaError` | `<video>` / `<audio>` 播放 / 解码 / 网络错误 | `mediaMonitoring` | `false` |
+| `SharedWorkerError` | SharedWorker 构造 / 加载错误 | `sharedWorkerMonitoring` | `false` |
+| `webrtc_stats` | WebRTC RTT / 抖动 / 丢包 / 码率（周期采集） | `webrtcMonitoring` | `false` |
+| `compute_pressure` | CPU / 散热压力（Compute Pressure API） | `computePressureMonitoring` | `false` |
+| `fullscreen_change` | 全屏进入 / 退出 | `fullscreenMonitoring` | `false` |
+| `service_worker_*` | SW 全生命周期（installing / waiting / redundant / updatefound …） | `serviceWorkerMonitoring` | `false` |
+| `environment.storage` | 存储配额用量（`navigator.storage.estimate()`） | `storageEstimateMonitoring` | `false` |
+| `environment.permissions` | 权限状态快照（通知 / 定位 / 相机 / 麦克风等） | `permissionsMonitoring` | `false` |
+| `web_share`（行为） | Web Share 意图（attempt / success / cancel / failure） | `webShareMonitoring` | `false` |
+| `clipboard_read` / `clipboard_write`（行为） | 剪贴板操作（**仅元数据，绝不记录内容**） | `clipboardMonitoring` | `false` |
+
+按需开启示例：
+
+```js
+createEys({
+  graphicsMonitoring: true,    // 图形上下文丢失
+  mediaMonitoring: true,      // 媒体播放错误
+  webrtcMonitoring: true,     // WebRTC 连接质量
+  workerContextProbe: true,   // Worker 上下文环境探针
+  permissionsMonitoring: true // 权限状态快照
+})
+```
+
+> 隐私红线：剪贴板 / 定位 / 传感器 / 相机麦克风等敏感信号一律默认关闭，仅在显式开启后采集元数据；原始内容（如剪贴板文本、精确位置）从不采集，过滤下沉到入库 / 查询层。
+
 ## 💰 采样与成本控制
 
 采样是**确定性**且**可解释**的：相同的 `traceId` 或 `sessionId` 永远得到相同的保留 / 丢弃决策，因此同一条分布式链路不会被拆到保留 / 丢弃两侧，错误关联数据也不会因采样丢失。

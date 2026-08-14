@@ -548,6 +548,56 @@ try {
 }
 ```
 
+## 🌟 Extended Capabilities (from the MDN Web API survey)
+
+To cover more of the "front-end telemetry / observability" surface, the SDK incrementally adds the capabilities below, cross-checked against the MDN Web API reference. All new monitors degrade gracefully (`safe()` + capability self-check; silently skipped when unsupported). Privacy-/sensitivity-related items are off by default and must be opted in.
+
+### Environment fingerprint extensions (auto-collected with `environmentInfo`, no new switch)
+
+- `uaClientHints`: UA Client Hints (brand / model / architecture / bitness / mobile / formFactors) — a structured replacement for fragile UA-string parsing
+- `hardwareConcurrency`: logical CPU core count
+- `deviceMemory`: device memory (GB, power of 2)
+- `secureContext`: whether the page is an HTTPS secure context
+- `maxTouchPoints`: maximum touch points
+- `screenOrientation`: screen orientation type and angle
+- `features` additions: `uaClientHints` / `hardwareConcurrency` / `deviceMemory` / `secureContext` / `maxTouchPoints` / `screenOrientation` / `storageManager` / `permissions` / `reportingObserver` / `pageLifecycle` / `gpu` / `webrtc` / `sharedWorker` / `fullscreen` / `clipboard` / `webShare` / `computePressure` / `elementTiming` / `webgl`
+- `workerContext` (requires `workerContextProbe: true`): `WorkerNavigator` / `WorkerLocation` returned by a probe worker (with `globalScope` type) — answers "does the SDK collect Worker-scope properties"
+
+### New metrics / errors
+
+| Metric / Error | Triggered when | Option | Default |
+| --- | --- | --- | --- |
+| `browser_report` / `BrowserReport` (csp/crash → error level) | ReportingObserver deprecation / intervention / CSP / crash | `reportingMonitoring` | `true` |
+| `page_lifecycle` | freeze / resume / bfcache_restore / bfcache_attempt / page_unload | `lifecycleMonitoring` | `true` |
+| `network_quality` | network quality change (type / downlink / RTT / saveData) | `networkInfoMonitoring` | `true` |
+| `orientation_change` | screen orientation change | `orientationMonitoring` | `true` |
+| `element_timing` | element-level performance (Element Timing) | `elementTimingMonitoring` | `false` |
+| `graphics_event` / `GraphicsError` | WebGL / WebGPU context lost / restored / creation error | `graphicsMonitoring` | `false` |
+| `MediaError` | `<video>` / `<audio>` playback / decode / network error | `mediaMonitoring` | `false` |
+| `SharedWorkerError` | SharedWorker construction / load error | `sharedWorkerMonitoring` | `false` |
+| `webrtc_stats` | WebRTC RTT / jitter / packet loss / bitrate (periodic) | `webrtcMonitoring` | `false` |
+| `compute_pressure` | CPU / thermal pressure (Compute Pressure API) | `computePressureMonitoring` | `false` |
+| `fullscreen_change` | fullscreen enter / exit | `fullscreenMonitoring` | `false` |
+| `service_worker_*` | SW full lifecycle (installing / waiting / redundant / updatefound …) | `serviceWorkerMonitoring` | `false` |
+| `environment.storage` | storage quota usage (`navigator.storage.estimate()`) | `storageEstimateMonitoring` | `false` |
+| `environment.permissions` | permission state snapshot (notification / geolocation / camera / mic …) | `permissionsMonitoring` | `false` |
+| `web_share` (behavior) | Web Share intent (attempt / success / cancel / failure) | `webShareMonitoring` | `false` |
+| `clipboard_read` / `clipboard_write` (behavior) | clipboard ops (**metadata only, never the content**) | `clipboardMonitoring` | `false` |
+
+Opt-in example:
+
+```js
+createEys({
+  graphicsMonitoring: true,    // graphics context loss
+  mediaMonitoring: true,      // media playback errors
+  webrtcMonitoring: true,     // WebRTC connection quality
+  workerContextProbe: true,   // Worker context probe
+  permissionsMonitoring: true // permission state snapshot
+})
+```
+
+> Privacy red line: clipboard / geolocation / sensors / camera-mic signals stay off by default and only emit metadata when explicitly enabled; raw content (clipboard text, precise location) is never collected — filtering is pushed down to the ingestion / query layer.
+
 ## 💰 Sampling & Cost Control
 
 Sampling is **deterministic** and **explainable**: the same `traceId` or `sessionId` always yields the same keep/drop decision, so a distributed trace is never split across the keep/drop boundary and error-linked data is never lost to sampling.

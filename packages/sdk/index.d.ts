@@ -325,6 +325,38 @@ export interface EysOptions {
   workerMonitoring?: boolean
   /** 是否监控 Service Worker */
   serviceWorkerMonitoring?: boolean
+  /** 是否监控 ReportingObserver（弃用/干预/CSP/崩溃报告），默认 true */
+  reportingMonitoring?: boolean
+  /** 是否监控页面生命周期与 bfcache（freeze/resume/pageshow.persisted），默认 true */
+  lifecycleMonitoring?: boolean
+  /** 是否监控 WebGL/WebGPU 上下文丢失，默认 false */
+  graphicsMonitoring?: boolean
+  /** 是否监控 video/audio 播放错误，默认 false */
+  mediaMonitoring?: boolean
+  /** 是否监控网络质量变化（connection change），默认 true */
+  networkInfoMonitoring?: boolean
+  /** 是否监控屏幕方向变化，默认 true */
+  orientationMonitoring?: boolean
+  /** 是否监控元素级性能（Element Timing），默认 false */
+  elementTimingMonitoring?: boolean
+  /** 是否监控 SharedWorker 错误，默认 false */
+  sharedWorkerMonitoring?: boolean
+  /** 是否生成探针采集 Worker 上下文（WorkerNavigator/WorkerLocation），默认 false */
+  workerContextProbe?: boolean
+  /** 是否监控 WebRTC 连接质量，默认 false */
+  webrtcMonitoring?: boolean
+  /** 是否监控计算压力（CPU/散热），默认 false */
+  computePressureMonitoring?: boolean
+  /** 是否监控全屏状态变化，默认 false */
+  fullscreenMonitoring?: boolean
+  /** 是否监控 Web Share 意图，默认 false */
+  webShareMonitoring?: boolean
+  /** 是否监控剪贴板操作（仅元数据，不记内容），默认 false */
+  clipboardMonitoring?: boolean
+  /** 是否采集存储配额用量，默认 false */
+  storageEstimateMonitoring?: boolean
+  /** 是否采集权限状态快照，默认 false */
+  permissionsMonitoring?: boolean
   /** 传输层诊断回调（Reliable Transport v2）。暴露队列满 / 限流 / 超时 / 丢弃 / Beacon 等事件，不含业务敏感数据。 */
   onDiagnostic?: (event: EysDiagnosticEvent) => void
   /** 单次在线发送超时（毫秒），超时按网络错误重试。默认 10000。 */
