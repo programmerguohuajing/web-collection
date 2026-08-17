@@ -9,15 +9,26 @@
  *   2. 动态 import：ESM 构建中 Vite 会把 `import('rrweb')` 拆成独立 chunk，
  *      核心 es 包不包含 rrweb，只有在 replay 真正开启时才按需下载该 chunk。
  *   3. replayLibUrl 注入：IIFE 构建把 rrweb 外部化（external）后，`import('rrweb')`
- *      在浏览器中无法解析，此时回退为注入 `replayLibUrl` 指向的 rrweb IIFE 脚本，
- *      再读取 `window.rrweb`。
+ *      在浏览器中无法解析，此时回退为注入 rrweb 脚本（未配置 replayLibUrl 时使用
+ *      内置 `DEFAULT_REPLAY_LIB_URL`）再读取 `window.rrweb`。
  *
  * 三者均失败时抛出可读错误，并附带接入指引（不静默吞掉，便于排查）。
  *
  * @param {object} [opts]
- * @param {string} [opts.replayLibUrl] - IIFE 场景下 rrweb 脚本地址（自托管），可选。
+ * @param {string} [opts.replayLibUrl] - IIFE 场景下 rrweb 脚本地址（自托管），可选；
+ *   不传则使用内置默认地址 `DEFAULT_REPLAY_LIB_URL`（jsDelivr 上的 rrweb UMD 构建）。
  * @returns {Promise<object>} 解析为包含 `record` 的 rrweb 模块对象。
  */
+
+/**
+ * 内置 rrweb 脚本地址（replay:true 但未配置 replayLibUrl 时的默认回退）。
+ * 与 SDK 开发依赖锁定的 rrweb 版本一致（2.1.0），指向其 UMD 压缩构建，
+ * 该构建以 `<script>` 引入后会暴露全局 `window.rrweb`。
+ * 如需自托管，在 createEys({ replayLibUrl }) 中传入覆盖即可。
+ */
+export const DEFAULT_REPLAY_LIB_URL =
+  'https://cdn.jsdelivr.net/npm/rrweb@2.1.0/dist/rrweb.umd.min.cjs'
+
 export async function loadRrweb({ replayLibUrl } = {}) {
   // 1) 全局已注入（IIFE 自托管 / 宿主预加载）
   if (typeof window !== 'undefined' && window.rrweb && window.rrweb.record) {
@@ -33,18 +44,19 @@ export async function loadRrweb({ replayLibUrl } = {}) {
     // IIFE 构建中 rrweb 被 external 化，`import('rrweb')` 运行时无法解析，走回退。
   }
 
-  // 3) IIFE 自托管：通过 replayLibUrl 注入脚本后再读 window.rrweb。
-  if (replayLibUrl) {
-    await injectScript(replayLibUrl)
-    if (typeof window !== 'undefined' && window.rrweb && window.rrweb.record) {
-      return window.rrweb
-    }
+  // 3) IIFE 自托管：未配置 replayLibUrl 时使用内置默认地址注入脚本，再读 window.rrweb。
+  const libUrl = replayLibUrl || DEFAULT_REPLAY_LIB_URL
+  await injectScript(libUrl)
+  if (typeof window !== 'undefined' && window.rrweb && window.rrweb.record) {
+    return window.rrweb
   }
 
   throw new Error(
     '[web-collection] replay 已开启但未能加载 rrweb：' +
-      'ESM 环境需将 rrweb 作为依赖提供；IIFE 环境需通过 <script> 注入 rrweb（暴露 window.rrweb）' +
-      (replayLibUrl ? '' : '，或在 createEys 中配置 replayLibUrl 指向 rrweb 脚本')
+      '脚本注入失败（' + libUrl + '）。' +
+      (replayLibUrl
+        ? '请检查 replayLibUrl 是否可访问。'
+        : 'ESM 环境需将 rrweb 作为依赖提供；如需自托管可配置 replayLibUrl 覆盖内置默认地址。')
   )
 }
 

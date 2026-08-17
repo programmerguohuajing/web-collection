@@ -192,6 +192,7 @@ export function createEys(options = {}) {
     // SDK-209 · 分包与懒加载：rrweb 不在核心包静态打包，replay 开启时才按需加载。
     // replayLibUrl 仅 IIFE 自托管场景需要：引入外部化后的 rrweb 脚本地址，
     // 加载完成后暴露 window.rrweb；ESM 构建由 Vite 自动拆分为独立 chunk，无需此配置。
+    // 留空时若 replay:true，将自动使用内置默认地址（rrweb-driver.js 的 DEFAULT_REPLAY_LIB_URL）。
     replayLibUrl: '',
     // replayWorkerUrl 指向压缩 Worker 脚本（SDK-210）：提供则优先在 Worker 内 gzip，
     // 主线程零阻塞；不提供则回退主线程 CompressionStream。
