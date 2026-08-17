@@ -6,6 +6,7 @@ import { formatDuration } from '../../../utils/format.js'
 import TraceTopology from '../../../components/TraceTopology.vue'
 import TraceWaterfall from '../../../components/TraceWaterfall.vue'
 import DistributedTraceTree from '../../../components/DistributedTraceTree.vue'
+import RequestResponsePanel from '../../../components/RequestResponsePanel.vue'
 import { buildTopologyFromDistributed } from '../../../utils/trace-topology.js'
 
 const traces = ref([])
@@ -33,6 +34,12 @@ let distRequestId = 0
 
 // 详情面板
 const detail = reactive({ open: false, kind: '', data: null })
+
+// 前端请求 / 响应
+const reqEvents = ref([])
+const reqLoading = ref(false)
+const reqError = ref('')
+let reqRequestId = 0
 
 const topoRef = ref(null)
 const layoutMode = ref('force')
@@ -180,8 +187,25 @@ async function loadDistributed() {
   }
 }
 
+async function loadReqEvents() {
+  if (!active.value?.trace_id) return
+  const traceId = active.value.trace_id
+  const requestId = ++reqRequestId
+  reqLoading.value = true
+  reqError.value = ''
+  try {
+    const data = await api(`/api/traces/${encodeURIComponent(traceId)}?pageSize=1000`, { requestKey: `traces:reqres:${traceId}` })
+    if (requestId !== reqRequestId) return
+    reqEvents.value = Array.isArray(data?.items) ? data.items : []
+  } catch (error) {
+    if (requestId === reqRequestId && error?.code !== 'ABORT_ERR') reqError.value = error.message || '请求 / 响应加载失败'
+  } finally {
+    if (requestId === reqRequestId) reqLoading.value = false
+  }
+}
+
 watch(() => active.value?.trace_id, traceId => {
-  if (traceId) loadTopology()
+  if (traceId) { loadTopology(); loadReqEvents() }
 })
 
 watch(activeView, view => {
@@ -438,6 +462,12 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
           </el-table-column>
         </el-table>
       </el-card>
+
+      <RequestResponsePanel
+        :events="reqEvents"
+        :loading="reqLoading"
+        :error="reqError"
+      />
     </template>
 
     <el-card v-else class="trace-card trace-empty-card" shadow="never">
