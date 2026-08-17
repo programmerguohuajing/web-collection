@@ -53,17 +53,18 @@ function fmt(n) { return (Number(n) || 0).toLocaleString() }
   background: var(--c-surface-2);
   border: 1px solid var(--c-border);
   border-radius: 12px; padding: 14px; cursor: pointer;
-  transition: .18s; position: relative;
+  transition: border-color .15s, box-shadow .15s, transform .15s, background .15s; position: relative;
 }
-.step-node:hover { border-color: var(--c-border-strong); transform: translateY(-2px); box-shadow: var(--sh-md); }
+.step-node:hover { border-color: var(--c-primary); transform: translateY(-2px); box-shadow: 0 0 0 1px var(--c-primary) inset, var(--sh-md); }
 .step-node.selected { border-color: var(--c-primary); background: var(--c-primary-soft); box-shadow: 0 0 0 1px var(--c-primary) inset; }
 .step-node .idx {
-  position: absolute; top: -9px; left: 14px;
+  position: absolute; top: 6px; left: 6px;
   width: 20px; height: 20px; border-radius: 50%;
   background: var(--c-primary); color: #fff; font-size: 11px;
   display: grid; place-items: center; font-weight: 700;
 }
-.step-node .name { font-size: 14px; font-weight: 600; margin: 6px 0 10px; color: var(--c-text); }
+.step-node.selected .idx { box-shadow: 0 0 0 2px var(--c-surface-2) inset; }
+.step-node .name { font-size: 14px; font-weight: 600; margin: 26px 0 10px; color: var(--c-text); }
 .step-node .nums { display: flex; flex-direction: column; gap: 5px; }
 .step-node .row { display: flex; justify-content: space-between; font-size: 12px; }
 .step-node .row .l { color: var(--c-text-muted); }
