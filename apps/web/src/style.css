@@ -179,7 +179,7 @@ button, input, textarea, select { font-family: inherit; }
 
 .content.app-main { display: block; min-height: calc(100vh - var(--topbar-h)); padding: 24px 28px 40px; overflow: auto; }
 .content-inner { width: 100%; max-width: 1440px; margin: 0 auto; }
-.router-view-frame { min-width: 0; }
+.router-view-frame { min-width: 0; position: relative; }
 .section { margin-bottom: 20px; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 0 0 20px; }
 .page-heading h1, .section-title { margin: 0; color: var(--c-text); font-size: 20px; font-weight: 700; line-height: 1.25; }
