@@ -198,7 +198,7 @@ watch(() => form.eventName, () => { void loadProperties() })
     <el-space class="chart-actions"><el-radio-group v-model="chartType"><el-radio-button value="line">折线图</el-radio-button><el-radio-button value="bar">柱状图</el-radio-button></el-radio-group></el-space>
     <AnalyticsChart kind="trend" :result="result" :chart-type="chartType" />
     <el-table :data="result.table" border>
-      <el-table-column label="时间" width="190"><template #default="{ row }">{{ new Date(row.bucket).toLocaleString() }}</template></el-table-column>
+      <el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.bucket).toLocaleString() }}</template></el-table-column>
       <el-table-column prop="series" label="拆分值" min-width="180" />
       <el-table-column prop="value" label="数值" width="120" />
     </el-table>

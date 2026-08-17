@@ -32,7 +32,14 @@ async function load() {
     const data = await api(`/api/analytics/paths?${suffix}`, { requestKey: 'paths:list' })
     if (currentRequest !== requestId) return
     const normalized = normalizePageResponse(data, pager)
-    rows.value = normalized.items.map(row => ({ ...row, path: row.path || row.label || '-', count: Number(row.count || row.sessions || 0), users: Array.isArray(row.users) ? row.users : [] }))
+    let items = normalized.items
+    // 防御：若后端未按 pageSize 分页（返回条数超过单页上限，多见于接口旧版本），
+    // 在客户端兜底分页，保证表格渲染条数不超过 pageSize，且分页器翻页仍可正常使用。
+    if (items.length > normalized.pageSize) {
+      const start = (pager.page - 1) * pager.pageSize
+      items = items.slice(start, start + pager.pageSize)
+    }
+    rows.value = items.map(row => ({ ...row, path: row.path || row.label || '-', count: Number(row.count || row.sessions || 0), users: Array.isArray(row.users) ? row.users : [] }))
     Object.assign(pager, normalized)
   } catch (error) {
     if (currentRequest === requestId && error?.code !== 'ABORT_ERR') {

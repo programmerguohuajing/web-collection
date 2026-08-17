@@ -121,8 +121,8 @@ onMounted(() => { void load() })
       <el-table-column label="会话 ID" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ text(row.session_id) }}</template></el-table-column>
       <el-table-column label="用户 ID" width="180" show-overflow-tooltip><template #default="{ row }">{{ text(row.user_id) }}</template></el-table-column>
       <el-table-column label="用户名称" width="120"><template #default="{ row }">{{ text(row.user_name) }}</template></el-table-column>
-      <el-table-column label="开始时间" width="180"><template #default="{ row }">{{ formatDate(row.started_at) }}</template></el-table-column>
-      <el-table-column label="结束时间" width="180"><template #default="{ row }">{{ formatDate(row.ended_at) }}</template></el-table-column>
+      <el-table-column label="开始时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.started_at) }}</template></el-table-column>
+      <el-table-column label="结束时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.ended_at) }}</template></el-table-column>
       <el-table-column label="持续时长" width="110"><template #default="{ row }">{{ formatDuration(row.duration) }}</template></el-table-column>
       <el-table-column label="事件数" width="90" align="center"><template #default="{ row }">{{ row.event_count }}</template></el-table-column>
       <el-table-column label="错误数" width="90" align="center"><template #default="{ row }"><el-tag v-if="row.error_count" type="danger" size="small">{{ row.error_count }}</el-tag><span v-else>-</span></template></el-table-column>

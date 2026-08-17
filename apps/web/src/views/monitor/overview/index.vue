@@ -50,7 +50,7 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
   <el-card shadow="never" class="panel section activity-panel">
     <template #header><div class="panel-head"><div><h2>最近错误</h2><small>问题、追踪、日志与回放聚合</small></div><el-button>筛选</el-button></div></template>
     <el-table :data="activityRows" empty-text="暂无活动数据">
-      <el-table-column label="发生时间" width="150"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column>
+      <el-table-column label="发生时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column>
       <el-table-column label="问题 / 级别" min-width="250"><template #default="{ row }"><b class="activity-title">{{ row.title }}</b><el-tag v-if="row.level !== '-'" size="small" :type="row.level === 'P1' ? 'danger' : row.level === 'P2' ? 'warning' : 'primary'">{{ row.level }}</el-tag></template></el-table-column>
       <el-table-column label="影响" width="100"><template #default="{ row }">{{ row.impact }} 用户</template></el-table-column>
       <el-table-column label="页面 / 接口" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.path || row.url || '-' }}</template></el-table-column>

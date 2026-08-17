@@ -217,7 +217,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
 
     <el-alert v-if="alertsError" class="table-error" type="error" :title="alertsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
     <el-table :data="rows" border v-loading="alertsLoading" empty-text="暂无告警记录">
-      <el-table-column label="时间" width="180"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
+      <el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column prop="app_id" label="应用" width="140" />
       <el-table-column label="指标" width="100">
         <template #default="{ row }">

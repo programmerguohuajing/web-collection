@@ -108,7 +108,7 @@ function statusType(status) {
     </template>
     <el-table :data="rows" size="small" empty-text="暂无数据">
       <template v-if="stream">
-        <el-table-column label="时间" width="180">
+        <el-table-column label="时间" width="200" cell-class-name="time-cell">
           <template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template>
         </el-table-column>
         <el-table-column label="类型" width="100">
