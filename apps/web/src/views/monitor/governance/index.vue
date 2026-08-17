@@ -253,7 +253,7 @@ onMounted(load)
     <el-table :data="releases" border v-loading="releaseLoading" empty-text="暂无版本数据">
       <el-table-column label="版本" min-width="180"><template #default="{ row }">{{ row.release_name || row.release || '-' }}</template></el-table-column>
       <el-table-column label="状态" width="120"><template #default="{ row }">{{ row.status || '-' }}</template></el-table-column>
-      <el-table-column label="首次上报时间" width="190"><template #default="{ row }">{{ formatDate(row.created_at ?? row.createdAt) }}</template></el-table-column>
+      <el-table-column label="首次上报时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.created_at ?? row.createdAt) }}</template></el-table-column>
       <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" @click="removeRelease(row)">删除</el-button></template></el-table-column>
     </el-table>
     <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="releasePager.page" :page-size="releasePager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="releasePager.total" @current-change="value => { releasePager.page = value; loadReleasePage() }" @size-change="value => { releasePager.page = 1; releasePager.pageSize = value; loadReleasePage() }" />

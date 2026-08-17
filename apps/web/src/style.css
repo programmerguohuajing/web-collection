@@ -233,13 +233,32 @@ button, input, textarea, select { font-family: inherit; }
    - onBeforeEnter 不 await 定位，popper 首帧会停在 (0,0)；关闭进入动画让其在算好位置后才出现，避免该帧被绘制 */
 .table-cell-tooltip.el-popper { transition: none !important; }
 .el-table td.el-table__cell { height: 48px; padding: 10px 12px; }
+/* 普通单元格：完整显示内容（覆盖 Element Plus 默认的 text-overflow:ellipsis） */
 .el-table .cell {
   overflow: hidden;
   line-height: 1.45;
+  text-overflow: clip;
+  white-space: normal;
 }
 /* 仅对显式 show-overflow-tooltip 的列（带 .el-tooltip）省略，避免所有单元格被全局截断 */
 .el-table .cell.el-tooltip {
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 时间列：完整单行显示，绝对不出现省略号
+   - 即便列宽偶发不足，也宁可溢出也不截断（overflow:visible），保证时间全部可见 */
+.el-table .cell.time-cell {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* 表格内 el-tag：解除 inline-flex 截断，让 tag 内容（包括中文）始终完整渲染，不再被 cell 省略 */
+.el-table .cell .el-tag {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: visible;
+}
+.el-table .cell .el-tag .el-tag__content {
   white-space: nowrap;
 }
 .el-pagination { margin-top: 16px; }
