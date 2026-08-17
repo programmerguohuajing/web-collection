@@ -24,7 +24,7 @@ function initChart() {
   if (!chartEl.value) return
   chart.value = echarts.init(chartEl.value)
   chart.value.setOption({
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', confine: true },
     legend: { data: metricList().map(metric => metricLabel(metric)), bottom: 0 },
     grid: { left: 48, right: 20, top: 20, bottom: 40 },
     xAxis: { type: 'category', boundaryGap: false, data: [] },

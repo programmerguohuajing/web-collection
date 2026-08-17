@@ -68,6 +68,7 @@ function buildOption() {
 
   return {
     tooltip: {
+      confine: true,
       formatter: (p) => {
         if (p.dataType === 'node') {
           return `${p.data.label}<br/>类型：${p.data.category}<br/>权重：${p.data.value}`

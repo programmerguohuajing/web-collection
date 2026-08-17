@@ -41,7 +41,7 @@ function updateChart() {
   if (!chart.value) return
   const { trend, categories } = processData()
   chart.value.setOption({
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', confine: true },
     legend: { data: ['错误数', '受影响用户'], bottom: 0 },
     grid: { left: 48, right: 20, top: 20, bottom: 40 },
     xAxis: { type: 'category', data: trend.map(t => t.name.slice(5)) },
