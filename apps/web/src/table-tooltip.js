@@ -68,21 +68,22 @@ export const tableConfig = {
     offset: 8,
     popperOptions: {
       modifiers: [
-        // 禁用 popper.js 内置 flip：默认 flip 会在 cell 上方空间不足时把 placement 从 'top'
-        // 翻转到 'bottom'（fallbackPlacements=[bottom]），导致 tooltip 总出现在 cell 下方。
-        // 项目里 el-card(overflow:hidden) + el-table__inner-wrapper(overflow-x:auto) 把
-        // clippingParents 边界收紧到第 1 行 cell 上方仅 ~25px，而 tooltip 多行 wrap 通常 50-60px，
-        // 几乎每行 hover 都会触发 flip，最终表现就是「tooltip 飘在表格外/位置错」。
-        // 禁用 flip 后强制 placement='top'，tooltip 紧贴 cell.top 上方（必要时浮出卡片，仍受
-        // 下方 preventOverflow viewport 边界保护，不会飘出视口）。
-        { name: 'flip', enabled: false },
-        // 让 preventOverflow 用 viewport 作为边界：默认是 'clippingParents'，会被 el-card
-        // overflow:hidden 截断成"必须完全在卡片内"，从而反过来更早触发 flip；改成 window
-        // 后 tooltip 可以正常浮出卡片顶部上方（紧贴 cell 边缘），但仍受 viewport 保护不会
-        // 飘出视口。altAxis:true 同步保护水平方向（与 keepTableTooltipWithinTable 协作）。
+        // 首选 placement='top'：tooltip 紧贴当前行上方（满足"悬浮当前行上"）。
+        // 当表格顶部行 / 贴近视口的行上方空间不足时，flip 自动翻到当前行下方
+        // （fallbackPlacements=[bottom]），仍紧贴所在行——避免 tooltip 被顶到视口上方、
+        // 视觉上"展示在表格上方"。
+        // 注：Element Plus tooltip 浮层 teleport 到 body，不受 el-card overflow:hidden 裁剪，
+        // 因此无需靠 { name:'flip', enabled:false } 强制 top（那正是导致顶部行 tooltip
+        // 飘到表格上方的原因）。
+        {
+          name: 'flip',
+          options: { fallbackPlacements: ['bottom'], rootBoundary: 'viewport' }
+        },
+        // 用 viewport(rootBoundary) 作为 preventOverflow 边界，保证 tooltip 不飘出视口；
+        // altAxis:true 同步保护水平方向（与 keepTableTooltipWithinTable 协作）。
         {
           name: 'preventOverflow',
-          options: { boundariesElement: 'window', altAxis: true }
+          options: { rootBoundary: 'viewport', altAxis: true }
         },
         // 自定义：水平方向保持 tooltip 在 el-table 宽度内（避免超宽 tooltip 飘出右侧视口）。
         {
