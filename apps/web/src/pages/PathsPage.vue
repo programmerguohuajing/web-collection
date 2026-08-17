@@ -1,10 +1,13 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api, normalizePageResponse, pageLoading, queryFromFilters } from '../dashboard.js'
+import { useFilterStore } from '../stores/filters.js'
 import SearchPanel from '../components/SearchPanel.vue'
 import TopologyChart from '../components/TopologyChart.vue'
 import KpiGrid from '../components/KpiGrid.vue'
 import PathFlow from '../components/PathFlow.vue'
+
+const filterStore = useFilterStore()
 
 const rows = ref([])
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
@@ -22,6 +25,13 @@ const pathKpis = computed(() => [
   { label: '跳出路径', value: rows.value.filter(row => Number(row.depth || row.steps || 0) <= 1).length.toLocaleString(), delta: '当前筛选范围', valueClass: 'value-danger' }
 ])
 let clickRequestId = 0
+
+// 点击视角为空且全局时间范围已生效时，提示用户放宽时间窗——
+// 点击事件常跨数十天分布，窄时间窗（如近7天）会将其整体过滤为空。
+const clickRangeActive = computed(() => Array.isArray(filterStore.range) && filterStore.range.length === 2)
+const clickEmptyWithRange = computed(() =>
+  clickRangeActive.value && !clickError.value && !clickLoading.value && clickPaths.value.nodes.length === 0
+)
 
 async function load() {
   const currentRequest = ++requestId
@@ -110,6 +120,10 @@ onMounted(load)
       </el-tab-pane>
       <el-tab-pane label="点击视角" name="click">
         <el-alert v-if="clickError" class="table-error" type="error" :title="clickError" show-icon :closable="false"><template #default><el-button link type="primary" @click="loadClickPaths">重试</el-button></template></el-alert>
+        <el-alert v-else-if="clickEmptyWithRange" class="table-error" type="info" show-icon :closable="false">
+          <template #title>当前时间范围内没有点击路径数据</template>
+          <template #default>点击事件通常跨数十天分布，当前所选时间窗可能将其整体过滤为空。请尝试在右上角将时间范围改为「全部时间」或「最近90天」后刷新。</template>
+        </el-alert>
         <TopologyChart :nodes="clickPaths.nodes" :edges="clickPaths.edges" height="560px" v-loading="clickLoading" />
       </el-tab-pane>
     </el-tabs>
