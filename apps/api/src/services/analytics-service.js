@@ -1,5 +1,6 @@
 import { all, run } from '../db.js'
 import { mapEvent } from '../mappers/event-mapper.js'
+import { parseJson } from '../utils/json.js'
 
 const MAX_TRACE_ROWS = 5000
 const MAX_PATH_ROWS = 50000
@@ -236,7 +237,11 @@ function isNetworkError(event) {
 }
 
 export async function getClickPaths(filters = {}) {
-  const { where, params } = whereFor(filters, ["type='behavior'", "name='click'", "props_json ? 'elementLabel'"])
+  // 仅按 type/name 过滤点击事件；标签字段由 JS 端兜底（elementLabel -> text/title/tag）
+  // 以兼容历史 SDK 数据（早期 elementInfo 不含 elementLabel 字段）。
+  // 注意避免 JSONB `?` 键存在算子：toPgSql 会把所有 `?` 替换成 $n 占位符，
+  // 会把 `props_json ? 'x'` 错误地变成 `props_json $1 'x'`（PostgreSQL 不识别）。
+  const { where, params } = whereFor(filters, ["type='behavior'", "name='click'"])
   const rows = await all(`select session_id, ts, path, props_json from events ${where} order by session_id, ts limit 20000`, params)
 
   const sessions = groupBy(rows, row => row.session_id || '')
@@ -247,9 +252,12 @@ export async function getClickPaths(filters = {}) {
     if (!events.length) continue
     const clicks = events.map(e => {
       const props = parseJson(e.props_json) || {}
+      // 兼容策略：优先取最新 SDK 的 elementLabel，向前回退到 text/title/ariaLabel/tag，
+      // 这样点击路径拓扑对历史数据也能给出可读的节点标签，而不是空字符串。
+      const label = props.elementLabel || props.label || props.text || props.ariaLabel || props.title || props.tag || ''
       return {
-        id: `${props.elementLabel}@${e.path || props.path || ''}`,
-        label: props.elementLabel || 'unknown',
+        id: `${label || props.tag || 'node'}@${e.path || props.path || ''}`,
+        label: label || props.tag || 'unknown',
         path: e.path || props.path || ''
       }
     }).filter(c => c.label && c.label !== 'unknown')

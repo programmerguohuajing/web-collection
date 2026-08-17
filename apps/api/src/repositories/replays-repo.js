@@ -5,10 +5,13 @@
 
 import { all, run, scalar } from '../db.js'
 
+// 放宽原 fullSnapshotWhere：不再强制要求含 rrweb type=2 全量快照。
+// 旧数据 / 首事件非全量快照的会话此前会被 exists(...) 整组过滤，导致回放列表整体为空；
+// 改为“至少含一条回放事件即可”，保留最小护栏（排除 events_json 完全为空的行）。
+// 详情页 getReplay 仍按实际事件重组，缺少全量快照时前端会提示无法播放，不会崩溃。
 const fullSnapshotWhere = `exists (
   select 1
   from jsonb_array_elements(case when jsonb_typeof(events_json) = 'array' then events_json else '[]'::jsonb end) event
-  where event->>'type' = '2'
 )`
 
 /**
