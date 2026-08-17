@@ -300,7 +300,7 @@ function prettyBody(text) {
 .muted { color: #9298a8; }
 .url { color: #3c4051; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
 .url .path { color: #4f46e5; }
-.method { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-weight: 600; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: #f1f2f7; color: #5b6172; }
+.method { display: inline-block; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-weight: 600; font-size: 12px; padding: 2px 8px; border-radius: 6px; background: #f1f2f7; color: #5b6172; }
 .has-body { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #16a34a; }
 .has-body.no { color: #9298a8; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
