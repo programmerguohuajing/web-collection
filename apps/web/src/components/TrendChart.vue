@@ -58,7 +58,7 @@ function draw() {
   const series = [
     { color: '#ef4444', values: buckets.map(item => item.errors) },
     { color: '#6d4aff', values: buckets.map(item => item.users.size) },
-    { color: '#1769e0', values: buckets.map(item => item.perf.length ? item.perf.reduce((a, b) => a + b, 0) / item.perf.length : 0) }
+    { color: '#4f46e5', values: buckets.map(item => item.perf.length ? item.perf.reduce((a, b) => a + b, 0) / item.perf.length : 0) }
   ]
   const max = Math.max(1, ...series.flatMap(item => item.values))
   for (const item of series) {

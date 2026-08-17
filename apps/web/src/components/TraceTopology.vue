@@ -10,8 +10,8 @@ const props = defineProps({
   typeColors: {
     type: Object,
     default: () => ({
-      page: '#1769e0', frontend: '#1769e0', gateway: '#6d4aff', service: '#409eff',
-      api: '#409eff', database: '#0ea765', cache: '#f59e0b', queue: '#909399',
+      page: '#4f46e5', frontend: '#4f46e5', gateway: '#6d4aff', service: '#6366f1',
+      api: '#6366f1', database: '#0ea765', cache: '#f59e0b', queue: '#909399',
       external: '#e6a23c', default: '#909399'
     })
   },
@@ -394,10 +394,10 @@ onBeforeUnmount(() => {
 .topo-legend .dot { width: 10px; height: 10px; border-radius: 50%; }
 .topo-legend .ln { width: 18px; height: 0; border-top: 2px solid #c0c4cc; }
 .topo-legend .ln.err { border-color: #ef4444; }
-.topo-legend .lg-sep { height: 1px; background: var(--line, #dfe5ec); margin: 2px 0; }
-.topo-hint { position: absolute; right: 16px; top: 12px; color: #627085; font-size: 11px; background: rgba(255,255,255,.85); padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line, #dfe5ec); }
-.topo-tip { position: fixed; pointer-events: none; background: rgba(255,255,255,.97); border: 1px solid var(--line, #dfe5ec); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: #172033; box-shadow: 0 4px 14px rgba(23,32,51,.12); z-index: 50; max-width: 240px; display: none; }
-.topo-tip b { color: #1769e0; }
+.topo-legend .lg-sep { height: 1px; background: var(--c-border, #e7e9ee); margin: 2px 0; }
+.topo-hint { position: absolute; right: 16px; top: 12px; color: #627085; font-size: 11px; background: rgba(255,255,255,.85); padding: 5px 9px; border-radius: 7px; border: 1px solid var(--c-border, #e7e9ee); }
+.topo-tip { position: fixed; pointer-events: none; background: rgba(255,255,255,.97); border: 1px solid var(--c-border, #e7e9ee); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: #1f2733; box-shadow: 0 4px 14px rgba(23,32,51,.12); z-index: 50; max-width: 240px; display: none; }
+.topo-tip b { color: #4f46e5; }
 .topo-tip .muted { color: #8a96a7; font-size: 11px; }
 
 /* 拓扑连线：基础线 + 动态流动线（方向 source → target） */
@@ -406,7 +406,7 @@ onBeforeUnmount(() => {
 .edge-base.err { stroke: #ef4444; animation: edgePulse 1.4s ease-in-out infinite; }
 .edge-flow { fill: none; stroke: #8b97a6; stroke-dasharray: 5 11; stroke-linecap: round; pointer-events: none; animation: edgeFlow 1.1s linear infinite; }
 .edge-flow.err { stroke: #ef4444; animation: edgeFlow .75s linear infinite, edgePulse 1.4s ease-in-out infinite; }
-.edge-grp:hover .edge-base { stroke: #1769e0; }
+.edge-grp:hover .edge-base { stroke: #4f46e5; }
 .edge-grp:hover .edge-flow { stroke: #3b82f6; }
 @keyframes edgeFlow { to { stroke-dashoffset: -16; } }
 @keyframes edgePulse { 0%, 100% { opacity: .92; } 50% { opacity: .42; } }

@@ -138,8 +138,8 @@ watch(() => props.expandSignal, () => { expanded.value = props.expandAll })
   transition: background .16s ease, box-shadow .16s ease;
 }
 .node-row:hover { z-index: 2; background: #f7f9fc; box-shadow: inset 3px 0 var(--node-color); }
-.node-row:focus-visible { box-shadow: inset 0 0 0 2px rgba(23, 105, 224, .35); }
-.node-selected > .node-row { background: #ecf5ff; box-shadow: inset 3px 0 var(--el-color-primary, #1769e0); }
+.node-row:focus-visible { box-shadow: inset 0 0 0 2px rgba(79, 70, 229, .35); }
+.node-selected > .node-row { background: #eef0fe; box-shadow: inset 3px 0 var(--c-primary, #4f46e5); }
 .node-error > .node-row { background: #fff7f7; }
 .node-error > .node-row:hover { background: #fff1f2; }
 .node-critical > .node-row { background: #fffbeb; }
@@ -151,7 +151,7 @@ watch(() => props.expandSignal, () => { expanded.value = props.expandAll })
 .trace-node:not(.has-depth) > .node-row .node-junction { visibility: hidden; }
 .expand-button, .expand-placeholder { flex: none; width: 20px; height: 20px; margin-right: 7px; }
 .expand-button { display: grid; place-items: center; padding: 0; color: #66758a; background: #fff; border: 1px solid #cfd7e3; border-radius: 4px; cursor: pointer; }
-.expand-button:hover { color: var(--el-color-primary, #1769e0); border-color: #8bb7ef; background: #f0f7ff; }
+.expand-button:hover { color: var(--c-primary, #4f46e5); border-color: #a5b4fc; background: #eef0fe; }
 .expand-button .el-icon { transition: transform .16s ease; }
 .expand-button .el-icon.expanded { transform: rotate(90deg); }
 .service-dot { flex: none; width: 8px; height: 8px; margin-right: 9px; border-radius: 50%; }

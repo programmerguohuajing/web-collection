@@ -39,6 +39,20 @@ let loadRequestId = 0
 
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
 const insightOptions = computed(() => insights.value.map(item => ({ label: item.name, value: `insight:${item.id}` })))
+const analyticsKpis = computed(() => [
+  { label: '近 5 分钟会话', value: Number(live.value?.sessions || 0).toLocaleString(), delta: '实时', valueClass: 'value-primary' },
+  { label: '近 5 分钟用户', value: Number(live.value?.users || 0).toLocaleString(), delta: '实时', valueClass: 'value-success' },
+  { label: '近 5 分钟事件', value: Number(live.value?.events || 0).toLocaleString(), delta: '实时事件流', valueClass: 'value-purple' },
+  { label: '历史会话样本', value: Number(sessionPager.total || 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-danger' }
+])
+const dashboardKpis = computed(() => {
+  const items = []
+  if (hasWidget('live')) items.push({ label: '在线用户', value: Number(live.value?.users || 0).toLocaleString(), delta: '实时', valueClass: 'value-success' })
+  if (hasWidget('sessions')) items.push({ label: '会话数', value: Number(sessionPager.total || 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-primary' })
+  if (hasWidget('errors')) items.push({ label: '当前页会话错误数', value: sessions.value.reduce((sum, item) => sum + (item.error_count || 0), 0).toLocaleString(), delta: '需关注', valueClass: 'value-danger' })
+  if (hasWidget('releases')) items.push({ label: '活跃版本', value: Number(releases.value.length || 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-purple' })
+  return items
+})
 const funnelOptions = computed(() => funnels.value.map(item => ({ label: item.name, value: `funnel:${item.id}` })))
 const funnelTrendChart = computed(() => {
   const trend = funnelResult.value?.trend || []
@@ -232,12 +246,7 @@ watch(selectedDashboardId, loadDashboardResults)
 <template>
   <SearchPanel :fields="['userId']" @search="() => { sessionPager.page = 1; load() }" />
   <el-alert v-if="analyticsError" class="table-error" type="error" :title="analyticsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
-  <div class="metrics section">
-    <el-card><span>近 5 分钟会话</span><strong>{{ live.sessions || 0 }}</strong></el-card>
-    <el-card><span>近 5 分钟用户</span><strong>{{ live.users || 0 }}</strong></el-card>
-    <el-card><span>近 5 分钟事件</span><strong>{{ live.events || 0 }}</strong></el-card>
-    <el-card><span>历史会话样本</span><strong>{{ sessionPager.total }}</strong></el-card>
-  </div>
+  <KpiGrid :items="analyticsKpis" />
   <el-tabs v-model="tab" class="panel section analytics-tabs" @tab-change="changeTab">
     <el-tab-pane v-if="capabilities.productAnalyticsV2" label="事件分析" name="insights">
       <EventInsightPanel :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
@@ -327,12 +336,7 @@ watch(selectedDashboardId, loadDashboardResults)
       <el-space class="section"><el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select><el-button type="danger" plain :disabled="!selectedDashboardId" @click="removeDashboard">删除仪表盘</el-button></el-space>
       <el-form><el-form-item label="名称"><el-input v-model="dashboardForm.name" style="width:260px" /></el-form-item><el-form-item label="基础组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in ['live','sessions','errors','releases']" :key="item" :value="item">{{ widgetLabel(item) }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightOptions.length" label="分析组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in insightOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="capabilities.productAnalyticsV2 && funnelOptions.length" label="漏斗组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in funnelOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-button type="primary" @click="saveDashboard">保存仪表盘</el-button></el-form>
       <el-alert v-if="activeDashboard" :title="`当前仪表盘：${activeDashboard.name}（${activeDashboard.widgets_json?.map(widgetLabel).join('、')}）`" type="success" :closable="false" />
-      <div v-if="activeDashboard" class="metrics section custom-dashboard">
-        <el-card v-if="hasWidget('live')"><span>在线用户</span><strong>{{ live.users || 0 }}</strong></el-card>
-        <el-card v-if="hasWidget('sessions')"><span>会话数</span><strong>{{ sessionPager.total }}</strong></el-card>
-        <el-card v-if="hasWidget('errors')"><span>当前页会话错误数</span><strong>{{ sessions.reduce((sum, item) => sum + item.error_count, 0) }}</strong></el-card>
-        <el-card v-if="hasWidget('releases')"><span>活跃版本</span><strong>{{ releases.length }}</strong></el-card>
-      </div>
+      <KpiGrid v-if="activeDashboard" :items="dashboardKpis" />
       <template v-for="widget in activeDashboard?.widgets_json || []" :key="widgetKey(widget)">
         <el-card v-if="typeof widget === 'object' && dashboardResults[widgetKey(widget)]" class="section dashboard-insight" shadow="never">
           <template #header><b>{{ widgetLabel(widget) }}</b></template>
@@ -352,17 +356,17 @@ watch(selectedDashboardId, loadDashboardResults)
 .table-error { margin-bottom: 12px; }
 .funnel-builder { margin-bottom: 18px; }
 .funnel-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.funnel-builder-head h2 { margin: 0; color: #172033; font-size: 16px; }
-.funnel-builder-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.funnel-builder-head h2 { margin: 0; color: var(--c-text); font-size: 16px; }
+.funnel-builder-head p { margin: 4px 0 0; color: var(--c-text-muted); font-size: 12px; }
 .funnel-meta { display: grid; grid-template-columns: repeat(2, minmax(220px, 320px)); gap: 16px; }
 .funnel-meta :deep(.el-form-item) { margin-bottom: 14px; }
-.funnel-window-hint { margin-left: 10px; color: var(--muted); font-size: 12px; }
+.funnel-window-hint { margin-left: 10px; color: var(--c-text-muted); font-size: 12px; }
 .funnel-section-head,
 .funnel-candidates-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.funnel-section-head { padding-top: 14px; border-top: 1px solid var(--line); }
+.funnel-section-head { padding-top: 14px; border-top: 1px solid var(--c-border); }
 .funnel-section-head div { display: flex; align-items: center; gap: 10px; }
 .funnel-section-head span,
-.funnel-candidates-head span { color: var(--muted); font-size: 12px; }
+.funnel-candidates-head span { color: var(--c-text-muted); font-size: 12px; }
 .funnel-steps { display: grid; gap: 10px; margin-top: 12px; }
 .funnel-step {
   display: grid;
@@ -370,11 +374,11 @@ watch(selectedDashboardId, loadDashboardResults)
   gap: 12px;
   align-items: center;
   padding: 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--c-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--c-surface);
 }
-.funnel-step:hover { border-color: #b8cef0; }
+.funnel-step:hover { border-color: var(--c-primary-light-7); }
 .funnel-step-index { display: grid; justify-items: center; gap: 2px; }
 .funnel-step-index span {
   display: grid;
@@ -382,16 +386,16 @@ watch(selectedDashboardId, loadDashboardResults)
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: #eaf2ff;
-  color: var(--el-color-primary);
+  background: var(--c-primary-soft);
+  color: var(--c-primary);
   font-weight: 700;
 }
-.funnel-step-index small { color: var(--muted); font-size: 11px; }
+.funnel-step-index small { color: var(--c-text-muted); font-size: 11px; }
 .funnel-step-fields { display: grid; gap: 8px; min-width: 0; }
 .funnel-event-select { width: 100%; }
 .funnel-filter-fields { display: grid; grid-template-columns: minmax(160px, 1fr) 130px minmax(160px, 1fr); gap: 8px; }
 .funnel-add-step { width: 100%; margin-top: 10px; border-style: dashed; }
-.funnel-candidates { margin-top: 16px; padding: 12px 14px; border-radius: 8px; background: #f7f9fc; }
+.funnel-candidates { margin-top: 16px; padding: 12px 14px; border-radius: 8px; background: var(--c-surface-3); }
 .funnel-candidate-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .dashboard-insight { margin-top: 14px; }
 @media (max-width: 900px) {

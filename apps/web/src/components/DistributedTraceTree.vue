@@ -197,19 +197,19 @@ function resetFilters() {
 <style scoped>
 .distributed-trace {
   --trace-line: var(--line, #dfe5ec);
-  --trace-muted: var(--muted, #718096);
+  --trace-muted: var(--c-text-muted, #6b7585);
   position: relative;
   min-height: 480px;
   overflow: hidden;
-  color: #172033;
-  background: #fff;
-  border: 1px solid var(--trace-line);
+  color: var(--c-text, #1f2733);
+  background: var(--c-surface, #fff);
+  border: 1px solid var(--trace-line, var(--c-border));
   border-radius: 7px;
 }
-.trace-header { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 18px 20px; border-bottom: 1px solid var(--trace-line); }
+.trace-header { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 18px 20px; border-bottom: 1px solid var(--trace-line, var(--c-border)); }
 .trace-title-block { min-width: 260px; }
 .trace-heading-line { display: flex; align-items: center; gap: 10px; }
-.trace-title-block h3 { margin: 0; color: #172033; font-size: 18px; line-height: 1.3; }
+.trace-title-block h3 { margin: 0; color: var(--c-text, #1f2733); font-size: 18px; line-height: 1.3; }
 .trace-title-block p { margin: 4px 0 10px; color: var(--trace-muted); font-size: 12px; }
 .trace-id { display: flex; align-items: center; gap: 8px; min-width: 0; color: #8994a5; font-size: 11px; }
 .trace-id code { display: block; max-width: 360px; overflow: hidden; color: #4b5b70; font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
@@ -219,7 +219,7 @@ function resetFilters() {
 .trace-metric span { display: block; color: var(--trace-muted); font-size: 11px; }
 .trace-metric strong { display: block; margin-top: 5px; color: #26364d; font-size: 19px; line-height: 1.1; }
 .trace-metric.danger strong { color: #ef4444; }
-.trace-metric.primary strong { color: var(--el-color-primary, #1769e0); }
+.trace-metric.primary strong { color: var(--c-primary, #4f46e5); }
 .trace-toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #fff; border-bottom: 1px solid var(--trace-line); }
 .trace-search { flex: 1; min-width: 220px; max-width: 360px; }
 .service-select { width: 150px; }

@@ -108,6 +108,6 @@ function isError(node) {
 .wf-track { position: relative; height: 18px; }
 .wf-bar { position: absolute; top: 4px; bottom: 4px; border-radius: 4px; min-width: 2px; }
 .wf-row:hover .wf-bar { outline: 1px solid rgba(23,32,51,.15); }
-.dur { font-family: ui-monospace, Consolas, monospace; font-size: 12px; text-align: right; color: #172033; }
+.dur { font-family: ui-monospace, Consolas, monospace; font-size: 12px; text-align: right; color: #1f2733; }
 .dur.err { color: #ef4444; }
 </style>
