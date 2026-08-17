@@ -7,6 +7,7 @@ import {
 } from '@element-plus/icons-vue'
 import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
+import PageLoading from '../components/PageLoading.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -63,8 +64,11 @@ async function applyGlobal() {
   await refreshAll()
 }
 
+const quickRange = ref('24')
+
 async function applyQuickRange(value) {
-  store.range = !value ? [] : [Date.now() - Number(value) * 3600000, Date.now()]
+  quickRange.value = (value === undefined || value === null) ? quickRange.value : String(value)
+  store.range = !quickRange.value ? [] : [Date.now() - Number(quickRange.value) * 3600000, Date.now()]
   await applyGlobal()
 }
 
@@ -140,7 +144,7 @@ onMounted(async () => {
             <el-option label="全部应用" value="" />
           </el-select>
           <el-input v-model="store.release" placeholder="全部版本" clearable @change="applyGlobal" />
-          <el-select placeholder="最近24小时" @change="applyQuickRange">
+          <el-select v-model="quickRange" placeholder="最近24小时" @change="applyQuickRange">
             <el-option label="最近1小时" value="1" />
             <el-option label="最近24小时" value="24" />
             <el-option label="最近7天" value="168" />
@@ -161,7 +165,7 @@ onMounted(async () => {
         <div class="content-inner">
           <el-alert v-if="slowRequest" class="section slow-request-alert" type="warning" title="接口响应较慢，仍在加载中，请稍候…" :closable="false" show-icon />
           <el-alert v-if="error" class="section" type="error" :title="error" show-icon />
-          <div class="router-view-frame" v-loading="pageLoading"><router-view /></div>
+          <div class="router-view-frame"><router-view /><PageLoading :active="pageLoading" /></div>
         </div>
       </main>
     </section>
