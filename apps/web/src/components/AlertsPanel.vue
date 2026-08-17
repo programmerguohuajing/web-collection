@@ -3,6 +3,8 @@
  * @file 告警面板组件
  * 展示性能告警和错误回归告警列表。
  */
+import { metricLabel } from '../utils/format.js'
+
 defineProps({ alerts: { type: Array, default: () => [] } })
 </script>
 
@@ -12,7 +14,7 @@ defineProps({ alerts: { type: Array, default: () => [] } })
       v-for="item in alerts"
       :key="item.metric"
       :type="item.level === 'error' ? 'error' : 'warning'"
-      :title="`${item.metric} ${item.message}`"
+      :title="`${metricLabel(item.metric)} ${item.message}`"
       show-icon
       :closable="false"
     />

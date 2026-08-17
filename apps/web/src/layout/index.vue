@@ -139,7 +139,6 @@ onMounted(async () => {
             <el-option v-for="item in applications" :key="item.app_id" :label="item.name || item.app_id" :value="item.app_id" />
             <el-option label="全部应用" value="" />
           </el-select>
-          <el-select model-value="production" disabled><el-option label="生产" value="production" /></el-select>
           <el-input v-model="store.release" placeholder="全部版本" clearable @change="applyGlobal" />
           <el-select placeholder="最近24小时" @change="applyQuickRange">
             <el-option label="最近1小时" value="1" />
@@ -151,7 +150,7 @@ onMounted(async () => {
         <div class="navbar-actions">
           <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
-          <span class="environment-pill"><i />生产环境</span>
+          <span class="environment-pill" title="当前采集环境：生产"><i />生产环境</span>
           <span class="user-avatar" aria-label="当前用户">运</span>
         </div>
       </header>
