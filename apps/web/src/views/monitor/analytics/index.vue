@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading, toList } from '../../../dashboard.js'
 import AnalyticsChart from '../../../components/AnalyticsChart.vue'
 import FunnelChart from '../../../components/FunnelChart.vue'
+import FunnelPathRibbon from '../../../components/FunnelPathRibbon.vue'
 import EventInsightPanel from '../../../components/EventInsightPanel.vue'
 import PathInsightPanel from '../../../components/PathInsightPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
@@ -32,6 +33,9 @@ const analyticsLoading = ref(false)
 const sessionPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const sessionEventPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const funnelPager = reactive({ page: 1, pageSize: 10, total: 0 })
+const lostPager = reactive({ page: 1, pageSize: 10 })
+const selectedFunnelStep = ref(0)
+const activeDimField = ref('')
 const funnelForm = reactive({ name: '', appId: '', windowMinutes: 0, steps: [emptyFunnelStep(), emptyFunnelStep()] })
 const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors', 'releases'] })
 let timer = 0
@@ -54,6 +58,54 @@ const dashboardKpis = computed(() => {
   return items
 })
 const funnelOptions = computed(() => funnels.value.map(item => ({ label: item.name, value: `funnel:${item.id}` })))
+const funnelStepName = computed(() => {
+  const steps = funnelResult.value?.steps || []
+  return steps[selectedFunnelStep.value]?.step
+})
+const lostByStep = computed(() => {
+  const list = funnelResult.value?.lostSessions || []
+  const name = funnelStepName.value
+  if (name == null) return list
+  return list.filter(r => r.lastEvent === name)
+})
+const pagedLostSessions = computed(() => {
+  const list = lostByStep.value
+  const start = (lostPager.page - 1) * lostPager.pageSize
+  return list.slice(start, start + lostPager.pageSize)
+})
+const funnelKpis = computed(() => {
+  const steps = funnelResult.value?.steps || []
+  if (!steps.length) return []
+  const first = steps[0]
+  const last = steps[steps.length - 1]
+  const entered = Number(first.count) || 0
+  const converted = Number(last.count) || 0
+  const overallRate = Number(last.rate) || 0
+  const lost = Math.max(entered - converted, 0)
+  return [
+    { label: '整体转化率', value: `${overallRate}%`, sub: `${first.step} → ${last.step}`, cls: 'ok' },
+    { label: '进入会话', value: entered.toLocaleString(), sub: '首步触发', cls: '' },
+    { label: '累计流失', value: lost.toLocaleString(), sub: '未走完全程', cls: 'danger' },
+    { label: '中位转化时长', value: formatDuration(last.timeToConvert), sub: '步骤间耗时', cls: 'warn' }
+  ]
+})
+const activeDimension = computed(() => {
+  const dims = funnelResult.value?.dimensions || []
+  if (!dims.length) return null
+  return dims.find(d => d.field === activeDimField.value) || dims[0]
+})
+const dimRows = computed(() => {
+  const dim = activeDimension.value
+  if (!dim) return []
+  const items = dim.items || []
+  const maxE = Math.max(...items.map(i => Number(i.entered) || 0), 1)
+  return items.map(i => ({
+    name: i.name,
+    eWidth: (Number(i.entered) || 0) / maxE * 100,
+    cWidth: (Number(i.converted) || 0) / maxE * 100,
+    label: `${(Number(i.entered) || 0).toLocaleString()} → ${(Number(i.converted) || 0).toLocaleString()}`
+  }))
+})
 const funnelTrendChart = computed(() => {
   const trend = funnelResult.value?.trend || []
   if (!trend.length) return null
@@ -130,7 +182,7 @@ async function saveFunnel() {
   await api('/api/funnels', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...funnelForm, windowMs, steps }) })
   funnelForm.name = ''; funnelForm.windowMinutes = 0; funnelForm.steps = [emptyFunnelStep(), emptyFunnelStep()]; funnelPager.page = 1; await loadFunnels()
 }
-async function run(item) { funnelResult.value = await api(`/api/funnels/${item.id}/run?${queryFromFilters()}`) }
+async function run(item) { funnelResult.value = await api(`/api/funnels/${item.id}/run?${queryFromFilters()}`); lostPager.page = 1; selectedFunnelStep.value = 0; activeDimField.value = '' }
 async function removeFunnel(item) {
   const confirmed = await ElMessageBox.confirm(`确定删除漏斗“${item.name}”吗？`, '删除漏斗', { type: 'warning' }).then(() => true).catch(() => false)
   if (!confirmed) return
@@ -241,6 +293,7 @@ onBeforeUnmount(() => clearInterval(timer))
 watch(() => route.query.tab, value => { if (value) tab.value = value }, { immediate: true })
 watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true })
 watch(selectedDashboardId, loadDashboardResults)
+watch(selectedFunnelStep, () => { lostPager.page = 1 })
 </script>
 
 <template>
@@ -309,25 +362,61 @@ watch(selectedDashboardId, loadDashboardResults)
       </el-card>
       <el-table :data="funnels" border empty-text="暂无漏斗，请填写名称和至少两个步骤后保存"><el-table-column prop="name" label="名称" /><el-table-column prop="app_id" label="应用" /><el-table-column label="步骤"><template #default="{ row }">{{ row.steps_json?.map(stepName).join(' → ') }}</template></el-table-column><el-table-column label="操作" width="140"><template #default="{ row }"><el-button link type="primary" @click="run(row)">分析</el-button><el-button link type="danger" @click="removeFunnel(row)">删除</el-button></template></el-table-column></el-table>
       <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="funnelPager.page" :page-size="funnelPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="funnelPager.total" @current-change="value => { funnelPager.page = value; loadFunnels() }" @size-change="value => { funnelPager.page = 1; funnelPager.pageSize = value; loadFunnels() }" />
-      <template v-if="funnelResult">
-        <h2 class="analysis-title">转化漏斗</h2>
-        <FunnelChart :steps="funnelResult.steps" :title="funnelResult.windowMs ? `转化窗口 ${formatDuration(funnelResult.windowMs)}` : ''" />
-        <el-table :data="funnelResult.steps" border class="section">
-          <el-table-column prop="step" label="步骤" />
-          <el-table-column prop="count" label="用户数" />
-          <el-table-column prop="rate" label="整体转化率(%)" />
-          <el-table-column prop="stepRate" label="步骤间转化率(%)" />
-          <el-table-column prop="lost" label="流失" />
-          <el-table-column label="步骤间耗时(中位)"><template #default="{ row }">{{ formatDuration(row.timeToConvert) }}</template></el-table-column>
-        </el-table>
-        <h2 class="analysis-title">每日趋势</h2>
-        <AnalyticsChart v-if="funnelTrendChart" kind="trend" :result="funnelTrendChart" />
-        <el-table v-else :data="funnelResult.trend" border><el-table-column prop="date" label="日期" /><el-table-column prop="entered" label="进入" /><el-table-column prop="converted" label="完成" /></el-table>
-        <h2 class="analysis-title">流失会话</h2>
-        <el-table :data="funnelResult.lostSessions" border><el-table-column prop="actor" label="用户" /><el-table-column prop="lastEvent" label="最后步骤" /><el-table-column prop="errors" label="错误" /><el-table-column prop="sessionId" label="会话" /><el-table-column label="回放"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><span v-else>-</span></template></el-table-column></el-table>
-        <h2 class="analysis-title">版本 / 浏览器 / 设备维度</h2>
-        <el-table v-for="dimension in funnelResult.dimensions" :key="dimension.field" :data="dimension.items" border class="section"><el-table-column :label="dimension.field" prop="name" /><el-table-column prop="entered" label="进入" /><el-table-column prop="converted" label="完成" /></el-table>
-      </template>
+        <template v-if="funnelResult">
+          <div class="funnel-kpis">
+            <div v-for="k in funnelKpis" :key="k.label" class="funnel-kpi" :class="k.cls">
+              <div class="k-label">{{ k.label }}</div>
+              <div class="k-value">{{ k.value }}</div>
+              <div class="k-sub">{{ k.sub }}</div>
+            </div>
+          </div>
+          <h2 class="analysis-title">转化漏斗</h2>
+          <FunnelChart :steps="funnelResult.steps" :title="funnelResult.windowMs ? `转化窗口 ${formatDuration(funnelResult.windowMs)}` : ''" />
+          <h2 class="analysis-title">转化路径</h2>
+          <el-card class="funnel-path-card" shadow="never">
+            <FunnelPathRibbon :steps="funnelResult.steps" v-model:selectedStep="selectedFunnelStep" />
+          </el-card>
+          <div class="funnel-two-col">
+            <el-card class="funnel-detail-card" shadow="never">
+              <template #header><div class="card-head-inner"><b>步骤明细</b><span class="muted">点击行联动下方流失</span></div></template>
+              <el-table :data="funnelResult.steps" border :row-class-name="(data) => data.rowIndex === selectedFunnelStep ? 'sel' : ''" @row-click="(row) => { selectedFunnelStep = funnelResult.steps.indexOf(row) }">
+                <el-table-column prop="step" label="步骤" />
+                <el-table-column prop="count" label="用户数" />
+                <el-table-column prop="rate" label="整体转化率(%)" />
+                <el-table-column prop="stepRate" label="步骤间转化率(%)" />
+                <el-table-column prop="lost" label="流失" />
+                <el-table-column label="步骤间耗时(中位)"><template #default="{ row }">{{ formatDuration(row.timeToConvert) }}</template></el-table-column>
+              </el-table>
+            </el-card>
+            <el-card class="funnel-dim-card" shadow="never">
+              <template #header><b>维度对比</b></template>
+              <div class="dim-tabs">
+                <button v-for="d in funnelResult.dimensions" :key="d.field" :class="{ on: d.field === activeDimension?.field }" @click="activeDimField = d.field">{{ d.field }}</button>
+              </div>
+              <div v-if="dimRows.length" class="dim-body">
+                <div v-for="r in dimRows" :key="r.name" class="dim-row">
+                  <span class="nm" :title="r.name">{{ r.name }}</span>
+                  <div class="track"><span class="e" :style="{ width: r.eWidth + '%' }"></span><span class="c" :style="{ width: r.cWidth + '%' }"></span></div>
+                  <span class="val">{{ r.label }}</span>
+                </div>
+              </div>
+              <el-empty v-else description="暂无维度数据" :image-size="48" />
+            </el-card>
+          </div>
+          <h2 class="analysis-title">流失会话</h2>
+          <div class="lost-scope">流失会话 · 当前筛选：<b>{{ funnelStepName || '全部' }} 的流失（{{ lostByStep.length }}）</b></div>
+          <el-table :data="pagedLostSessions" border empty-text="暂无流失会话">
+            <el-table-column prop="actor" label="用户" />
+            <el-table-column prop="lastEvent" label="最后步骤" />
+            <el-table-column prop="errors" label="错误" />
+            <el-table-column prop="sessionId" label="会话" />
+            <el-table-column label="回放"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><span v-else>-</span></template></el-table-column>
+          </el-table>
+          <el-pagination v-if="lostByStep.length > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="lostPager.page" :page-size="lostPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="lostByStep.length" @current-change="value => { lostPager.page = value }" @size-change="value => { lostPager.page = 1; lostPager.pageSize = value }" />
+          <h2 class="analysis-title">每日趋势</h2>
+          <AnalyticsChart v-if="funnelTrendChart" kind="trend" :result="funnelTrendChart" />
+          <el-table v-else :data="funnelResult.trend" border><el-table-column prop="date" label="日期" /><el-table-column prop="entered" label="进入" /><el-table-column prop="converted" label="完成" /></el-table>
+        </template>
     </el-tab-pane>
     <el-tab-pane label="版本对比" name="releases">
       <el-table :data="releases" border><el-table-column label="版本"><template #default="{ row }">{{ presentValue(row.release, row.release_name, row.releaseName, row.version) }}</template></el-table-column><el-table-column label="事件"><template #default="{ row }">{{ presentValue(row.events, row.event_count, row.eventCount) }}</template></el-table-column><el-table-column label="用户"><template #default="{ row }">{{ presentValue(row.users, row.user_count, row.userCount) }}</template></el-table-column><el-table-column label="错误"><template #default="{ row }">{{ presentValue(row.errors, row.error_count, row.errorCount) }}</template></el-table-column><el-table-column label="平均 LCP"><template #default="{ row }">{{ presentValue(row.lcp, row.avg_lcp, row.avgLcp, row.average_lcp, row.averageLcp) }}</template></el-table-column></el-table>
@@ -408,5 +497,35 @@ watch(selectedDashboardId, loadDashboardResults)
   .funnel-builder-head p { max-width: 210px; }
   .funnel-step { grid-template-columns: 38px minmax(0, 1fr); padding: 10px 8px; }
   .funnel-step > .el-button { grid-column: 2; justify-self: end; }
+}
+.funnel-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+.funnel-kpi { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 14px; padding: 16px 18px; position: relative; overflow: hidden; box-shadow: var(--sh-md); }
+.funnel-kpi::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c-primary); }
+.funnel-kpi.ok::after { background: var(--c-success); }
+.funnel-kpi.danger::after { background: var(--c-danger); }
+.funnel-kpi.warn::after { background: var(--c-warning); }
+.funnel-kpi .k-label { font-size: 12px; color: var(--c-text-muted); }
+.funnel-kpi .k-value { font-family: var(--font-mono); font-size: 26px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; color: var(--c-text); }
+.funnel-kpi .k-sub { font-size: 11px; color: var(--c-text-faint); margin-top: 4px; }
+.funnel-path-card { margin-bottom: 16px; }
+.funnel-two-col { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; margin-bottom: 16px; }
+.card-head-inner { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.funnel-detail-card :deep(.el-table__row.sel) td { background: var(--c-primary-soft) !important; }
+.funnel-detail-card :deep(.el-table__row.sel) { background: var(--c-primary-soft); }
+.dim-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.dim-tabs button { background: var(--c-surface-2); border: 1px solid var(--c-border); color: var(--c-text-muted); font-size: 12px; padding: 5px 12px; border-radius: 8px; cursor: pointer; transition: .15s; }
+.dim-tabs button.on { background: var(--c-primary-soft); color: var(--c-primary); border-color: var(--c-primary); font-weight: 600; }
+.dim-body { display: flex; flex-direction: column; gap: 9px; }
+.dim-row { display: flex; align-items: center; gap: 10px; }
+.dim-row .nm { width: 96px; font-size: 12px; color: var(--c-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dim-row .track { flex: 1; height: 22px; background: var(--c-surface-3); border-radius: 6px; position: relative; overflow: hidden; display: flex; }
+.dim-row .track .e { background: rgba(79, 70, 229, .22); }
+.dim-row .track .c { background: var(--c-success); }
+.dim-row .val { width: 108px; text-align: right; font-family: var(--font-mono); font-size: 11px; color: var(--c-text-muted); font-variant-numeric: tabular-nums; }
+.lost-scope { font-size: 12px; color: var(--c-text); margin-bottom: 12px; }
+.lost-scope b { color: var(--c-primary); }
+@media (max-width: 900px) {
+  .funnel-kpis { grid-template-columns: repeat(2, 1fr); }
+  .funnel-two-col { grid-template-columns: 1fr; }
 }
 </style>

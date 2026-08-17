@@ -4,6 +4,7 @@ import { api, normalizePageResponse, pageLoading, queryFromFilters } from '../da
 import SearchPanel from '../components/SearchPanel.vue'
 import TopologyChart from '../components/TopologyChart.vue'
 import KpiGrid from '../components/KpiGrid.vue'
+import PathFlow from '../components/PathFlow.vue'
 
 const rows = ref([])
 const pager = reactive({ page: 1, pageSize: 20, total: 0 })
@@ -97,7 +98,11 @@ onMounted(load)
         <SearchPanel :fields="['path', 'userId']" @search="onSearch" />
         <el-alert v-if="loadError" class="table-error" type="error" :title="loadError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
         <el-table :data="rows" border v-loading="loading" empty-text="暂无路径数据">
-          <el-table-column prop="path" label="路径" min-width="500"><template #default="{ row }"><span class="path-flow">{{ row.path }}</span></template></el-table-column>
+          <el-table-column prop="path" label="路径" min-width="500" class-name="path-col">
+            <template #default="{ row }">
+              <PathFlow :path="row.path" :tooltip="row.path" />
+            </template>
+          </el-table-column>
           <el-table-column label="会话数" width="120" align="center"><template #default="{ row }">{{ row.count }}</template></el-table-column>
           <el-table-column label="用户" min-width="200" show-overflow-tooltip><template #default="{ row }"><template v-if="row.users.length"><el-tag v-for="u in row.users.slice(0, 3)" :key="u.id || u" size="small" style="margin-right:4px;margin-bottom:2px">{{ u.name || u.id || u }}</el-tag><span v-if="row.users.length > 3" class="text-muted">+{{ row.users.length - 3 }}</span></template><span v-else class="text-muted">-</span></template></el-table-column>
         </el-table>
@@ -112,6 +117,10 @@ onMounted(load)
 </template>
 
 <style scoped>
-.path-flow { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; }
 .table-error { margin-bottom: 12px; }
+/* 路径列：让 cell 给 step chips 留出垂直空间；取消默认换行抑制 */
+:deep(.path-col .cell) {
+  padding: 8px 12px 12px;
+  line-height: 1.5;
+}
 </style>
