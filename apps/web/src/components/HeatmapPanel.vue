@@ -20,6 +20,7 @@ const transform = ref({ scale: 1, offsetX: 0, offsetY: 0 })
 let isDragging = false
 let dragStart = { x: 0, y: 0 }
 let loadRequestId = 0
+let _renderRetryId = 0
 
 const colorStops = [
   { offset: 0, color: [0, 0, 255, 0] },
@@ -120,6 +121,13 @@ function render() {
   if (!ctx) return
   const dpr = window.devicePixelRatio || 1
   const rect = canvas.getBoundingClientRect()
+
+  // 容器被 v-show 隐藏时 getBoundingClientRect 返回 0×0，跳过渲染并延迟重试
+  if (rect.width === 0 || rect.height === 0) {
+    cancelAnimationFrame(_renderRetryId)
+    _renderRetryId = requestAnimationFrame(render)
+    return
+  }
   if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
     canvas.width = Math.round(rect.width * dpr)
     canvas.height = Math.round(rect.height * dpr)
@@ -285,7 +293,7 @@ function triggerFileInput() {
 
 watch([activeTab, heatmapData, intensity, radius, bgImageUrl, transform], render)
 
-onBeforeUnmount(() => {})
+onBeforeUnmount(() => { cancelAnimationFrame(_renderRetryId) })
 </script>
 
 <template>

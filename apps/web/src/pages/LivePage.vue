@@ -59,11 +59,9 @@ onBeforeUnmount(() => clearInterval(pollTimer))
 
 <template>
   <KpiGrid :items="liveKpis" />
-  <el-card shadow="never" class="section panel">
-    <SearchPanel :fields="['path', 'userId', 'keyword']" @search="onSearch" />
-    <el-alert v-if="liveError" class="table-error" type="error" :title="liveError" show-icon :closable="false"><template #default><el-button link type="primary" @click="pollLive">重试</el-button></template></el-alert>
-    <EventTable title="实时事件" :rows="events" :loading="initialLoading" :total="total" :page="page" :page-size="pageSize" stream @page-change="page = $event; pollLive()" @size-change="pageSize = $event; page = 1; pollLive()" />
-  </el-card>
+  <SearchPanel :fields="['path', 'userId', 'keyword']" @search="onSearch" />
+  <el-alert v-if="liveError" class="table-error" type="error" :title="liveError" show-icon :closable="false"><template #default><el-button link type="primary" @click="pollLive">重试</el-button></template></el-alert>
+  <EventTable title="实时事件" :rows="events" :loading="initialLoading" :total="total" :page="page" :page-size="pageSize" stream @page-change="page = $event; pollLive()" @size-change="pageSize = $event; page = 1; pollLive()" />
 </template>
 
 <style scoped>

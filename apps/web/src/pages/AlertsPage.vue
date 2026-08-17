@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel, pageLoading, toList } from '../dashboard.js'
 import { buildAlertChannelPayload, channelEndpointStatus, channelFilters, channelScope, createAlertChannelForm } from '../alert-channels.js'
 import KpiGrid from '../components/KpiGrid.vue'
+import { levelLabel, levelTagType, metricLabel, metricTagType } from '../utils/format.js'
 
 const router = useRouter()
 const rows = ref([])
@@ -104,19 +105,6 @@ async function viewDetail(row) {
   if (row.trace_id) router.push({ path: '/traces', query: { traceId: row.trace_id } })
   else if (row.url) router.push({ path: '/errors', query: { path: row.url } })
   else ElMessage.info('该告警无关联的链路追踪或错误页面')
-}
-
-function metricLabel(metric) {
-  const map = { error: '错误', log_error: 'Error 日志', regression: '回归', lcp: 'LCP', inp: 'INP', cls: 'CLS', longtask: '长任务' }
-  return map[metric] || metric || '-'
-}
-function metricType(metric) {
-  if (metric === 'error' || metric === 'log_error' || metric === 'regression') return 'danger'
-  if (metric === 'lcp' || metric === 'inp' || metric === 'cls' || metric === 'longtask') return 'warning'
-  return 'info'
-}
-function levelType(level) {
-  return level === 'critical' ? 'danger' : level === 'error' ? 'danger' : level === 'warning' ? 'warning' : 'info'
 }
 
 function statusType(status) {
@@ -221,10 +209,10 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
       <el-table-column prop="app_id" label="应用" width="140" />
       <el-table-column label="指标" width="100">
         <template #default="{ row }">
-          <el-tag :type="metricType(row.metric)" size="small">{{ metricLabel(row.metric) }}</el-tag>
+          <el-tag :type="metricTagType(row.metric)" size="small">{{ metricLabel(row.metric) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="级别" width="90"><template #default="{ row }"><el-tag :type="levelType(row.level)" size="small">{{ row.level }}</el-tag></template></el-table-column>
+      <el-table-column label="级别" width="90"><template #default="{ row }"><el-tag :type="levelTagType(row.level)" size="small">{{ levelLabel(row.level) }}</el-tag></template></el-table-column>
       <el-table-column label="告警内容" min-width="280" show-overflow-tooltip>
         <template #default="{ row }">
           {{ row.message }}
