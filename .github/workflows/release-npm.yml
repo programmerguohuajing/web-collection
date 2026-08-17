@@ -85,9 +85,12 @@ jobs:
       # 建 GitHub Release（自动生成 notes）。
       # 两种情况都建：① npm 已存在（跳过发布，补建 Release）；② npm 发布成功。
       # 若 npm 发布失败，则不建 Release，避免“发了 Release 却没上 npm”。
+      # 注意：必须用 always() 包裹，否则当表达式引用了被条件跳过的步骤上下文时，
+      # GitHub 会把整个 if 视为求值失败而静默 SKIP（曾导致 0.2.4 的 Release 未创建）。
+      # 用 conclusion 而非 result：publish 被自身 if 跳过时 conclusion=skipped，仍 != failure。
       - name: Create GitHub Release
         id: release
-        if: steps.npmcheck.outputs.skip == 'true' || steps.publish.result == 'success'
+        if: always() && steps.publish.conclusion != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -104,7 +107,7 @@ jobs:
       # 命名沿用历史风格（v0.1.5/6/7 为 web-collection-sdk-{ver}.tgz），保持前后一致。
       # 放在建 Release 之后上传，确保重试安全（release 已存在则仅追加 asset）。
       - name: Pack and upload SDK tgz
-        if: steps.release.result != 'failure'
+        if: always() && steps.release.conclusion != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
