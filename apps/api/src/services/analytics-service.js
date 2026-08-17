@@ -262,17 +262,20 @@ export async function getClickPaths(filters = {}) {
       }
     }).filter(c => c.label && c.label !== 'unknown')
 
+    // 先为「每一次点击」登记节点：这样即使在较窄的时间窗内某会话只有单次点击，
+    // 该被点击元素仍会以孤立节点出现，避免点击视角在稀疏数据下整体空白。
+    // 节点 value = 该元素被点击的总次数（用于力导图画布中的节点大小/权重）。
+    for (const c of clicks) {
+      if (!nodeMap.has(c.id)) nodeMap.set(c.id, { id: c.id, label: c.label, type: 'click', value: 0 })
+      nodeMap.get(c.id).value++
+    }
+
     const seen = new Set()
     for (let i = 1; i < clicks.length; i++) {
       const from = clicks[i - 1]
       const to = clicks[i]
       if (!from || !to) continue
       const key = `${from.id}|${to.id}`
-      if (!nodeMap.has(from.id)) nodeMap.set(from.id, { id: from.id, label: from.label, type: 'click', value: 0 })
-      if (!nodeMap.has(to.id)) nodeMap.set(to.id, { id: to.id, label: to.label, type: 'click', value: 0 })
-      nodeMap.get(from.id).value++
-      nodeMap.get(to.id).value++
-
       if (!edgeMap.has(key)) {
         edgeMap.set(key, { source: from.id, target: to.id, calls: 0, sessions: 0 })
       }

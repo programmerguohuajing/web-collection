@@ -144,6 +144,8 @@ onMounted(async () => {
             <el-option label="最近1小时" value="1" />
             <el-option label="最近24小时" value="24" />
             <el-option label="最近7天" value="168" />
+            <el-option label="最近30天" value="720" />
+            <el-option label="最近90天" value="2160" />
             <el-option label="全部时间" value="" />
           </el-select>
         </div>
