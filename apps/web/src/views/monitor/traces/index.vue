@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { Download, RefreshRight, Search, Select, Share } from '@element-plus/icons-vue'
 import { api, normalizePageResponse, queryFromFilters, pageLoading, refreshVersion, filters } from '../../../dashboard.js'
 import { formatDuration } from '../../../utils/format.js'
 import TraceTopology from '../../../components/TraceTopology.vue'
@@ -11,6 +12,7 @@ const traces = ref([])
 const pager = reactive({ page: 1, pageSize: 12, total: 0 })
 const listLoading = ref(false)
 const listError = ref('')
+const tracePickerOpen = ref(false)
 let listRequestId = 0
 
 const active = ref(null)
@@ -54,7 +56,9 @@ function normalizeTrace(row = {}) {
     duration: numberOr(row.duration ?? row.duration_ms ?? row.durationMs),
     span_count: numberOr(row.span_count ?? row.spanCount),
     error_count: numberOr(row.error_count ?? row.errorCount),
+    app_id: row.app_id || row.appId || '',
     release_name: row.release_name || row.releaseName || row.release || '',
+    environment: row.environment || row.env || '生产环境',
     url: row.url || row.path || ''
   }
 }
@@ -70,10 +74,10 @@ async function load() {
     const normalized = normalizePageResponse(data, pager)
     traces.value = normalized.items.map(normalizeTrace)
     Object.assign(pager, normalized)
-    // Keep the detail workbench populated when the trace list has data. This
-    // mirrors the design-b split view and avoids an apparently blank topology
-    // until the user discovers that a row must be clicked first.
-    if (!active.value && traces.value.length) await selectTrace(traces.value[0])
+    // Keep the three-card detail view populated when the trace list has data,
+    // while retaining the picker drawer for switching traces.
+    const activeInPage = traces.value.some(trace => trace.trace_id === active.value?.trace_id)
+    if ((!active.value || !activeInPage) && traces.value.length) await selectTrace(traces.value[0])
   } catch (error) {
     if (requestId === listRequestId && error?.code !== 'ABORT_ERR') listError.value = error.message || '链路列表加载失败'
   } finally {
@@ -93,6 +97,7 @@ async function selectTrace(row) {
   const trace = normalizeTrace(row)
   if (!trace.trace_id.trim()) return
   active.value = trace
+  tracePickerOpen.value = false
   closeDetail()
 }
 
@@ -104,6 +109,8 @@ async function loadTopology() {
   topoError.value = ''
   topoNotice.value = ''
   topology.value = { nodes: [], edges: [] }
+  dist.value = { nodes: [], edges: [] }
+  distError.value = ''
   let distributedError = null
   try {
     const data = await api(`/api/traces/${encodeURIComponent(traceId)}/distributed`, { requestKey: `traces:topology:${traceId}` })
@@ -161,6 +168,7 @@ async function loadDistributed() {
   const requestId = ++distRequestId
   distLoading.value = true
   distError.value = ''
+  dist.value = { nodes: [], edges: [] }
   try {
     const data = await api(`/api/traces/${encodeURIComponent(active.value.trace_id)}/distributed`, { requestKey: `traces:distributed:${active.value.trace_id}` })
     if (requestId !== distRequestId) return
@@ -172,15 +180,12 @@ async function loadDistributed() {
   }
 }
 
-function loadForView(view) {
-  if (!active.value?.trace_id) return
-  if (view === 'topology') loadTopology()
-  else if (view === 'waterfall') loadDistributed()
-  // 调用树由 DistributedTraceTree 自行拉取
-}
+watch(() => active.value?.trace_id, traceId => {
+  if (traceId) loadTopology()
+})
 
-watch([activeView, () => active.value?.trace_id], ([view]) => {
-  if (active.value?.trace_id) loadForView(view)
+watch(activeView, view => {
+  if (view === 'waterfall' && active.value?.trace_id) loadDistributed()
 })
 
 // 头部统计
@@ -189,6 +194,40 @@ const servicesCount = computed(() => {
   const svc = new Set((dist.value.nodes || []).map(n => n.service).filter(Boolean))
   return svc.size || '-'
 })
+
+const overviewItems = computed(() => {
+  if (!active.value) return []
+  return [
+    { label: '应用', value: active.value.app_id || '未记录' },
+    { label: '版本', value: active.value.release_name || '未记录' },
+    { label: '环境', value: active.value.environment || '生产环境' },
+    { label: '开始时间', value: formatDate(active.value.started_at) },
+    { label: '总耗时', value: formatDuration(active.value.duration), mono: true },
+    { label: 'Span 数', value: active.value.span_count, mono: true },
+    { label: '错误数', value: active.value.error_count, mono: true, danger: active.value.error_count > 0 },
+    { label: '涉及服务', value: servicesCount.value, mono: true }
+  ]
+})
+
+const spanRows = computed(() => {
+  const nodes = [...(dist.value.nodes || [])].sort((a, b) => numberOr(a.startTs ?? a.start_ts) - numberOr(b.startTs ?? b.start_ts))
+  const start = nodes.length ? numberOr(nodes[0].startTs ?? nodes[0].start_ts) : 0
+  return nodes.map(node => ({
+    ...node,
+    id: node.id || node.spanId || node.span_id || '',
+    service: node.service || node.serviceName || node.service_name || 'unknown',
+    operation: node.name || node.operationName || node.operation_name || '未命名操作',
+    startOffset: Math.max(0, numberOr(node.startTs ?? node.start_ts) - start),
+    durationValue: numberOr(node.duration ?? node.duration_ms),
+    error: isSpanError(node)
+  }))
+})
+
+const activeViewLabel = computed(() => ({ topology: '调用拓扑', tree: '调用树', waterfall: '瀑布图' }[activeView.value]))
+
+function isSpanError(span = {}) {
+  return Boolean(span.hasError) || String(span.status || span.statusCode || '').toUpperCase() === 'ERROR' || Number(span.status || span.statusCode) >= 400
+}
 
 // 详情面板
 function openNodeDetail(node) {
@@ -255,186 +294,370 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 </script>
 
 <template>
-  <div class="trace-page">
-    <!-- 左侧：链路列表 -->
-    <aside class="trace-side">
-      <div class="side-search">
-        <el-input v-model="filters.traceId" size="default" clearable placeholder="搜索 Trace ID / 页面路径" @keyup.enter="onSearch" @clear="onSearch">
-          <template #append><el-button @click="onSearch">搜索</el-button></template>
-        </el-input>
-      </div>
-      <div class="side-list">
-        <div v-if="listError" class="side-error">{{ listError }}</div>
-        <div
-          v-for="t in traces"
-          :key="t.trace_id"
-          class="trace-item"
-          :class="{ active: active?.trace_id === t.trace_id }"
-          @click="selectTrace(t)"
-        >
-          <div class="tid">{{ t.trace_id }}</div>
-          <div class="meta">
-            <span class="pill dur">{{ formatDuration(t.duration) }}</span>
-            <span class="pill">{{ t.span_count }} span</span>
-            <span class="pill" :class="t.error_count ? 'err' : 'ok'">{{ t.error_count ? t.error_count + ' 错误' : '正常' }}</span>
-          </div>
-          <div class="sub">{{ t.url || t.release_name || '—' }}</div>
+  <section class="trace-design-page">
+    <header class="trace-page-head">
+      <div class="trace-heading">
+        <div class="trace-title-row">
+          <h1>链路追踪</h1>
+          <el-tag v-if="active" :type="active.error_count ? 'danger' : 'success'" effect="light" round>
+            {{ active.error_count ? `${active.error_count} 个错误` : '调用正常' }}
+          </el-tag>
         </div>
-        <el-empty v-if="!listLoading && !traces.length" :image-size="60" description="暂无链路" />
+        <div class="trace-breadcrumb">
+          <span>Trace</span>
+          <i>/</i>
+          <strong>{{ active?.trace_id || '尚未选择' }}</strong>
+          <small>{{ active?.url || '选择一条链路查看完整调用过程' }}</small>
+        </div>
       </div>
-      <div v-if="pager.total > 0" class="side-pager">
-        <el-pagination background layout="prev, pager, next" :pager-count="5" :current-page="pager.page" :page-size="pager.pageSize" :total="pager.total" @current-change="value => { pager.page = value; load() }" />
+      <div class="trace-page-actions">
+        <el-button :icon="Select" @click="tracePickerOpen = true">选择 Trace</el-button>
+        <el-button :icon="RefreshRight" :loading="listLoading || topoLoading || distLoading" @click="load">刷新</el-button>
+        <el-button :icon="Download" :disabled="!active" @click="exportTrace">导出</el-button>
+        <el-button :icon="Share" :disabled="!active" @click="shareTrace">分享</el-button>
+        <span v-if="shareHint" class="share-hint">{{ shareHint }}</span>
       </div>
-    </aside>
+    </header>
 
-    <!-- 右侧：链路详情 -->
-    <section class="trace-main">
-      <template v-if="active">
-        <header class="trace-head">
-          <div class="th-id"><small>TRACE ID</small>{{ active.trace_id }}</div>
-          <div class="stat"><b>{{ formatDuration(active.duration) }}</b><span>总耗时</span></div>
-          <div class="stat"><b>{{ active.span_count }}</b><span>Span 数</span></div>
-          <div class="stat" :class="{ err: active.error_count }"><b>{{ active.error_count }}</b><span>错误</span></div>
-          <div class="stat"><b>{{ servicesCount }}</b><span>涉及服务</span></div>
-          <div class="stat"><b>{{ formatDate(active.started_at) }}</b><span>开始时间</span></div>
-          <div class="head-spacer"></div>
-          <div class="head-btns">
-            <el-button size="small" @click="exportTrace">导出</el-button>
-            <el-button size="small" @click="shareTrace">分享</el-button>
-            <span v-if="shareHint" class="share-hint">{{ shareHint }}</span>
+    <template v-if="active">
+      <el-card class="trace-card trace-overview-card" shadow="never">
+        <template #header>
+          <div class="card-head">
+            <div>
+              <h2>Trace 概览</h2>
+              <p>调用入口、执行状态与核心链路指标</p>
+            </div>
+            <span class="trace-start">{{ formatDate(active.started_at) }}</span>
           </div>
-        </header>
+        </template>
 
-        <div class="toolbar">
-          <div class="tabs">
-            <div class="tab" :class="{ active: activeView === 'topology' }" @click="activeView = 'topology'">调用拓扑</div>
-            <div class="tab" :class="{ active: activeView === 'tree' }" @click="activeView = 'tree'">调用树</div>
-            <div class="tab" :class="{ active: activeView === 'waterfall' }" @click="activeView = 'waterfall'">瀑布图</div>
+        <div class="trace-entry">
+          <div>
+            <span class="entry-label">TRACE ID</span>
+            <code>{{ active.trace_id }}</code>
           </div>
-          <div class="tool-sep"></div>
-          <div v-show="activeView === 'topology'" class="topo-tools">
-            <button class="icon-btn" :class="{ active: layoutMode === 'force' }" @click="setLayout('force')">力导</button>
-            <button class="icon-btn" :class="{ active: layoutMode === 'hier' }" @click="setLayout('hier')">分层</button>
-            <button class="icon-btn" :class="{ active: layoutMode === 'radial' }" @click="setLayout('radial')">环形</button>
-            <button class="icon-btn" @click="fit">适应</button>
-            <button class="icon-btn" @click="toggleLegend">图例</button>
+          <div>
+            <span class="entry-label">入口 URL / 页面</span>
+            <span class="entry-url" :title="active.url || '未记录'">{{ active.url || '未记录' }}</span>
           </div>
         </div>
 
-        <div class="canvas">
-          <div v-loading="topoLoading" class="view" :class="{ active: activeView === 'topology' }">
-            <el-alert v-if="topoError" class="view-error" type="error" :title="topoError" show-icon :closable="false" />
-            <el-alert v-else-if="topoNotice" class="view-notice" type="info" :title="topoNotice" show-icon :closable="false" />
+        <div class="overview-grid">
+          <div v-for="item in overviewItems" :key="item.label" class="overview-item" :class="{ danger: item.danger }">
+            <span>{{ item.label }}</span>
+            <strong :class="{ mono: item.mono }">{{ item.value }}</strong>
+          </div>
+        </div>
+      </el-card>
+
+      <el-card class="trace-card trace-visual-card" shadow="never">
+        <template #header>
+          <div class="visual-head">
+            <div>
+              <h2>调用拓扑</h2>
+              <p>{{ activeViewLabel }} · 按真实 Span 还原服务调用关系</p>
+            </div>
+            <div class="visual-actions">
+              <div class="segmented" role="tablist" aria-label="链路视图">
+                <button type="button" :class="{ active: activeView === 'topology' }" @click="activeView = 'topology'">拓扑</button>
+                <button type="button" :class="{ active: activeView === 'tree' }" @click="activeView = 'tree'">调用树</button>
+                <button type="button" :class="{ active: activeView === 'waterfall' }" @click="activeView = 'waterfall'">瀑布图</button>
+              </div>
+              <div v-if="activeView === 'topology'" class="topo-tools">
+                <button type="button" :class="{ active: layoutMode === 'force' }" @click="setLayout('force')">力导</button>
+                <button type="button" :class="{ active: layoutMode === 'hier' }" @click="setLayout('hier')">分层</button>
+                <button type="button" :class="{ active: layoutMode === 'radial' }" @click="setLayout('radial')">环形</button>
+                <button type="button" @click="fit">适应</button>
+                <button type="button" @click="toggleLegend">图例</button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <div class="trace-visual-body">
+          <div v-show="activeView === 'topology'" v-loading="topoLoading" class="trace-view">
+            <el-alert v-if="topoError" class="view-message" type="error" :title="topoError" show-icon :closable="false" />
+            <el-alert v-else-if="topoNotice" class="view-message" type="info" :title="topoNotice" show-icon :closable="false" />
             <TraceTopology ref="topoRef" :nodes="topology.nodes" :edges="topology.edges" height="100%" @select="openNodeDetail" />
           </div>
-          <div class="view" :class="{ active: activeView === 'tree' }">
-            <DistributedTraceTree v-if="activeView === 'tree'" :trace-id="active.trace_id" />
+          <div v-if="activeView === 'tree'" class="trace-view tree-view">
+            <DistributedTraceTree :trace-id="active.trace_id" />
           </div>
-          <div class="view" :class="{ active: activeView === 'waterfall' }">
-            <el-alert v-if="distError" class="view-error" type="error" :title="distError" show-icon :closable="false" />
+          <div v-if="activeView === 'waterfall'" v-loading="distLoading" class="trace-view waterfall-view">
+            <el-alert v-if="distError" class="view-message" type="error" :title="distError" show-icon :closable="false" />
             <TraceWaterfall :nodes="dist.nodes" :edges="dist.edges" @select="openSpanDetail" />
           </div>
-
-          <!-- 详情面板 -->
-          <aside class="detail" :class="{ open: detail.open }">
-            <div class="dh">
-              <b>{{ detail.kind === 'node' ? '服务节点' : 'Span 详情' }}</b>
-              <button class="close-x" @click="closeDetail">×</button>
-            </div>
-            <div class="dbody" v-if="detail.data">
-              <template v-if="detail.kind === 'node'">
-                <div class="kv">
-                  <div class="row"><span class="k">名称</span><span class="v">{{ detail.data.label }}</span></div>
-                  <div class="row"><span class="k">类型</span><span class="v">{{ detail.data.type }}</span></div>
-                  <div class="row"><span class="k">健康度</span><span class="v" :style="{ color: detail.data.err > 0 ? '#ef4444' : (detail.data.p95 > 300 ? '#f59e0b' : '#0ea765') }">{{ detail.data.err > 0 ? '异常' : (detail.data.p95 > 300 ? '缓慢' : '正常') }}</span></div>
-                  <div class="row"><span class="k">调用量</span><span class="v">{{ detail.data.calls }}</span></div>
-                  <div class="row"><span class="k">P95 延迟</span><span class="v">{{ detail.data.p95 }} ms</span></div>
-                  <div class="row"><span class="k">错误数</span><span class="v" :style="{ color: detail.data.err ? '#ef4444' : '' }">{{ detail.data.err }}</span></div>
-                </div>
-              </template>
-              <template v-else>
-                <div class="kv">
-                  <div class="row"><span class="k">服务</span><span class="v">{{ detail.data.service }}</span></div>
-                  <div class="row"><span class="k">操作</span><span class="v">{{ detail.data.name }}</span></div>
-                  <div class="row"><span class="k">Span ID</span><span class="v">{{ detail.data.id }}</span></div>
-                  <div class="row"><span class="k">状态</span><span class="v" :style="{ color: String(detail.data.status).toUpperCase() === 'ERROR' || Number(detail.data.status) >= 400 ? '#ef4444' : '#0ea765' }">{{ detail.data.status }}</span></div>
-                  <div class="row"><span class="k">耗时</span><span class="v">{{ formatDuration(detail.data.duration) }}</span></div>
-                  <div class="row"><span class="k">自身耗时</span><span class="v">{{ formatDuration(detail.data.self) }}</span></div>
-                </div>
-              </template>
-            </div>
-          </aside>
         </div>
-      </template>
+      </el-card>
 
-      <div v-else class="empty-state">
-        <el-empty description="从左侧选择一条链路查看调用拓扑、调用树与瀑布图" />
+      <el-card class="trace-card trace-spans-card" shadow="never">
+        <template #header>
+          <div class="card-head">
+            <div>
+              <h2>Span 时间线 / 明细</h2>
+              <p>按开始时间排序，点击任意 Span 查看完整执行信息</p>
+            </div>
+            <span class="span-total">{{ spanRows.length }} 个 Span</span>
+          </div>
+        </template>
+
+        <el-table
+          v-loading="topoLoading || distLoading"
+          :data="spanRows"
+          row-key="id"
+          empty-text="当前 Trace 暂无 Span 明细"
+          class="span-table"
+          @row-click="openSpanDetail"
+        >
+          <el-table-column label="服务 / 操作" min-width="250">
+            <template #default="{ row }">
+              <div class="span-operation" :class="{ error: row.error }">
+                <span class="span-status-dot"></span>
+                <div>
+                  <strong>{{ row.service }}</strong>
+                  <small>{{ row.operation }}</small>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="id" label="Span ID" min-width="190" show-overflow-tooltip>
+            <template #default="{ row }"><code class="span-id">{{ row.id || '-' }}</code></template>
+          </el-table-column>
+          <el-table-column label="开始时间" width="130">
+            <template #default="{ row }">+ {{ formatDuration(row.startOffset) }}</template>
+          </el-table-column>
+          <el-table-column label="耗时" width="120">
+            <template #default="{ row }"><strong class="span-duration">{{ formatDuration(row.durationValue) }}</strong></template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.error ? 'danger' : 'success'" effect="light" size="small">
+                {{ row.error ? '错误' : '正常' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </template>
+
+    <el-card v-else class="trace-card trace-empty-card" shadow="never">
+      <el-empty :description="listError || '暂无可展示的链路数据'">
+        <el-button type="primary" :icon="Select" @click="tracePickerOpen = true">选择 Trace</el-button>
+      </el-empty>
+    </el-card>
+
+    <el-drawer v-model="tracePickerOpen" title="选择 Trace" size="min(440px, 92vw)" class="trace-picker">
+      <div class="picker-search">
+        <el-input v-model="filters.traceId" clearable placeholder="搜索 Trace ID / 页面路径" :prefix-icon="Search" @keyup.enter="onSearch" @clear="onSearch" />
+        <el-button type="primary" :icon="Search" :loading="listLoading" @click="onSearch">搜索</el-button>
       </div>
-    </section>
-  </div>
+      <el-alert v-if="listError" type="error" :title="listError" show-icon :closable="false" />
+      <div v-loading="listLoading" class="picker-list">
+        <button
+          v-for="trace in traces"
+          :key="trace.trace_id"
+          type="button"
+          class="trace-picker-item"
+          :class="{ active: active?.trace_id === trace.trace_id }"
+          @click="selectTrace(trace)"
+        >
+          <span class="picker-item-top">
+            <code>{{ trace.trace_id }}</code>
+            <el-tag :type="trace.error_count ? 'danger' : 'success'" effect="light" size="small">
+              {{ trace.error_count ? `${trace.error_count} 错误` : '正常' }}
+            </el-tag>
+          </span>
+          <span class="picker-item-meta">
+            <span>{{ formatDuration(trace.duration) }}</span>
+            <span>{{ trace.span_count }} Span</span>
+            <span>{{ formatDate(trace.started_at) }}</span>
+          </span>
+          <small>{{ trace.url || trace.release_name || '未记录入口页面' }}</small>
+        </button>
+        <el-empty v-if="!listLoading && !traces.length" :image-size="72" description="没有匹配的 Trace" />
+      </div>
+      <div v-if="pager.total > 0" class="picker-pager">
+        <el-pagination
+          background
+          layout="prev, pager, next"
+          :pager-count="5"
+          :current-page="pager.page"
+          :page-size="pager.pageSize"
+          :total="pager.total"
+          @current-change="value => { pager.page = value; load() }"
+        />
+      </div>
+    </el-drawer>
+
+    <el-drawer v-model="detail.open" :title="detail.kind === 'node' ? '服务节点' : 'Span 详情'" size="min(420px, 92vw)" @closed="closeDetail">
+      <el-descriptions v-if="detail.data" :column="1" border class="detail-descriptions">
+        <template v-if="detail.kind === 'node'">
+          <el-descriptions-item label="名称">{{ detail.data.label || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="类型">{{ detail.data.type || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="健康度">
+            <el-tag :type="detail.data.err > 0 ? 'danger' : (detail.data.p95 > 300 ? 'warning' : 'success')" effect="light">
+              {{ detail.data.err > 0 ? '异常' : (detail.data.p95 > 300 ? '缓慢' : '正常') }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="调用量">{{ detail.data.calls ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="P95 延迟">{{ detail.data.p95 ?? '-' }} ms</el-descriptions-item>
+          <el-descriptions-item label="错误数">{{ detail.data.err ?? 0 }}</el-descriptions-item>
+        </template>
+        <template v-else>
+          <el-descriptions-item label="服务">{{ detail.data.service || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="操作">{{ detail.data.operation || detail.data.name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="Span ID"><code>{{ detail.data.id || '-' }}</code></el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="isSpanError(detail.data) ? 'danger' : 'success'" effect="light">
+              {{ isSpanError(detail.data) ? '错误' : '正常' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="耗时">{{ formatDuration(detail.data.durationValue ?? detail.data.duration) }}</el-descriptions-item>
+          <el-descriptions-item label="自身耗时">{{ formatDuration(detail.data.self) }}</el-descriptions-item>
+        </template>
+      </el-descriptions>
+    </el-drawer>
+  </section>
 </template>
 
 <style scoped>
-.trace-page { display: grid; grid-template-columns: 300px 1fr; height: calc(100vh - 58px); min-height: 0; }
+.trace-design-page {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
 
-/* 左侧列表 */
-.trace-side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line, #dfe5ec); background: #fafbfc; }
-.side-search { padding: 12px; border-bottom: 1px solid var(--line, #dfe5ec); }
-.side-list { flex: 1; overflow-y: auto; padding: 8px; }
-.side-error { color: #ef4444; font-size: 12px; padding: 8px; }
-.trace-item { padding: 10px 12px; border-radius: 7px; cursor: pointer; border: 1px solid transparent; margin-bottom: 6px; transition: .15s; background: #fff; border-color: #eef1f5; }
-.trace-item:hover { border-color: #c9d6e6; }
-.trace-item.active { background: #eaf2ff; border-color: #1769e0; box-shadow: inset 3px 0 #1769e0; }
-.trace-item .tid { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: #344258; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.trace-item.active .tid { color: #1769e0; }
-.trace-item .meta { display: flex; gap: 8px; margin-top: 6px; }
-.trace-item .sub { margin-top: 5px; font-size: 11px; color: #8a96a7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pill { padding: 1px 7px; border-radius: 20px; font-size: 10px; border: 1px solid #e2e8f0; color: #627085; }
-.pill.dur { color: #344258; }
-.pill.err { color: #ef4444; border-color: #f3b6b6; background: #fff7f7; }
-.pill.ok { color: #0ea765; border-color: #bfe9d4; background: #f0fbf5; }
-.side-pager { padding: 10px; border-top: 1px solid var(--line, #dfe5ec); display: flex; justify-content: center; flex-wrap: wrap; overflow-x: hidden; }
+.trace-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 2px 2px 4px;
+}
 
-/* 右侧主区 */
-.trace-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.trace-head { display: flex; align-items: center; gap: 22px; padding: 14px 20px; border-bottom: 1px solid var(--line, #dfe5ec); background: #fff; flex-wrap: wrap; }
-.trace-head .th-id { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: #172033; min-width: 0; }
-.trace-head .th-id small { display: block; color: #8a96a7; font-size: 11px; margin-bottom: 3px; font-family: 'Segoe UI','Microsoft YaHei',sans-serif; }
-.stat { display: flex; flex-direction: column; gap: 2px; }
-.stat b { font-size: 18px; font-family: ui-monospace, Consolas, monospace; font-weight: 700; color: #172033; }
-.stat span { font-size: 11px; color: #8a96a7; }
-.stat.err b { color: #ef4444; }
-.head-spacer { flex: 1; }
-.head-btns { display: flex; align-items: center; gap: 8px; }
-.share-hint { font-size: 12px; color: #0ea765; }
+.trace-heading { min-width: 0; }
+.trace-title-row { display: flex; align-items: center; gap: 12px; }
+.trace-title-row h1 { margin: 0; color: #171826; font-size: 20px; line-height: 1.35; font-weight: 700; }
+.trace-breadcrumb { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 7px; color: #8a91a3; font-size: 12px; }
+.trace-breadcrumb i { color: #c1c5d0; font-style: normal; }
+.trace-breadcrumb strong { max-width: 280px; overflow: hidden; color: #4f46e5; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.trace-breadcrumb small { max-width: 420px; overflow: hidden; color: #9ba1b1; text-overflow: ellipsis; white-space: nowrap; }
+.trace-page-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.trace-page-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.share-hint { color: #16a34a; font-size: 12px; white-space: nowrap; }
 
-.toolbar { display: flex; align-items: center; gap: 14px; padding: 10px 20px; border-bottom: 1px solid var(--line, #dfe5ec); background: #f8fafc; }
-.tabs { display: flex; gap: 4px; background: #fff; padding: 4px; border-radius: 10px; border: 1px solid var(--line, #dfe5ec); }
-.tab { padding: 7px 14px; border-radius: 7px; cursor: pointer; font-size: 13px; color: #627085; transition: .15s; }
-.tab:hover { color: #172033; }
-.tab.active { background: #1769e0; color: #fff; box-shadow: 0 4px 12px rgba(23,101,224,.18); }
-.tool-sep { width: 1px; height: 22px; background: var(--line, #dfe5ec); }
-.topo-tools { display: flex; gap: 6px; }
-.icon-btn { background: #fff; border: 1px solid var(--line, #dfe5ec); color: #627085; border-radius: 8px; padding: 6px 11px; cursor: pointer; font-size: 13px; transition: .15s; }
-.icon-btn:hover { color: #172033; border-color: #c9d6e6; }
-.icon-btn.active { color: #1769e0; border-color: #1769e0; background: #eaf2ff; }
+.trace-card { min-width: 0; border-color: #e8e9ef; border-radius: 14px; }
+.trace-card :deep(.el-card__header) { padding: 18px 22px; border-bottom-color: #eceef3; }
+.trace-card :deep(.el-card__body) { padding: 22px; }
+.card-head,
+.visual-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.card-head h2,
+.visual-head h2 { margin: 0; color: #202132; font-size: 15px; line-height: 1.4; font-weight: 700; }
+.card-head p,
+.visual-head p { margin: 4px 0 0; color: #8b91a2; font-size: 12px; }
+.trace-start,
+.span-total { flex: none; color: #858c9d; font-size: 12px; }
 
-.canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #f5f7fa; }
-.view { position: absolute; inset: 0; display: none; }
-.view.active { display: block; }
-.view-error { margin: 10px; }
-.view-notice { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 2; width: auto; }
-.empty-state { display: grid; place-items: center; height: 100%; }
+.trace-entry {
+  display: grid;
+  grid-template-columns: minmax(260px, .8fr) minmax(320px, 1.2fr);
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid #e8e9f0;
+  border-radius: 12px;
+  background: #fafafd;
+}
+.trace-entry > div { display: grid; gap: 7px; min-width: 0; }
+.entry-label { color: #9298a8; font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.trace-entry code { overflow: hidden; color: #3730a3; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.entry-url { overflow: hidden; color: #3c4051; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: 18px; overflow: hidden; border: 1px solid #eceef3; border-radius: 12px; background: #eceef3; }
+.overview-item { display: grid; gap: 8px; min-height: 76px; padding: 15px 17px; background: #fff; }
+.overview-item span { color: #9298a8; font-size: 11px; }
+.overview-item strong { overflow: hidden; color: #292b3b; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.overview-item strong.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 15px; }
+.overview-item.danger strong { color: #dc2626; }
 
-/* 详情面板 */
-.detail { position: absolute; top: 0; right: 0; width: 320px; height: 100%; background: #fff; border-left: 1px solid var(--line, #dfe5ec); box-shadow: -8px 0 24px rgba(23,32,51,.10); transform: translateX(100%); transition: transform .25s ease; display: flex; flex-direction: column; z-index: 5; }
-.detail.open { transform: translateX(0); }
-.detail .dh { padding: 14px 16px; border-bottom: 1px solid var(--line, #dfe5ec); display: flex; align-items: center; justify-content: space-between; background: #fafbfc; }
-.detail .dh b { font-size: 13px; color: #172033; }
-.detail .dbody { flex: 1; overflow-y: auto; padding: 14px 16px; }
-.detail .kv .row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed #eef1f5; font-size: 12.5px; }
-.detail .kv .row .k { color: #627085; }
-.detail .kv .row .v { font-family: ui-monospace, Consolas, monospace; color: #172033; text-align: right; max-width: 60%; word-break: break-all; }
-.close-x { cursor: pointer; color: #8a96a7; border: none; background: none; font-size: 18px; line-height: 1; }
-.close-x:hover { color: #172033; }
+.visual-head { align-items: flex-start; }
+.visual-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.segmented { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid #e2e4eb; border-radius: 9px; background: #f5f6f9; }
+.segmented button,
+.topo-tools button { min-height: 30px; border: 0; border-radius: 7px; background: transparent; color: #707789; font: inherit; font-size: 12px; cursor: pointer; transition: background-color .16s ease, color .16s ease, box-shadow .16s ease; }
+.segmented button { padding: 0 12px; }
+.segmented button:hover,
+.topo-tools button:hover { color: #4f46e5; }
+.segmented button.active { background: #fff; color: #4f46e5; box-shadow: 0 1px 4px rgba(31, 35, 48, .1); font-weight: 650; }
+.topo-tools { display: flex; gap: 3px; padding-left: 10px; border-left: 1px solid #e5e7ed; }
+.topo-tools button { padding: 0 9px; border: 1px solid transparent; }
+.topo-tools button.active { border-color: #c9c5fb; background: #efefff; color: #4f46e5; }
+.trace-visual-card :deep(.el-card__body) { padding: 0; }
+.trace-visual-body { position: relative; min-height: 520px; overflow: hidden; border-radius: 0 0 14px 14px; background-color: #fafbfe; background-image: radial-gradient(circle, #dfe2ec 1px, transparent 1px); background-size: 18px 18px; }
+.trace-view { position: relative; min-width: 0; height: 520px; overflow: auto; }
+.tree-view,
+.waterfall-view { background: rgba(255, 255, 255, .94); }
+.view-message { position: absolute; top: 14px; right: 14px; left: 14px; z-index: 3; width: auto; }
+.tree-view :deep(.distributed-trace) { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+
+.trace-spans-card :deep(.el-card__body) { padding: 0; }
+.span-table { width: 100%; cursor: pointer; }
+.span-table :deep(.el-table__header th) { height: 44px; background: #fafafd; color: #777e90; font-size: 12px; font-weight: 650; }
+.span-table :deep(.el-table__row:hover > td) { background: #f7f7ff !important; }
+.span-operation { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.span-operation > div { display: grid; gap: 3px; min-width: 0; }
+.span-operation strong,
+.span-operation small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.span-operation strong { color: #303243; font-size: 12.5px; }
+.span-operation small { color: #8c93a4; font-size: 11px; }
+.span-status-dot { width: 8px; height: 8px; flex: none; border: 2px solid #a6a2ef; border-radius: 50%; background: #f0efff; box-shadow: 0 0 0 4px #f5f4ff; }
+.span-operation.error .span-status-dot { border-color: #f87171; background: #fee2e2; box-shadow: 0 0 0 4px #fef2f2; }
+.span-operation.error strong { color: #dc2626; }
+.span-id { color: #656b7c; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+.span-duration { color: #3c4051; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+.trace-empty-card :deep(.el-card__body) { display: grid; min-height: 360px; place-items: center; }
+
+.picker-search { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 14px; }
+.picker-list { display: grid; gap: 8px; min-height: 240px; margin-top: 14px; }
+.trace-picker-item { display: grid; gap: 9px; width: 100%; padding: 13px 14px; border: 1px solid #e6e8ef; border-radius: 11px; background: #fff; text-align: left; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
+.trace-picker-item:hover { border-color: #bbb7f4; background: #fbfaff; }
+.trace-picker-item.active { border-color: #8179ec; background: #f7f6ff; box-shadow: 0 0 0 2px rgba(79, 70, 229, .08); }
+.picker-item-top,
+.picker-item-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.picker-item-top code { min-width: 0; overflow: hidden; color: #343648; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.picker-item-meta { justify-content: flex-start; color: #737a8c; font-size: 11px; }
+.picker-item-meta span + span::before { margin-right: 10px; color: #c2c6d0; content: '·'; }
+.trace-picker-item small { overflow: hidden; color: #959baa; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.picker-pager { display: flex; justify-content: center; padding-top: 16px; }
+.detail-descriptions code { color: #4f46e5; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
+
+@media (max-width: 1100px) {
+  .trace-page-head,
+  .card-head,
+  .visual-head { align-items: flex-start; flex-direction: column; }
+  .trace-page-actions,
+  .visual-actions { justify-content: flex-start; }
+  .trace-entry { grid-template-columns: 1fr; }
+  .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trace-visual-body,
+  .trace-view { min-height: 500px; height: 500px; }
+}
+
+@media (max-width: 720px) {
+  .trace-breadcrumb { align-items: flex-start; flex-wrap: wrap; }
+  .trace-breadcrumb small { flex-basis: 100%; max-width: 100%; }
+  .trace-page-actions { width: 100%; }
+  .trace-page-actions :deep(.el-button) { flex: 1 1 auto; }
+  .trace-card :deep(.el-card__header),
+  .trace-card :deep(.el-card__body) { padding: 16px; }
+  .trace-visual-card :deep(.el-card__body),
+  .trace-spans-card :deep(.el-card__body) { padding: 0; }
+  .trace-entry { padding: 14px; }
+  .overview-item { min-height: 70px; padding: 13px; }
+  .visual-actions { width: 100%; }
+  .segmented { width: 100%; }
+  .segmented button { flex: 1; padding: 0 8px; }
+  .topo-tools { width: 100%; padding: 8px 0 0; border-top: 1px solid #e5e7ed; border-left: 0; overflow-x: auto; }
+  .topo-tools button { flex: 1 0 auto; }
+  .trace-visual-body,
+  .trace-view { min-height: 460px; height: 460px; }
+}
 </style>

@@ -230,8 +230,11 @@ button, input, textarea, select { font-family: inherit; }
 .el-table th.el-table__cell { height: 42px; color: var(--c-text-muted); font-size: 11px; font-weight: 700; letter-spacing: .45px; text-transform: uppercase; }
 
 /* 表格单元格 tooltip：修复悬浮时左上角 (0,0) 闪现
-   - onBeforeEnter 不 await 定位，popper 首帧会停在 (0,0)；关闭进入动画让其在算好位置后才出现，避免该帧被绘制 */
+   - popper 在 popper.js 完成定位前首帧会停在视口左上角；关闭进入过渡，并在拿到
+     data-popper-placement（定位完成的标志）之前保持隐藏，避免该 (0,0) 帧被绘制 */
 .table-cell-tooltip.el-popper { transition: none !important; }
+.table-cell-tooltip.el-popper:not([data-popper-placement]),
+.el-popper.el-tooltip__popper:not([data-popper-placement]) { visibility: hidden !important; }
 .el-table td.el-table__cell { height: 48px; padding: 10px 12px; }
 /* 普通单元格：完整显示内容（覆盖 Element Plus 默认的 text-overflow:ellipsis） */
 .el-table .cell {
