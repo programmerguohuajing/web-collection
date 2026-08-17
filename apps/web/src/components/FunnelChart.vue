@@ -27,6 +27,7 @@ function render() {
   chart.setOption({
     title: props.title ? { text: props.title, left: 'center', textStyle: { fontSize: 14, color: '#1f2733' } } : undefined,
     tooltip: {
+      confine: true,
       trigger: 'item',
       formatter: params => {
         const d = params.data

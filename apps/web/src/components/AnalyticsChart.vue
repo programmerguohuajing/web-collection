@@ -26,7 +26,7 @@ function trendOption(result, chartType) {
   const buckets = [...new Set((result.table || []).map(item => Number(item.bucket)))].sort((a, b) => a - b)
   return {
     aria: { enabled: true },
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', confine: true },
     legend: { type: 'scroll', top: 8 },
     grid: { left: 55, right: 24, top: 72, bottom: 45 },
     xAxis: { type: 'category', data: buckets.map(formatBucket), boundaryGap: chartType === 'bar' },
@@ -46,6 +46,7 @@ function pathOption(result) {
     animation: false,
     aria: { enabled: true },
     tooltip: {
+      confine: true,
       trigger: 'item',
       formatter: params => params.dataType === 'edge'
         ? `${labels.get(params.data.source) || params.data.source} → ${labels.get(params.data.target) || params.data.target}<br/>用户 ${params.data.users} · 会话 ${params.data.sessions}`

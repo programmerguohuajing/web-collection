@@ -19,7 +19,7 @@ function render() {
   chart.setOption({
     animation: false,
     aria: { enabled: true, decal: { show: false } },
-    tooltip: { trigger: 'item', formatter: params => `${params.name}<br/>${params.value}（${params.percent}%）` },
+    tooltip: { trigger: 'item', confine: true, formatter: params => `${params.name}<br/>${params.value}（${params.percent}%）` },
     series: [{ type: 'pie', radius: ['62%', '82%'], center: ['50%', '50%'], avoidLabelOverlap: true, label: { show: false }, labelLine: { show: false }, data }]
   }, true)
 }

@@ -23,7 +23,7 @@ const categoryData = computed(() => {
 onMounted(() => {
   chart.value = echarts.init(chartEl.value)
   chart.value.setOption({
-    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    tooltip: { trigger: 'item', confine: true, formatter: '{b}: {c} ({d}%)' },
     series: [{ type: 'pie', radius: ['40%', '70%'], data: categoryData.value }]
   })
 })
