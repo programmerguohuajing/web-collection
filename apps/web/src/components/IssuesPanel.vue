@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue'
+import OverflowTip from './OverflowTip.vue'
 
 defineProps({
   issues: { type: Array, default: () => [] },
@@ -43,27 +44,27 @@ function sourceLabel(original) {
       </div>
     </template>
     <el-table :data="issues" size="small" empty-text="暂无错误">
-      <el-table-column label="错误信息" min-width="260" show-overflow-tooltip>
+      <el-table-column label="错误信息" min-width="260">
         <template #default="{ row }">
-          {{ row.message || '-' }}
+          <OverflowTip :text="row.message || '-'" />
         </template>
       </el-table-column>
       <el-table-column label="类型" width="120">
         <template #default="{ row }">{{ issueNameLabel(row) }}</template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="110" />
-      <el-table-column label="版本" width="130" show-overflow-tooltip>
+      <el-table-column label="版本" width="130">
         <template #default="{ row }">
-          {{ row.release || '-' }}
+          <OverflowTip :text="row.release || '-'" />
         </template>
       </el-table-column>
       <el-table-column prop="count" label="次数" width="90" />
       <el-table-column v-if="issues.some(row => Number(row.affectedUsers) > 0)" label="用户数" width="90">
         <template #default="{ row }">{{ Number(row.affectedUsers) > 0 ? row.affectedUsers : '' }}</template>
       </el-table-column>
-      <el-table-column label="源码位置" min-width="220" show-overflow-tooltip>
+      <el-table-column label="源码位置" min-width="220">
         <template #default="{ row }">
-          {{ sourceLabel(row.original) }}
+          <OverflowTip :text="sourceLabel(row.original)" />
         </template>
       </el-table-column>
       <el-table-column label="Trace" min-width="180">

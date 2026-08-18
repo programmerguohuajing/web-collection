@@ -238,17 +238,20 @@ button, input, textarea, select { font-family: inherit; }
 .table-cell-tooltip.el-popper:not([data-popper-placement]),
 .el-popper.el-tooltip__popper:not([data-popper-placement]) { visibility: hidden !important; }
 .el-table td.el-table__cell { height: 48px; padding: 10px 12px; }
+/* 单元格溢出省略号（与 OverflowTip.vue 配套使用，替代 EP 的 show-overflow-tooltip） */
+.cell-ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 /* 普通单元格：完整显示内容（覆盖 Element Plus 默认的 text-overflow:ellipsis） */
 .el-table .cell {
   overflow: hidden;
   line-height: 1.45;
   text-overflow: clip;
   white-space: normal;
-}
-/* 仅对显式 show-overflow-tooltip 的列（带 .el-tooltip）省略，避免所有单元格被全局截断 */
-.el-table .cell.el-tooltip {
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 /* 时间列：完整单行显示，绝对不出现省略号
    - 即便列宽偶发不足，也宁可溢出也不截断（overflow:visible），保证时间全部可见

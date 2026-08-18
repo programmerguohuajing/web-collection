@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import TrendChart from '../../../components/TrendChart.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
 import OverviewDistribution from '../../../components/OverviewDistribution.vue'
+import OverflowTip from '../../../components/OverflowTip.vue'
 import { events, issues, replays, summary } from '../../../dashboard.js'
 import { formatDuration, readableText } from '../../../utils/format.js'
 
@@ -53,7 +54,7 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
       <el-table-column label="发生时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column>
       <el-table-column label="问题 / 级别" min-width="250"><template #default="{ row }"><b class="activity-title">{{ row.title }}</b><el-tag v-if="row.level !== '-'" size="small" :type="row.level === 'P1' ? 'danger' : row.level === 'P2' ? 'warning' : 'primary'">{{ row.level }}</el-tag></template></el-table-column>
       <el-table-column label="影响" width="100"><template #default="{ row }">{{ row.impact }} 用户</template></el-table-column>
-      <el-table-column label="页面 / 接口" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.path || row.url || '-' }}</template></el-table-column>
+      <el-table-column label="页面 / 接口" min-width="210"><template #default="{ row }"><OverflowTip :text="row.path || row.url || '-'" /></template></el-table-column>
       <el-table-column label="追踪" min-width="150"><template #default="{ row }"><router-link v-if="row.traceId" :to="`/traces?traceId=${row.traceId}`">{{ row.traceId }}</router-link><span v-else>-</span></template></el-table-column>
       <el-table-column prop="logs" label="日志" width="80" />
       <el-table-column label="会话回放" width="120"><template #default="{ row }"><el-button v-if="row.replay" link type="primary" @click="openReplay(row.replay)">播放会话</el-button><span v-else>-</span></template></el-table-column>

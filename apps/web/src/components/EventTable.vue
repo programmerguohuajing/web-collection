@@ -1,4 +1,5 @@
 <script setup>
+import OverflowTip from './OverflowTip.vue'
 import { behaviorDetailLabel, eventNameLabel, formatDuration, formatErrorLocation, metricLabel, readableText } from '../utils/format.js'
 
 const genericElementLabels = new Set(['A', 'BUTTON', 'DIV', 'IMG', 'INPUT', 'SELECT', 'SPAN', 'TEXTAREA', 'UNI-BUTTON', 'UNI-IMAGE'])
@@ -72,13 +73,13 @@ function statusType(status) {
             <template v-else>{{ typeLabel(row) }}</template>
           </template>
         </el-table-column>
-        <el-table-column :label="props.title?.includes('错误') ? '错误信息' : behaviorTable ? '详情' : '名称'" :min-width="behaviorTable ? 180 : 220" show-overflow-tooltip>
+        <el-table-column :label="props.title?.includes('错误') ? '错误信息' : behaviorTable ? '详情' : '名称'" :min-width="behaviorTable ? 180 : 220">
           <template #default="{ row }">
-            {{ behaviorTable ? behaviorDetailLabel(row) : nameLabel(row) }}
+            <OverflowTip :text="behaviorTable ? behaviorDetailLabel(row) : nameLabel(row)" />
           </template>
         </el-table-column>
-        <el-table-column v-if="performanceTable" label="请求地址" min-width="300" show-overflow-tooltip>
-          <template #default="{ row }">{{ requestLabel(row, 'url') }}</template>
+        <el-table-column v-if="performanceTable" label="请求地址" min-width="300">
+          <template #default="{ row }"><OverflowTip :text="requestLabel(row, 'url')" /></template>
         </el-table-column>
         <el-table-column v-if="performanceTable" label="方法" width="90">
           <template #default="{ row }">{{ requestLabel(row, 'method') }}</template>
@@ -89,22 +90,22 @@ function statusType(status) {
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="props.title?.includes('错误')" label="源码位置" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">{{ formatErrorLocation(row) }}</template>
+        <el-table-column v-if="props.title?.includes('错误')" label="源码位置" min-width="220">
+          <template #default="{ row }"><OverflowTip :text="formatErrorLocation(row)" /></template>
         </el-table-column>
-        <el-table-column label="页面" :min-width="behaviorTable ? 200 : 240" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.path || row.url || '-' }}</template>
+        <el-table-column label="页面" :min-width="behaviorTable ? 200 : 240">
+          <template #default="{ row }"><OverflowTip :text="row.path || row.url || '-'" /></template>
         </el-table-column>
-        <el-table-column v-if="props.showUser" label="用户" :min-width="behaviorTable ? 130 : 150" show-overflow-tooltip>
-          <template #default="{ row }">{{ userLabel(row) }}</template>
+        <el-table-column v-if="props.showUser" label="用户" :min-width="behaviorTable ? 130 : 150">
+          <template #default="{ row }"><OverflowTip :text="userLabel(row)" /></template>
         </el-table-column>
-        <el-table-column label="版本" width="120" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.release || '-' }}</template>
+        <el-table-column label="版本" width="120">
+          <template #default="{ row }"><OverflowTip :text="row.release || '-'" /></template>
         </el-table-column>
       </template>
       <template v-else>
-        <el-table-column :label="title.includes('资源') ? '资源' : '接口'" min-width="260" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.name }}</template>
+        <el-table-column :label="title.includes('资源') ? '资源' : '接口'" min-width="260">
+          <template #default="{ row }"><OverflowTip :text="row.name" /></template>
         </el-table-column>
         <el-table-column prop="count" label="次数" width="90" />
         <el-table-column label="平均" width="100"><template #default="{ row }">{{ formatDuration(row.avg) }}</template></el-table-column>

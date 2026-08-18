@@ -8,6 +8,7 @@ import TraceWaterfall from '../../../components/TraceWaterfall.vue'
 import DistributedTraceTree from '../../../components/DistributedTraceTree.vue'
 import RequestResponsePanel from '../../../components/RequestResponsePanel.vue'
 import { buildTopologyFromDistributed } from '../../../utils/trace-topology.js'
+import OverflowTip from '../../../components/OverflowTip.vue'
 
 const traces = ref([])
 const pager = reactive({ page: 1, pageSize: 12, total: 0 })
@@ -444,8 +445,8 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="id" label="Span ID" min-width="190" show-overflow-tooltip>
-            <template #default="{ row }"><code class="span-id">{{ row.id || '-' }}</code></template>
+          <el-table-column label="Span ID" min-width="190">
+            <template #default="{ row }"><code class="span-id"><OverflowTip :text="row.id || '-'" /></code></template>
           </el-table-column>
           <el-table-column label="开始时间" width="130">
             <template #default="{ row }">+ {{ formatDuration(row.startOffset) }}</template>

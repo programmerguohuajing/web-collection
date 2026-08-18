@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
+import OverflowTip from '../../../components/OverflowTip.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
 import { levelLabel, levelTagType } from '../../../utils/format.js'
 
@@ -75,12 +76,12 @@ watch(refreshVersion, load)
     <el-table :data="rows" border v-loading="loading" empty-text="暂无日志数据">
       <el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.ts) }}</template></el-table-column>
       <el-table-column prop="name" label="级别" width="90"><template #default="{ row }"><el-tag :type="levelTagType(row.name)" size="small">{{ levelLabel(row.name) }}</el-tag></template></el-table-column>
-      <el-table-column label="内容" min-width="320" show-overflow-tooltip><template #default="{ row }">{{ text(row.message) }}</template></el-table-column>
+      <el-table-column label="内容" min-width="320"><template #default="{ row }"><OverflowTip :text="text(row.message)" /></template></el-table-column>
       <el-table-column label="应用" width="130"><template #default="{ row }">{{ text(row.appId ?? row.app_id) }}</template></el-table-column>
       <el-table-column label="版本" width="110"><template #default="{ row }">{{ text(row.release ?? row.release_name) }}</template></el-table-column>
       <el-table-column label="用户" width="130"><template #default="{ row }">{{ text(row.userId ?? row.user_id) }}</template></el-table-column>
-      <el-table-column label="会话" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ text(row.sessionId ?? row.session_id) }}</template></el-table-column>
-      <el-table-column label="Trace" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ text(row.traceId ?? row.trace_id) }}</template></el-table-column>
+      <el-table-column label="会话" min-width="180"><template #default="{ row }"><OverflowTip :text="text(row.sessionId ?? row.session_id)" /></template></el-table-column>
+      <el-table-column label="Trace" min-width="180"><template #default="{ row }"><OverflowTip :text="text(row.traceId ?? row.trace_id)" /></template></el-table-column>
     </el-table>
     <el-pagination v-if="total > 0" class="pager" v-model:current-page="query.page" v-model:page-size="query.pageSize" :total="total" layout="total, sizes, prev, pager, next" @change="load" />
   </el-card>

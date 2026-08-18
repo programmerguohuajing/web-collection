@@ -16,7 +16,7 @@
 -->
 <script setup>
 import { computed } from 'vue'
-import { ElTooltip } from 'element-plus'
+import OverflowTip from './OverflowTip.vue'
 
 const props = defineProps({
   path: { type: String, default: '' },
@@ -147,19 +147,19 @@ const hiddenTooltip = computed(() =>
         </div>
 
         <!-- Fold indicator -->
-        <el-tooltip placement="top" :show-after="120">
+        <OverflowTip :text="hiddenTooltip" force class="pf-fold">
           <template #content>
             <div style="max-width: 320px; line-height: 1.7; font-family: var(--font-mono); font-size: 11.5px;">
               <div v-for="line in hiddenTooltip.split('\n')" :key="line">{{ line }}</div>
             </div>
           </template>
-          <span class="pf-fold">
+          <template #default>
             <span class="pf-fold__bar"></span>
             <span class="pf-fold__bar"></span>
             <span class="pf-fold__bar"></span>
             <span class="pf-fold__count">+{{ foldedSteps.hidden.length }}</span>
-          </span>
-        </el-tooltip>
+          </template>
+        </OverflowTip>
 
         <!-- Tail: last step -->
         <div

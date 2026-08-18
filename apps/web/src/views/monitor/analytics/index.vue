@@ -9,6 +9,7 @@ import FunnelPathRibbon from '../../../components/FunnelPathRibbon.vue'
 import EventInsightPanel from '../../../components/EventInsightPanel.vue'
 import PathInsightPanel from '../../../components/PathInsightPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
+import OverflowTip from '../../../components/OverflowTip.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -307,7 +308,7 @@ watch(selectedFunnelStep, () => { lostPager.page = 1 })
     <el-tab-pane label="用户会话" name="sessions">
       <el-table :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession">
         <el-table-column prop="user_name" label="用户" width="130"><template #default="{ row }">{{ row.user_name || row.user_id || row.device_id }}</template></el-table-column>
-        <el-table-column prop="session_id" label="会话" min-width="200" show-overflow-tooltip />
+        <el-table-column label="会话" min-width="200"><template #default="{ row }"><OverflowTip :text="row.session_id" /></template></el-table-column>
         <el-table-column label="开始时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template></el-table-column>
         <el-table-column prop="duration" label="时长(ms)" width="110" />
         <el-table-column prop="event_count" label="事件" width="80" />
@@ -436,7 +437,7 @@ watch(selectedFunnelStep, () => { lostPager.page = 1 })
     </el-tab-pane>
   </el-tabs>
   <el-drawer v-model="activeSession" size="65%" title="用户会话详情">
-    <el-table :data="sessionEvents" border><el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column><el-table-column prop="type" label="类型" width="100" /><el-table-column label="名称" width="160"><template #default="{ row }">{{ row.name || row.metric }}</template></el-table-column><el-table-column prop="message" label="内容" min-width="240" show-overflow-tooltip /><el-table-column prop="path" label="页面" min-width="220" /></el-table>
+    <el-table :data="sessionEvents" border><el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column><el-table-column prop="type" label="类型" width="100" /><el-table-column label="名称" width="160"><template #default="{ row }">{{ row.name || row.metric }}</template></el-table-column><el-table-column label="内容" min-width="240"><template #default="{ row }"><OverflowTip :text="row.message" /></template></el-table-column><el-table-column prop="path" label="页面" min-width="220" /></el-table>
     <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionEventPager.page" :page-size="sessionEventPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionEventPager.total" @current-change="value => { sessionEventPager.page = value; loadSessionEvents() }" @size-change="value => { sessionEventPager.page = 1; sessionEventPager.pageSize = value; loadSessionEvents() }" />
   </el-drawer>
 </template>
