@@ -263,7 +263,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
   </el-card>
 
   <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑渠道' : '新增渠道'" width="560px" :loading="channelSaving">
-    <el-form :model="channelForm" label-width="110px">
+    <el-form :model="channelForm" label-width="130px">
       <el-form-item label="名称"><el-input v-model="channelForm.name" /></el-form-item>
       <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','feishu_app','wecom']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
       <el-form-item v-if="channelForm.type !== 'feishu_app'" label="服务地址" required>

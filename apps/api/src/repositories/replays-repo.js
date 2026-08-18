@@ -78,8 +78,14 @@ export async function listReplayEventRows(idOrSessionId, limit = 500) {
   }
   // 优先精确匹配；若精确匹配无结果，再用 ILIKE 前缀匹配（兼容分段扩展 sessionId）。
   let rows = await all('select events_json from replay_events where session_id = ? order by created_at asc, id asc limit ?', [idOrSessionId, rowLimit])
+  if (rows.length) return rows
+  rows = await all('select events_json from replay_events where session_id ilike ? order by created_at asc, id asc limit ?', [`${idOrSessionId}%`, rowLimit])
+  if (rows.length) return rows
+  // 总览/分析页可能传入全局事件会话 UUID（events.session_id），而回放按 base_session_id 桥接，
+  // 此时需在 base_session_id 上精确/前缀匹配，否则跳转回放永远命中不到数据。
+  rows = await all('select events_json from replay_events where base_session_id = ? order by created_at asc, id asc limit ?', [idOrSessionId, rowLimit])
   if (!rows.length) {
-    rows = await all('select events_json from replay_events where session_id ilike ? order by created_at asc, id asc limit ?', [`${idOrSessionId}%`, rowLimit])
+    rows = await all('select events_json from replay_events where base_session_id ilike ? order by created_at asc, id asc limit ?', [`${idOrSessionId}%`, rowLimit])
   }
   return rows
 }
