@@ -4,6 +4,9 @@ export const channelTypes = ['email', 'sms', 'feishu', 'feishu_app', 'wecom', 'd
 export const alertLevels = ['warning', 'error', 'critical']
 export const alertMetrics = ['error', 'log_error', 'regression', 'lcp', 'inp', 'cls', 'longtask']
 
+import { channelMessageTypes, renderTemplate, templateVariables, variablesForChannel } from './alert-templates.js'
+export { channelMessageTypes, renderTemplate, templateVariables, variablesForChannel }
+
 const encoder = new TextEncoder()
 
 export function normalizeChannel(input = {}) {
@@ -21,12 +24,18 @@ export function normalizeChannel(input = {}) {
   }
   const config = isPlainObject(input.config) ? input.config : legacyConfig
   if (config.headers != null && (!config.headers || typeof config.headers !== 'object' || Array.isArray(config.headers))) throw new Error('请求头必须是 JSON 对象')
-  if (config.bodyTemplate) {
+  const messageTypes = channelMessageTypes[type] || ['text']
+  const messageType = messageTypes.includes(config.messageType) ? config.messageType : messageTypes[0]
+  const interactiveCard = (type === 'feishu' || type === 'feishu_app') && messageType === 'interactive'
+  if ((type === 'webhook' || type === 'email') && config.bodyTemplate) {
     try { JSON.parse(config.bodyTemplate) } catch { throw new Error('请求体模板必须是有效 JSON') }
   }
+  if (interactiveCard && config.messageTemplate) {
+    try { JSON.parse(config.messageTemplate) } catch { throw new Error('飞书卡片模板必须是有效 JSON') }
+  }
   for (const [key, value] of Object.entries(config.headers || {})) {
-    if (/(authorization|api[-_]?key|token|secret)/i.test(key) && !String(value).includes('{{secret.')) {
-      throw new Error(`敏感请求头 ${key} 必须使用 {{secret.KEY}} 变量`)
+    if (/(authorization|api[-_]?key|token|secret)/i.test(key) && !/\{\{secret\.|\$\{secret\./.test(String(value))) {
+      throw new Error(`敏感请求头 ${key} 必须使用 \${secret.KEY} 变量`)
     }
   }
   const legacyUrl = input.webhookUrl || (type !== 'email' && type !== 'sms' ? input.endpoint : '')
@@ -47,6 +56,10 @@ export function normalizeChannel(input = {}) {
       method,
       headers: plainObject(config.headers),
       bodyTemplate: String(config.bodyTemplate || '').slice(0, 20000),
+      messageTemplate: String(config.messageTemplate || '').slice(0, 20000),
+      subjectTemplate: String(config.subjectTemplate || '').slice(0, 256),
+      titleTemplate: String(config.titleTemplate || '').slice(0, 256),
+      messageType,
       recipients: String(config.recipients || '').slice(0, 4000),
       subject: String(config.subject || 'Web Collection 告警').slice(0, 256),
       templateId: String(config.templateId || '').slice(0, 256),
@@ -139,15 +152,15 @@ export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
   let headers
   let body
   if (type === 'feishu') {
-    // 飞书自定义机器人：直接 POST 到群 webhook 地址
     const url = String(secrets.url || '').trim()
     validateEndpoint(url)
     targetUrl = url
     headers = { 'content-type': 'application/json' }
-    body = { msg_type: 'text', content: { text: alert.message } }
+    body = config.messageType === 'interactive' && config.messageTemplate
+      ? { msg_type: 'interactive', card: renderObject(JSON.parse(config.messageTemplate), variables, secrets) }
+      : { msg_type: 'text', content: { text: renderTemplate(config.messageTemplate || '${message}', variables) } }
   } else if (type === 'feishu_app') {
-    // 飞书智能体/应用机器人：通过 OpenAPI 发送
-    const resolved = await buildFeishuAppRequest(secrets, config, alert, fetcher)
+    const resolved = await buildFeishuAppRequest(secrets, config, variables, fetcher)
     targetUrl = resolved.url
     headers = resolved.headers
     body = resolved.body
@@ -164,12 +177,20 @@ export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
       headers.authorization = `Basic ${base64(encoder.encode(`${secrets.username}:${secrets.password}`))}`
     }
     body = type === 'wecom'
-      ? { msgtype: 'text', text: { content: alert.message } }
+      ? { msgtype: 'text', text: { content: renderTemplate(config.messageTemplate || '${message}', variables) } }
       : type === 'dingtalk'
-        ? { msgtype: 'text', text: { content: alert.message } }
-        : config.bodyTemplate
-          ? renderObject(JSON.parse(config.bodyTemplate), variables, secrets)
-          : defaultBody(type, variables)
+        ? (config.messageType === 'markdown'
+          ? { msgtype: 'markdown', markdown: { title: renderTemplate(config.titleTemplate || '${level}', variables), text: renderTemplate(config.messageTemplate || '${message}', variables) } }
+          : { msgtype: 'text', text: { content: renderTemplate(config.messageTemplate || '${message}', variables) } })
+        : type === 'email'
+          ? (config.bodyTemplate
+            ? renderObject(JSON.parse(config.bodyTemplate), variables, secrets)
+            : { to: config.recipients, subject: renderTemplate(config.subjectTemplate || config.subject || 'Web Collection 告警', variables), text: renderTemplate(config.messageTemplate || '${message}', variables) })
+          : type === 'sms'
+            ? { to: config.recipients, templateId: config.templateId, params: { message: renderTemplate(config.messageTemplate || '${message}', variables) } }
+            : config.bodyTemplate
+              ? renderObject(JSON.parse(config.bodyTemplate), variables, secrets)
+              : defaultBody(type, variables)
   }
   const response = await fetcher(targetUrl, {
     method: config.method || 'POST',
@@ -233,8 +254,7 @@ function renderObject(value, variables, secrets) {
   if (Array.isArray(value)) return value.flatMap(item => renderObject(item, variables, secrets))
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, renderObject(item, variables, secrets)]))
   if (typeof value !== 'string') return value
-  // 整串为单个变量、且为 recipients 时，将逗号分隔列表展开为数组（便于 to/cc 等数组字段）
-  const single = value.match(/^\{\{\s*(secret\.)?([A-Za-z0-9_]+)\s*\}\}$/)
+  const single = value.match(/^\$\{\s*(secret\.)?([A-Za-z0-9_]+)\s*\}$/) || value.match(/^\{\{\s*(secret\.)?([A-Za-z0-9_]+)\s*\}\}$/)
   if (single) {
     const resolved = single[1] ? secrets[single[2]] : variables[single[2]]
     if (single[2] === 'recipients' && typeof resolved === 'string' && resolved.includes(',')) {
@@ -242,10 +262,10 @@ function renderObject(value, variables, secrets) {
     }
     return resolved == null ? '' : resolved
   }
-  return value.replace(/\{\{\s*(secret\.)?([A-Za-z0-9_]+)\s*\}\}/g, (_, secret, key) => String(secret ? secrets[key] ?? '' : variables[key] ?? ''))
+  return renderTemplate(value, variables, secrets)
 }
 
-async function buildFeishuAppRequest(secrets, config, alert, fetcher) {
+async function buildFeishuAppRequest(secrets, config, variables, fetcher) {
   const appId = String(config.appId || '').trim()
   const appSecret = String(secrets.appSecret || '').trim()
   const chatId = String(config.chatId || '').trim()
@@ -254,10 +274,14 @@ async function buildFeishuAppRequest(secrets, config, alert, fetcher) {
   const domain = String(config.feishuDomain || 'https://open.feishu.cn').replace(/\/+$/, '')
   const receiveIdType = encodeURIComponent(String(config.receiveIdType || 'chat_id').trim() || 'chat_id')
   const token = await getFeishuTenantToken(appId, appSecret, fetcher)
+  const msgType = config.messageType === 'interactive' && config.messageTemplate ? 'interactive' : 'text'
+  const content = msgType === 'interactive'
+    ? JSON.stringify(renderObject(JSON.parse(config.messageTemplate), variables, secrets))
+    : JSON.stringify({ text: renderTemplate(config.messageTemplate || '${message}', variables) })
   return {
     url: `${domain}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`,
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: alert.message }) }
+    body: { receive_id: chatId, msg_type: msgType, content }
   }
 }
 

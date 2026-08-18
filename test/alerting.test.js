@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { channelMatches, decryptSecrets, encryptSecrets, normalizeChannel, publishDelivery, sendChannel } from '../packages/alerting.js'
+import { channelMatches, decryptSecrets, encryptSecrets, normalizeChannel, publishDelivery, renderTemplate, sendChannel } from '../packages/alerting.js'
 import { buildAlertChannelPayload, createAlertChannelForm } from '../apps/web/src/alert-channels.js'
 
 test('渠道路由按应用、级别和指标匹配', () => {
@@ -256,4 +256,67 @@ test('邮件渠道支持用请求体模板改写请求体并展开多收件人',
     text: '服务异常'
   })
   assert.equal(result.providerMessageId, 'mail-1')
+})
+
+test('renderTemplate 支持 ${var} 新语法并兼容旧 {{var}} 语法', () => {
+  const vars = { message: '错误', level: 'error' }
+  assert.equal(renderTemplate('${message} - ${level}', vars), '错误 - error')
+  assert.equal(renderTemplate('{{message}} - {{level}}', vars), '错误 - error')
+  assert.equal(renderTemplate('${secret.token}', {}, { token: 'tk' }), 'tk')
+  assert.equal(renderTemplate('无变量文本', vars), '无变量文本')
+  assert.equal(renderTemplate('${unknown}', vars), '')
+})
+
+test('飞书文本渠道用 messageTemplate 渲染消息内容', async () => {
+  let request
+  await sendChannel(
+    { type: 'feishu', config: { messageType: 'text', messageTemplate: '【${level}】${message}' } },
+    { url: 'https://open.feishu.cn/hook/x' },
+    { id: 1, appId: 'web', level: 'error', metric: 'error', message: '服务异常', createdAt: Date.now() },
+    async (url, options) => { request = { url, options }; return new Response('{}', { status: 200 }) }
+  )
+  assert.deepEqual(JSON.parse(request.options.body), { msg_type: 'text', content: { text: '【error】服务异常' } })
+})
+
+test('飞书 interactive 卡片用 messageTemplate JSON 渲染变量', async () => {
+  let request
+  await sendChannel(
+    { type: 'feishu', config: { messageType: 'interactive', messageTemplate: '{"header":{"title":{"content":"【${level}】"}},"elements":[{"text":{"content":"${message}"}}]}' } },
+    { url: 'https://open.feishu.cn/hook/x' },
+    { id: 1, appId: 'web', level: 'critical', metric: 'error', message: '宕机', createdAt: Date.now() },
+    async (url, options) => { request = { url, options }; return new Response('{}', { status: 200 }) }
+  )
+  const body = JSON.parse(request.options.body)
+  assert.equal(body.msg_type, 'interactive')
+  assert.equal(body.card.header.title.content, '【critical】')
+  assert.equal(body.card.elements[0].text.content, '宕机')
+})
+
+test('钉钉 markdown 渠道用 titleTemplate + messageTemplate 渲染', async () => {
+  let request
+  await sendChannel(
+    { type: 'dingtalk', config: { messageType: 'markdown', titleTemplate: '【${level}】告警', messageTemplate: '### ${message}\n页面：${page}' } },
+    { url: 'https://oapi.dingtalk.com/robot/send' },
+    { id: 1, appId: 'web', level: 'error', metric: 'error', message: '服务异常', page: '/checkout', createdAt: Date.now() },
+    async (url, options) => { request = { url, options }; return new Response('{"msgid":"m1"}', { status: 200 }) }
+  )
+  assert.deepEqual(JSON.parse(request.options.body), { msgtype: 'markdown', markdown: { title: '【error】告警', text: '### 服务异常\n页面：/checkout' } })
+})
+
+test('企业微信渠道用 messageTemplate 渲染文本消息', async () => {
+  let request
+  await sendChannel(
+    { type: 'wecom', config: { messageTemplate: '${level}: ${message}' } },
+    { url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send' },
+    { id: 1, appId: 'web', level: 'warning', metric: 'error', message: '慢页面', createdAt: Date.now() },
+    async (url, options) => { request = { url, options }; return new Response('{"msgid":"w1"}', { status: 200 }) }
+  )
+  assert.deepEqual(JSON.parse(request.options.body), { msgtype: 'text', text: { content: 'warning: 慢页面' } })
+})
+
+test('normalizeChannel 按渠道白名单校验 messageType', () => {
+  const ch = normalizeChannel({ name: '飞书', type: 'feishu', config: { messageType: 'interactive', messageTemplate: '{}' } })
+  assert.equal(ch.config.messageType, 'interactive')
+  const ch2 = normalizeChannel({ name: '企微', type: 'wecom', config: { messageType: 'markdown' } })
+  assert.equal(ch2.config.messageType, 'text')
 })
