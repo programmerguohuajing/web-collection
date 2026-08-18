@@ -6,7 +6,7 @@
 .table-cell-tooltip{
   box-sizing:border-box;
   width:max-content;
-  max-width:min(calc(100vw - 24px),var(--table-tooltip-max-width,calc(100vw - 24px)));
+  max-width:min(520px,calc(100vw - 24px));
   max-height:min(50vh,360px);
   overflow-y:auto;
   white-space:normal;
@@ -251,8 +251,9 @@ button, input, textarea, select { font-family: inherit; }
   white-space: nowrap;
 }
 /* 时间列：完整单行显示，绝对不出现省略号
-   - 即便列宽偶发不足，也宁可溢出也不截断（overflow:visible），保证时间全部可见 */
-.el-table .cell.time-cell {
+   - 即便列宽偶发不足，也宁可溢出也不截断（overflow:visible），保证时间全部可见
+   - 注意：cell-class-name 把类加在 td 上，内层内容是 .cell，故选择器写作 td.time-cell .cell */
+.el-table td.time-cell .cell {
   white-space: nowrap;
   overflow: visible;
   text-overflow: clip;
