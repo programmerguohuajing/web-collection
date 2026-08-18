@@ -16,7 +16,9 @@
  *
  * @param {object} [opts]
  * @param {string} [opts.replayLibUrl] - IIFE 场景下 rrweb 脚本地址（自托管），可选；
- *   不传则使用内置默认地址 `DEFAULT_REPLAY_LIB_URL`（jsDelivr 上的 rrweb UMD 构建）。
+ *   不传则使用内置默认地址 `DEFAULT_REPLAY_LIB_URL`（unpkg 上的 rrweb UMD 构建，
+ *   因其对 .cjs 返回可执行的 text/javascript MIME；jsDelivr 对该文件返回
+ *   application/node 会被浏览器拦截）。
  * @returns {Promise<object>} 解析为包含 `record` 的 rrweb 模块对象。
  */
 
@@ -24,10 +26,15 @@
  * 内置 rrweb 脚本地址（replay:true 但未配置 replayLibUrl 时的默认回退）。
  * 与 SDK 开发依赖锁定的 rrweb 版本一致（2.1.0），指向其 UMD 压缩构建，
  * 该构建以 `<script>` 引入后会暴露全局 `window.rrweb`。
- * 如需自托管，在 createEys({ replayLibUrl }) 中传入覆盖即可。
+ *
+ * 注意：必须用返回 `text/javascript`/`application/javascript` MIME 的 CDN。
+ * jsDelivr 对 `.cjs` 文件返回 `application/node`，浏览器在严格 MIME 检查下
+ * 会拒绝执行（"Refused to execute ... MIME type ('application/node')"）。
+ * unpkg 对同名 UMD 构建返回 `text/javascript`，可正常执行，故默认走 unpkg。
+ * 生产环境建议自托管：在 createEys({ replayLibUrl }) 中传入自有域名地址覆盖。
  */
 export const DEFAULT_REPLAY_LIB_URL =
-  'https://cdn.jsdelivr.net/npm/rrweb@2.1.0/dist/rrweb.umd.min.cjs'
+  'https://unpkg.com/rrweb@2.1.0/dist/rrweb.umd.min.cjs'
 
 export async function loadRrweb({ replayLibUrl } = {}) {
   // 1) 全局已注入（IIFE 自托管 / 宿主预加载）
