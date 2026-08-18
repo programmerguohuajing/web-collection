@@ -1,6 +1,6 @@
 <script setup>
 // 页面级加载遮罩：自定义 redesign 的转圈图标（替代 Element Plus 默认 spinner）
-// - 靛蓝主色 + 天蓝渐变弧，旋转放慢到 2.4s 并带缓动，避免"转太快"的视觉疲劳
+// - 靛蓝主色 + 天蓝渐变弧，旋转放慢到 3.4s 匀速（linear），避免"转太快/忽快忽慢"的视觉疲劳
 // - 中心脉冲核心点，柔化遮罩背景，无文字（保持全屏居中无文字的原有约定）
 defineProps({
   active: { type: Boolean, default: false }
@@ -31,11 +31,14 @@ defineProps({
 .wc-page-loading {
   position: absolute;
   inset: 0;
-  z-index: 50;
+  /* 必须高于 Element Plus v-loading 默认遮罩（z-index 2000），
+     否则页面内 el-table/el-card 的 v-loading 会叠在全屏遮罩之上，出现"上下两个 loading"。 */
+  z-index: 3000;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--c-surface) 68%, transparent);
-  backdrop-filter: blur(1.5px);
+  /* 足够不透明，遮住下层页面的局部 v-loading 转圈，保证全局加载时只显示这一个 */
+  background: color-mix(in srgb, var(--c-surface) 88%, transparent);
+  backdrop-filter: blur(2px);
   cursor: progress;
 }
 
@@ -66,7 +69,8 @@ defineProps({
   stroke-dasharray: 100 126;
   transform-origin: center;
   transform: rotate(-90deg);
-  animation: wc-spin 2.4s cubic-bezier(.5, 0, .5, 1) infinite;
+  /* 3.4s 匀速（linear）旋转：比 EP 默认 2s 明显更慢，且匀速无加减速，观感更平稳 */
+  animation: wc-spin 3.4s linear infinite;
 }
 
 .wc-spinner-core {
@@ -100,7 +104,7 @@ defineProps({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wc-ring-arc { animation-duration: 3.4s; }
+  .wc-ring-arc { animation-duration: 4.6s; }
   .wc-spinner-core { animation: none; }
 }
 </style>
