@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, deleteAlertChannel, saveAlertChannel, testAlertChannel, pageLoading, toList } from '../dashboard.js'
 import { buildAlertChannelPayload, channelEndpointStatus, channelFilters, channelScope, createAlertChannelForm } from '../alert-channels.js'
 import KpiGrid from '../components/KpiGrid.vue'
+import OverflowTip from '../components/OverflowTip.vue'
 import TemplateEditor from '../components/TemplateEditor.vue'
 import { levelLabel, levelTagType, metricLabel, metricTagType } from '../utils/format.js'
 import { channelMessageTypes, variablesForChannel } from '../../../../packages/alert-templates.js'
@@ -230,16 +231,16 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
     <el-alert v-if="alertsError" class="table-error" type="error" :title="alertsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
     <el-table :data="rows" border v-loading="alertsLoading" empty-text="暂无告警记录">
       <el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
-      <el-table-column prop="app_id" label="应用" width="140" show-overflow-tooltip />
+      <el-table-column label="应用" width="140"><template #default="{ row }"><OverflowTip :text="row.app_id" /></template></el-table-column>
       <el-table-column label="指标" width="100">
         <template #default="{ row }">
           <el-tag :type="metricTagType(row.metric)" size="small">{{ metricLabel(row.metric) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="级别" width="90"><template #default="{ row }"><el-tag :type="levelTagType(row.level)" size="small">{{ levelLabel(row.level) }}</el-tag></template></el-table-column>
-      <el-table-column label="告警内容" min-width="280" show-overflow-tooltip>
+      <el-table-column label="告警内容" min-width="280">
         <template #default="{ row }">
-          {{ row.message }}
+          <OverflowTip :text="row.message" />
         </template>
       </el-table-column>
       <el-table-column label="当前值" width="100"><template #default="{ row }">{{ row.value != null ? Number(row.value).toFixed(2) : '-' }}</template></el-table-column>
@@ -267,13 +268,13 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
     </template>
     <el-table :data="channels" border v-loading="channelsLoading" empty-text="暂无通知渠道">
       <template #empty><el-empty description="暂无渠道" :image-size="60" /></template>
-      <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
+      <el-table-column label="名称" min-width="160"><template #default="{ row }"><OverflowTip :text="row.name" /></template></el-table-column>
       <el-table-column label="类型" width="110"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
       <el-table-column label="服务地址" min-width="130"><template #default="{ row }"><el-tag :type="row.configured ? 'success' : 'danger'" size="small">{{ channelEndpointStatus(row) }}</el-tag></template></el-table-column>
-      <el-table-column label="接收人" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.config?.recipients || '-' }}</template></el-table-column>
-      <el-table-column label="应用范围" width="160" show-overflow-tooltip><template #default="{ row }">{{ channelScope(row) }}</template></el-table-column>
-      <el-table-column label="级别" width="180" show-overflow-tooltip><template #default="{ row }">{{ channelFilters(row.levels) }}</template></el-table-column>
-      <el-table-column label="指标" width="220" show-overflow-tooltip><template #default="{ row }">{{ channelFilters(row.metrics) }}</template></el-table-column>
+      <el-table-column label="接收人" min-width="180"><template #default="{ row }"><OverflowTip :text="row.config?.recipients || '-'" /></template></el-table-column>
+      <el-table-column label="应用范围" width="160"><template #default="{ row }"><OverflowTip :text="channelScope(row)" /></template></el-table-column>
+      <el-table-column label="级别" width="180"><template #default="{ row }"><OverflowTip :text="channelFilters(row.levels)" /></template></el-table-column>
+      <el-table-column label="指标" width="220"><template #default="{ row }"><OverflowTip :text="channelFilters(row.metrics)" /></template></el-table-column>
       <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
       <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { formatDuration } from '../utils/format.js'
+import OverflowTip from './OverflowTip.vue'
 
 /**
  * 前端请求 / 响应查看器
@@ -207,8 +208,8 @@ function prettyBody(text) {
         <el-table-column label="时间" width="92">
           <template #default="{ row }"><span class="mono muted">{{ timeLabel(row.main?.ts ?? row.body?.ts) }}</span></template>
         </el-table-column>
-        <el-table-column label="接口" min-width="280" show-overflow-tooltip>
-          <template #default="{ row }"><span class="mono url">{{ shortUrl(row.url) }}</span></template>
+        <el-table-column label="接口" min-width="280">
+          <template #default="{ row }"><OverflowTip :text="shortUrl(row.url)" class="mono url" /></template>
         </el-table-column>
         <el-table-column label="方法" width="76">
           <template #default="{ row }"><span class="method">{{ row.method }}</span></template>

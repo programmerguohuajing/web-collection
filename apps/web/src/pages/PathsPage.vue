@@ -5,6 +5,7 @@ import { useFilterStore } from '../stores/filters.js'
 import SearchPanel from '../components/SearchPanel.vue'
 import TopologyChart from '../components/TopologyChart.vue'
 import KpiGrid from '../components/KpiGrid.vue'
+import OverflowTip from '../components/OverflowTip.vue'
 import PathFlow from '../components/PathFlow.vue'
 
 const filterStore = useFilterStore()
@@ -114,7 +115,17 @@ onMounted(load)
             </template>
           </el-table-column>
           <el-table-column label="会话数" width="120" align="center"><template #default="{ row }">{{ row.count }}</template></el-table-column>
-          <el-table-column label="用户" min-width="200" show-overflow-tooltip><template #default="{ row }"><template v-if="row.users.length"><el-tag v-for="u in row.users.slice(0, 3)" :key="u.id || u" size="small" style="margin-right:4px;margin-bottom:2px">{{ u.name || u.id || u }}</el-tag><span v-if="row.users.length > 3" class="text-muted">+{{ row.users.length - 3 }}</span></template><span v-else class="text-muted">-</span></template></el-table-column>
+          <el-table-column label="用户" min-width="200">
+            <template #default="{ row }">
+              <OverflowTip :text="row.users.map(u => u.name || u.id || u).join(', ') || '-'" :force="row.users.length > 0" style="display:flex;flex-wrap:wrap;gap:2px;align-items:center">
+                  <template v-if="row.users.length">
+                    <el-tag v-for="u in row.users.slice(0, 3)" :key="u.id || u" size="small" style="margin-right:4px;margin-bottom:2px">{{ u.name || u.id || u }}</el-tag>
+                    <span v-if="row.users.length > 3" class="text-muted">+{{ row.users.length - 3 }}</span>
+                  </template>
+                  <span v-else class="text-muted">-</span>
+              </OverflowTip>
+            </template>
+          </el-table-column>
         </el-table>
         <el-pagination v-if="pager.total > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="pager.page" :page-size="pager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="pager.total" @current-change="value => { pager.page = value; load() }" @size-change="value => { pager.page = 1; pager.pageSize = value; load() }" />
       </el-tab-pane>

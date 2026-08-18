@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import EventTable from '../components/EventTable.vue'
+import OverflowTip from '../components/OverflowTip.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import { api, normalizePageResponse, queryFromFilters, pageLoading } from '../dashboard.js'
 import { formatDuration } from '../utils/format.js'
@@ -118,15 +119,15 @@ onMounted(() => { void load() })
     <SearchPanel :fields="['userId', 'userName', 'userPhone']" @search="onSearch" />
     <el-alert v-if="listError" class="table-error" type="error" :title="listError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
     <el-table :data="rows" border v-loading="listLoading" empty-text="暂无会话数据" @row-click="viewSession" style="cursor:pointer">
-      <el-table-column label="会话 ID" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ text(row.session_id) }}</template></el-table-column>
-      <el-table-column label="用户 ID" width="180" show-overflow-tooltip><template #default="{ row }">{{ text(row.user_id) }}</template></el-table-column>
+      <el-table-column label="会话 ID" min-width="200"><template #default="{ row }"><OverflowTip :text="text(row.session_id)" /></template></el-table-column>
+      <el-table-column label="用户 ID" width="180"><template #default="{ row }"><OverflowTip :text="text(row.user_id)" /></template></el-table-column>
       <el-table-column label="用户名称" width="120"><template #default="{ row }">{{ text(row.user_name) }}</template></el-table-column>
       <el-table-column label="开始时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.started_at) }}</template></el-table-column>
       <el-table-column label="结束时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.ended_at) }}</template></el-table-column>
       <el-table-column label="持续时长" width="110"><template #default="{ row }">{{ formatDuration(row.duration) }}</template></el-table-column>
       <el-table-column label="事件数" width="90" align="center"><template #default="{ row }">{{ row.event_count }}</template></el-table-column>
       <el-table-column label="错误数" width="90" align="center"><template #default="{ row }"><el-tag v-if="row.error_count" type="danger" size="small">{{ row.error_count }}</el-tag><span v-else>-</span></template></el-table-column>
-      <el-table-column label="访问页面" min-width="260" show-overflow-tooltip><template #default="{ row }">{{ row.paths.length ? row.paths.join(' → ') : '-' }}</template></el-table-column>
+      <el-table-column label="访问页面" min-width="260"><template #default="{ row }"><OverflowTip :text="row.paths.length ? row.paths.join(' → ') : '-'" /></template></el-table-column>
     </el-table>
     <el-pagination v-if="pager.total > 0" class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onSearch" @size-change="onSearch" />
   </el-card>
