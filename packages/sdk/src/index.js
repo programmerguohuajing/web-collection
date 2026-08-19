@@ -337,6 +337,10 @@ export function createEys(options = {}) {
   }
   // 跨标签页锁引用（SDK-219）：destroy 时 close() 释放 BroadcastChannel，避免进程泄漏。
   let multiTabLock = null
+  // P2-6 · collect 节流状态：必须声明在 createEys 主 return（约 486 行）之前，
+  // 否则函数返回后 let 永不初始化，destroy()/flush() 触发 TDZ（ReferenceError）。
+  let lastFlushAt = 0           // 上次发送时间戳（节流窗口判断）
+  let throttleTimer = null      // 节流窗口内合并发送的定时器
   const sender = new ReliableSender({
     cold: new IndexedDBQueue({ maxQueue: cfg.maxQueue * 10 }),
     transport: new FetchTransport({ endpoint: cfg.endpoint, collectKey: cfg.collectKey, fetchImpl: originalFetch, timeout: cfg.transportTimeout }),
@@ -889,8 +893,7 @@ export function createEys(options = {}) {
 
   // P2-6 · collect 节流：抑制高频触发（业务请求/点击/滚动/错误期间），在窗口内合并为 1 次延迟发送。
   // force=true（页面退出/隐藏/冻结）绕过节流直发。
-  let lastFlushAt = 0
-  let throttleTimer = null
+  // 注意：lastFlushAt / throttleTimer 已在实例状态区（createEys 主 return 之前）声明，避免 TDZ。
   /**
    * 在线批量上报队列中的事件（Reliable Transport v2）。
    * 实际发送、超时、退避重试、4xx 丢弃与 GIF 兜底均由 `ReliableSender` 负责。

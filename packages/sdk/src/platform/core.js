@@ -86,6 +86,9 @@ export function createPlatformEys(options = {}, adapter) {
   let flushing = false          // 是否正在上报
   let flushAllRequested = false // 是否请求了全量上报
   let retryTimer = null         // 退避重试定时器
+  // P2-6 · collect 节流状态：必须声明在 return 之前，否则函数返回后 let 永不初始化（TDZ）。
+  let lastFlushAt = 0           // 上次发送时间戳（节流窗口判断）
+  let throttleTimer = null      // 节流窗口内合并发送的定时器
   let destroyed = false
   let persistence = Promise.resolve()
   let lastError = { fingerprint: '', ts: 0 }  // 错误去重：相同错误 1 秒内不重复上报
@@ -331,8 +334,7 @@ export function createPlatformEys(options = {}, adapter) {
 
   // P2-6 · collect 节流：抑制高频触发。窗口内多次 flush 合并为 1 次延迟发送，事件不丢。
   // force=true（页面退出/隐藏/错误紧急路径）直发，绕过节流。
-  let lastFlushAt = 0
-  let throttleTimer = null
+  // 注意：lastFlushAt / throttleTimer 已在实例状态区（return 之前）声明，避免 TDZ。
   async function flush(force = false) {
     await ready
     if (!cfg.enabled || cfg.consent === 'denied') return
