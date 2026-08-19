@@ -194,7 +194,7 @@ onMounted(load)
         <el-table-column label="事件采样率" width="120"><template #default="{ row }">{{ formatRate(row.sample_rate ?? row.sampleRate) }}</template></el-table-column>
         <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ formatRate(row.replay_sample_rate ?? row.replaySampleRate) }}</template></el-table-column>
         <el-table-column label="版本数" width="90"><template #default="{ row }">{{ row.release_count ?? row.releaseCount ?? 0 }}</template></el-table-column>
-        <el-table-column label="状态" width="90" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
+        <el-table-column label="状态" width="100" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="270"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
       </el-table>
       <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="appPager.page" :page-size="appPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="appPager.total" @current-change="value => { appPager.page = value; load() }" @size-change="value => { appPager.page = 1; appPager.pageSize = value; load() }" />
@@ -263,7 +263,7 @@ onMounted(load)
 <style scoped>
 .table-error { margin-bottom: 12px; }
 /* 状态列：完整显示，禁用全局 .el-table .cell .el-tag 的省略号裁剪 */
-:deep(.el-table .cell.no-ellipsis) { overflow: visible; text-overflow: clip; white-space: nowrap; }
-:deep(.el-table .cell.no-ellipsis .el-tag) { max-width: none; overflow: visible; }
-:deep(.el-table .cell.no-ellipsis .el-tag .el-tag__content) { overflow: visible; text-overflow: clip; white-space: nowrap; }
+:deep(.el-table .cell.no-ellipsis) { overflow: visible !important; text-overflow: clip !important; white-space: nowrap; }
+:deep(.el-table .cell.no-ellipsis .el-tag) { display: inline-flex; max-width: none !important; overflow: visible !important; }
+:deep(.el-table .cell.no-ellipsis .el-tag .el-tag__content) { display: block; overflow: visible !important; text-overflow: clip !important; white-space: nowrap; }
 </style>
