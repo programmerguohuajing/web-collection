@@ -127,7 +127,17 @@ onMounted(() => { void load() })
       <el-table-column label="持续时长" width="110"><template #default="{ row }">{{ formatDuration(row.duration) }}</template></el-table-column>
       <el-table-column label="事件数" width="90" align="center"><template #default="{ row }">{{ row.event_count }}</template></el-table-column>
       <el-table-column label="错误数" width="90" align="center"><template #default="{ row }"><el-tag v-if="row.error_count" type="danger" size="small">{{ row.error_count }}</el-tag><span v-else>-</span></template></el-table-column>
-      <el-table-column label="访问页面" min-width="260"><template #default="{ row }"><OverflowTip :text="row.paths.length ? row.paths.join(' → ') : '-'" /></template></el-table-column>
+      <el-table-column label="访问页面" min-width="260" cell-class-name="no-ellipsis">
+        <template #default="{ row }">
+          <div v-if="row.paths.length" class="path-list">
+            <div v-for="(p, i) in row.paths" :key="i" class="path-item">
+              <span class="path-idx">{{ i + 1 }}.</span>
+              <span class="path-text">{{ p }}</span>
+            </div>
+          </div>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
     </el-table>
     <el-pagination v-if="pager.total > 0" class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onSearch" @size-change="onSearch" />
   </el-card>
@@ -142,4 +152,9 @@ onMounted(() => { void load() })
 
 <style scoped>
 .table-error { margin-bottom: 12px; }
+:deep(.el-table .cell.no-ellipsis) { overflow: visible; text-overflow: clip; white-space: normal; }
+.path-list { display: flex; flex-direction: column; gap: 2px; }
+.path-item { display: flex; gap: 4px; line-height: 1.4; }
+.path-idx { flex: none; color: var(--el-text-color-secondary); }
+.path-text { word-break: break-all; }
 </style>

@@ -105,7 +105,7 @@ onMounted(load)
       <el-table :data="applications" v-loading="loading" empty-text="暂无应用数据">
         <el-table-column prop="name" label="应用名称" min-width="220" />
         <el-table-column prop="appKey" label="SDK Key" min-width="220" />
-        <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" effect="plain">{{ row.enabled ? '启用' : '暂停' }}</el-tag></template></el-table-column>
+        <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag class="status-tag" :type="row.enabled ? 'success' : 'info'" effect="plain">{{ row.enabled ? '启用' : '暂停' }}</el-tag></template></el-table-column>
         <el-table-column label="今日事件" width="130"><template #default="{ row }">{{ row.events.toLocaleString() }}</template></el-table-column>
         <el-table-column label="操作" width="120"><template #default="{ row }"><el-button link type="primary" @click="configure(row)">配置</el-button></template></el-table-column>
       </el-table>
@@ -172,6 +172,8 @@ onMounted(load)
 .settings-form .el-form-item small { display: block; margin-top: 6px; line-height: 1.45; }
 .settings-form .el-select { width: 100%; }
 .field-suffix { margin-left: 8px; color: var(--c-text-muted); }
+.status-tag { max-width: none !important; overflow: visible !important; }
+.status-tag :deep(.el-tag__content) { overflow: visible !important; white-space: nowrap; }
 .settings-placeholder { min-height: 280px; display: grid; place-items: center; }
 @media (max-width: 900px) { .settings-layout { grid-template-columns: 150px minmax(0, 1fr); gap: 14px; } }
 @media (max-width: 720px) {
