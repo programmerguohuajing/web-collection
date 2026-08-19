@@ -153,6 +153,10 @@ export function createEys(options = {}) {
     batchSize: 10,
     // flushInterval 表示定时批量上报的时间间隔。
     flushInterval: 60000,
+    // minFlushInterval 表示两次非强制 collect 上报之间的最小间隔（ms），用于抑制
+    // 业务高频请求/点击/滚动期间 SDK 连续触发 collect（事件不丢，只是在窗口内合并为 1 次）。
+    // force=true（页面退出/隐藏/错误立即发送）会绕过该节流。设为 0 关闭节流。
+    minFlushInterval: 2000,
     // maxQueue 表示本地队列最大可缓存事件数。
     maxQueue: 200,
     // maxRetries 表示单次上报失败后的最大重试次数。
@@ -883,6 +887,10 @@ export function createEys(options = {}) {
     return false
   }
 
+  // P2-6 · collect 节流：抑制高频触发（业务请求/点击/滚动/错误期间），在窗口内合并为 1 次延迟发送。
+  // force=true（页面退出/隐藏/冻结）绕过节流直发。
+  let lastFlushAt = 0
+  let throttleTimer = null
   /**
    * 在线批量上报队列中的事件（Reliable Transport v2）。
    * 实际发送、超时、退避重试、4xx 丢弃与 GIF 兜底均由 `ReliableSender` 负责。
@@ -890,6 +898,25 @@ export function createEys(options = {}) {
    */
   async function flush(force = false) {
     if (!cfg.enabled || cfg.consent === 'denied') return
+    // force 直发（pagehide/visibilitychange/error 紧急路径），不走节流。
+    if (force) return sender.sendBatchOnline(force)
+    // 节流窗口内：取消旧定时器，重新排到「距上次发送 = minFlushInterval」时发送，事件不丢。
+    const now = Date.now()
+    if (cfg.minFlushInterval > 0 && lastFlushAt && now - lastFlushAt < cfg.minFlushInterval) {
+      const delay = cfg.minFlushInterval - (now - lastFlushAt)
+      clearTimeout(throttleTimer)
+      throttleTimer = setTimeout(() => {
+        throttleTimer = null
+        // 发送前再判一次 enabled/consent：避免关掉 SDK 后定时器仍发。
+        if (!cfg.enabled || cfg.consent === 'denied') return
+        lastFlushAt = Date.now()
+        sender.sendBatchOnline(false).catch(() => {})
+      }, delay)
+      // 不阻塞进程退出（页面已隐藏时不要让节流定时器延后 unload）。
+      if (typeof throttleTimer.unref === 'function') throttleTimer.unref()
+      return
+    }
+    lastFlushAt = now
     return sender.sendBatchOnline(force)
   }
 
@@ -1099,6 +1126,8 @@ export function createEys(options = {}) {
     disposed = true
     clearInterval(timer)
     clearTimeout(replayStartTimer)
+    clearTimeout(throttleTimer)
+    throttleTimer = null
     finalizePerformance()
     stopCapture()
     await stopReplayRecording()

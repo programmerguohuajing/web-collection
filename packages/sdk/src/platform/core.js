@@ -37,6 +37,9 @@ export function createPlatformEys(options = {}, adapter) {
     userPhone: '',
     batchSize: 10,
     flushInterval: 60000,
+    // P2-6 · collect 节流：抑制高频触发（业务请求/点击/滚动/错误期间），在窗口内合并为 1 次延迟发送。
+    // force=true（页面退出/隐藏/错误立即发送）会绕过该节流。设为 0 关闭节流。
+    minFlushInterval: 2000,
     maxQueue: 200,
     maxRetries: 3,
     sampleRate: 1,
@@ -326,9 +329,35 @@ export function createPlatformEys(options = {}, adapter) {
   //  网络层
   // ================================================================
 
+  // P2-6 · collect 节流：抑制高频触发。窗口内多次 flush 合并为 1 次延迟发送，事件不丢。
+  // force=true（页面退出/隐藏/错误紧急路径）直发，绕过节流。
+  let lastFlushAt = 0
+  let throttleTimer = null
   async function flush(force = false) {
     await ready
     if (!cfg.enabled || cfg.consent === 'denied') return
+    // force 直发：pagehide/visibilitychange/error 紧急路径不节流。
+    if (force) return flushOnline(force)
+    // 节流窗口内：合并为 1 次延迟发送。
+    const now = Date.now()
+    if (cfg.minFlushInterval > 0 && lastFlushAt && now - lastFlushAt < cfg.minFlushInterval) {
+      const delay = cfg.minFlushInterval - (now - lastFlushAt)
+      clearTimeout(throttleTimer)
+      throttleTimer = setTimeout(() => {
+        throttleTimer = null
+        if (!cfg.enabled || cfg.consent === 'denied') return
+        lastFlushAt = Date.now()
+        flushOnline(false).catch(() => {})
+      }, delay)
+      if (typeof throttleTimer.unref === 'function') throttleTimer.unref()
+      return
+    }
+    lastFlushAt = now
+    return flushOnline(force)
+  }
+
+  /** 实际批量发送实现（避免与节流外层重名）。 */
+  async function flushOnline(force = false) {
     // 防止并发发送
     if (flushing) {
       flushAllRequested ||= force
@@ -565,6 +594,8 @@ export function createPlatformEys(options = {}, adapter) {
 
   function destroy() {
     clearInterval(timer)
+    clearTimeout(throttleTimer)
+    throttleTimer = null
     disposers.forEach(dispose => dispose?.())
     // 上报 SDK 健康指标（丢弃/失败统计等）
     if (stats.dropped || stats.failed) push({ type: 'perf', metric: 'sdk_health', value: stats.enqueued, props: { ...stats }, source: 'auto' })

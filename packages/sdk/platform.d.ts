@@ -82,6 +82,8 @@ export interface PlatformEysOptions {
   userName?: string
   userPhone?: string
   batchSize?: number
+  /** 两次非强制 collect 上报之间的最小间隔（毫秒）；用于抑制业务高频请求/点击/滚动期间 SDK 连续触发 collect，窗口内合并为 1 次延迟发送。force=true 绕过。设为 0 关闭节流。默认 2000 */
+  minFlushInterval?: number
   flushInterval?: number
   maxQueue?: number
   maxRetries?: number

@@ -191,6 +191,8 @@ export interface EysOptions {
   batchSize?: number
   /** 上报间隔（毫秒） */
   flushInterval?: number
+  /** 两次非强制 collect 上报之间的最小间隔（毫秒）；用于抑制业务高频请求/点击/滚动期间 SDK 连续触发 collect，窗口内合并为 1 次延迟发送。force=true（页面退出/隐藏/错误）绕过。设为 0 关闭节流。默认 2000 */
+  minFlushInterval?: number
   /** 最大队列长度 */
   maxQueue?: number
   /** 最大重试次数 */
