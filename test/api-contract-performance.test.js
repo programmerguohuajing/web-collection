@@ -94,10 +94,10 @@ test('session replay correlation is scoped by application and release', async ()
   try {
     await run(`insert into events (id, ts, type, app_id, release_name, session_id, name, props_json)
       values (?, ?, 'behavior', ?, '2.0.0', ?, 'pv', '{}'::jsonb)`, [eventId, Date.now(), appId, sessionId])
-    await run(`insert into replay_events (app_id, session_id, created_at, release, events_json)
-      values (?, ?, ?, '2.0.0', ?::jsonb), (?, ?, ?, '2.0.0', ?::jsonb)`, [
-      otherAppId, `${sessionId}-wrong`, Date.now(), JSON.stringify([]),
-      appId, `${sessionId}-right`, Date.now() + 1, JSON.stringify([])
+    await run(`insert into replay_events (app_id, session_id, base_session_id, created_at, release, events_json)
+      values (?, ?, ?, ?, '2.0.0', ?::jsonb), (?, ?, ?, ?, '2.0.0', ?::jsonb)`, [
+      otherAppId, `${sessionId}-wrong`, sessionId, Date.now(), JSON.stringify([]),
+      appId, `${sessionId}-right`, sessionId, Date.now() + 1, JSON.stringify([])
     ])
     const sessions = await getSessions({ appId, release: '2.0.0', page: 1, pageSize: 10 })
     assert.equal(sessions.items.length, 1)

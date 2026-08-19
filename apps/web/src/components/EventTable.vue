@@ -128,5 +128,6 @@ function statusType(status) {
 </template>
 
 <style scoped>
-:deep(.el-table .cell.no-ellipsis) { overflow: visible; text-overflow: clip; white-space: normal; }
+:deep(.no-ellipsis .cell) { overflow: visible; white-space: nowrap; }
+:deep(.no-ellipsis .el-tag) { max-width: none; white-space: nowrap; }
 </style>

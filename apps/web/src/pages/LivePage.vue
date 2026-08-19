@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import KpiGrid from '../components/KpiGrid.vue'
@@ -20,6 +20,7 @@ const liveKpis = computed(() => [
 ])
 let pollTimer = 0
 let pollInFlight = false
+const autoRefresh = ref(true)
 
 async function pollLive() {
   if (pollInFlight) return
@@ -49,21 +50,45 @@ async function pollLive() {
 
 function onSearch() { page.value = 1; void pollLive() }
 
+function stopAutoRefresh() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = 0 }
+}
+function startAutoRefresh() {
+  stopAutoRefresh()
+  void pollLive() // 开启定时刷新时立即拉取一次
+  pollTimer = setInterval(() => { void pollLive() }, 10000)
+}
+
+// 开关关闭时停止轮询，开启时重新立即拉取并定时轮询
+watch(autoRefresh, on => { if (on) startAutoRefresh(); else stopAutoRefresh() })
+
 onMounted(() => {
   void pollLive()
-  pollTimer = setInterval(() => { void pollLive() }, 10000)
+  if (autoRefresh.value) {
+    pollTimer = setInterval(() => { void pollLive() }, 10000)
+  }
 })
 
-onBeforeUnmount(() => clearInterval(pollTimer))
+onBeforeUnmount(stopAutoRefresh)
 </script>
 
 <template>
   <KpiGrid :items="liveKpis" />
   <SearchPanel :fields="['path', 'userId', 'keyword']" @search="onSearch" />
+  <div class="live-toolbar">
+    <el-switch
+      v-model="autoRefresh"
+      active-text="定时刷新（10s）"
+      inactive-text="手动刷新"
+      inline-prompt
+    />
+    <el-button :loading="initialLoading" size="small" @click="pollLive">立即刷新</el-button>
+  </div>
   <el-alert v-if="liveError" class="table-error" type="error" :title="liveError" show-icon :closable="false"><template #default><el-button link type="primary" @click="pollLive">重试</el-button></template></el-alert>
   <EventTable title="实时事件" :rows="events" :loading="initialLoading" :total="total" :page="page" :page-size="pageSize" stream @page-change="page = $event; pollLive()" @size-change="pageSize = $event; page = 1; pollLive()" />
 </template>
 
 <style scoped>
 .table-error { margin-bottom: 12px; }
+.live-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 </style>
