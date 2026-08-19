@@ -25,6 +25,20 @@ test('decompressReplayEvents 兼容未压缩数组直传', () => {
   assert.deepEqual(decompressReplayEvents({ events }), events)
 })
 
+/** 构造一条 compression:'none' 且 events 为 base64(JSON) 的 fallback 记录（无 CompressionStream 环境）。 */
+function noneBase64Event(events) {
+  return { compression: 'none', events: Buffer.from(JSON.stringify(events)).toString('base64') }
+}
+
+test('decompressReplayEvents 兼容 compression:none + base64 编码数组（SDK fallback 路径）', () => {
+  const events = [
+    { type: 2, timestamp: 100, data: { width: 800, height: 600 } },
+    { type: 3, timestamp: 150, data: {} }
+  ]
+  const out = decompressReplayEvents(noneBase64Event(events))
+  assert.deepEqual(out, events)
+})
+
 test('decompressReplayEvents 畸形 gzip / 非字符串 安全降级为空', () => {
   assert.deepEqual(decompressReplayEvents({ compression: 'gzip', events: '!!!not-gzip!!!' }), [])
   assert.deepEqual(decompressReplayEvents({ compression: 'gzip', events: 123 }), [])

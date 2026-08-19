@@ -642,7 +642,8 @@ export function createEys(options = {}) {
       name: extra.name || err?.name || 'Error',
       message: err?.message || serialize(err),
       stack: err?.stack || '',
-      props: { ...extra, traceId: pageTraceId },
+      // 携带 sessionId 到 props，使 issue 在概览页可与回放会话关联。
+      props: { ...extra, sessionId, traceId: pageTraceId },
       traceId: pageTraceId
     }, true)
   }

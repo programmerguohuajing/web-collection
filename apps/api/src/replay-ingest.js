@@ -32,6 +32,17 @@ export function decompressReplayEvents(event) {
     }
     return []
   }
+  // SDK 在不支持 CompressionStream 的环境会 fallback 为 compression:'none' + base64(JSON(events))；
+  // 后端若只接受数组会导致这些回放被静默丢弃，列表/详情均无数据。
+  if (event.compression === 'none' && typeof event.events === 'string') {
+    try {
+      const parsed = parseJson(Buffer.from(event.events, 'base64').toString('utf8'))
+      if (Array.isArray(parsed)) return parsed
+    } catch {
+      return []
+    }
+    return []
+  }
   if (Array.isArray(event.events)) return event.events
   return []
 }
