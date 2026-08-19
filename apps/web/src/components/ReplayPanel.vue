@@ -99,7 +99,7 @@ const replayErrorCount = computed(() => replayEvents.value.filter(event => {
 const sessionInfo = computed(() => [
   { icon: User, label: '用户', value: replayUser(currentReplay.value) || '未识别' },
   { icon: User, label: '用户 ID', value: currentReplay.value?.userId || '未采集', mono: true },
-  { icon: Monitor, label: '设备', value: '未采集' },
+  { icon: Monitor, label: '设备', value: deriveDevice(currentReplay.value?.userAgent) },
   {
     icon: Monitor,
     label: '分辨率',
@@ -122,6 +122,28 @@ function replayUser(row) {
   if (!row) return ''
   const value = row.userName || row.userId || row.userPhone || row.user || row.username || row.account || row.accountName || row.memberName || row.nickname || ''
   return value == null || value === 'null' ? '' : String(value)
+}
+
+// 从 SDK 上报的 userAgent 推导 浏览器 / OS / 设备类型（与 runFunnel 的 UA 解析口径一致）。
+// 后端 replayList 已返回 userAgent；历史回放该字段为空时回退「未采集」。
+function deriveDevice(ua) {
+  if (!ua) return '未采集'
+  const s = String(ua)
+  const browser = /Edg\//.test(s) ? 'Edge'
+    : /OPR\/|Opera/.test(s) ? 'Opera'
+    : /Firefox\//.test(s) ? 'Firefox'
+    : /Chrome\//.test(s) ? 'Chrome'
+    : /Safari\//.test(s) ? 'Safari'
+    : 'Other'
+  const os = /Windows NT/.test(s) ? 'Windows'
+    : /Mac OS X|Macintosh/.test(s) ? 'macOS'
+    : /Android/.test(s) ? 'Android'
+    : /iPhone|iPad|iPod/.test(s) ? 'iOS'
+    : /Linux/.test(s) ? 'Linux'
+    : 'Unknown OS'
+  const device = /Mobile|Android|iPhone|iPod/.test(s) && !/iPad/.test(s) ? '移动端'
+    : /iPad|Tablet/.test(s) ? '平板' : '桌面端'
+  return `${browser} · ${os} · ${device}`
 }
 
 function replayEventLabel(event) {
