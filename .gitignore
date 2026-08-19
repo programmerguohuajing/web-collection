@@ -15,6 +15,7 @@ data/
 Thumbs.db
 .cloudflare-admin-key
 .wrangler/
+.pnpm-store/
 .claude/
 outputs/
 apps/web/dist-*/

@@ -4,7 +4,7 @@ import test from 'node:test'
 
 const workspaceRoot = new URL('../', import.meta.url)
 
-test('分布式调用树复用项目现有的浅色 Element Plus 视觉语言', async () => {
+test('分布式调用树复用项目现有的浅色 Style B 视觉语言', async () => {
   const [tree, node] = await Promise.all([
     readFile(new URL('apps/web/src/components/DistributedTraceTree.vue', workspaceRoot), 'utf8'),
     readFile(new URL('apps/web/src/components/DistributedTraceNode.vue', workspaceRoot), 'utf8')
@@ -14,7 +14,8 @@ test('分布式调用树复用项目现有的浅色 Element Plus 视觉语言', 
   assert.match(tree, /background:\s*#fff;/)
   assert.match(tree, /var\(--line,\s*#dfe5ec\)/)
   assert.match(node, /import \{ ArrowRight \} from '@element-plus\/icons-vue'/)
-  assert.match(node, /background:\s*#ecf5ff;/)
+  assert.match(node, /background:\s*#eef0fe;/)
+  assert.match(node, /var\(--c-primary,\s*#4f46e5\)/)
   assert.doesNotMatch(tree, /DISTRIBUTED TRACE|trace-eyebrow|live-dot|radial-gradient|#07111f/i)
   assert.doesNotMatch(node, />CRITICAL<|box-shadow:\s*0\s+0\s+\d+px/i)
 })

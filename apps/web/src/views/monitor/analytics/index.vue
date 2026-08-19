@@ -260,6 +260,10 @@ function hasWidget(name) { return (activeDashboard.value?.widgets_json || []).so
 async function loadDashboardResults() {
   const widgets = activeDashboard.value?.widgets_json || []
   const results = {}
+  // 基础组件：live 数据已通过 load() 中 /api/analytics/live 端点加载到 live.value，无需额外请求
+  const stringWidgets = new Set(widgets.filter(widget => typeof widget === 'string'))
+  if (stringWidgets.size) results._basic = true
+  // 分析组件：从 API 加载
   await Promise.all(widgets.filter(widget => typeof widget === 'object').map(async widget => {
     const key = widgetKey(widget)
     if (widget.type === 'funnel') results[key] = await api(`/api/funnels/${widget.id}/run?${queryFromFilters()}`)

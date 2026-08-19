@@ -74,7 +74,7 @@ const summary = computed(() => {
   const total = rows.length
   const errorCount = rows.filter(r => Number(r.body?.props?.status ?? r.main?.props?.status) >= 400).length
   const durations = rows.map(r => Number(r.main?.value)).filter(v => Number.isFinite(v))
-  const avg = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0
+  const avg = durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length * 100) / 100 : 0
   const withBody = rows.filter(r => (r.body?.props?.responseBody ?? '').trim()).length
   return { total, errorCount, avg, withBody }
 })
@@ -144,15 +144,12 @@ function highlightJson(value) {
     }
   )
 }
-function prettyBody(text) {
-  if (!text) return ''
-  // 尝试美化（若本身是 JSON 字符串）
-  try {
-    const parsed = JSON.parse(text)
-    return highlightJson(parsed)
-  } catch {
-    return escapeHtml(text)
-  }
+function prettyBody(raw) {
+  if (raw == null) return ''
+  // 支持 responseBody 已是解析后对象的情况
+  if (typeof raw === 'object') return highlightJson(raw)
+  // JSON 字符串：先解析再高亮
+  try { return highlightJson(JSON.parse(raw)) } catch { return escapeHtml(String(raw)) }
 }
 </script>
 
@@ -240,8 +237,8 @@ function prettyBody(text) {
       <template v-if="detail">
         <div class="meta">
           <div class="m"><span class="k">状态码</span><span class="v" :style="{ color: (detail.body?.props?.status ?? detail.main?.props?.status) >= 400 ? '#dc2626' : '#16a34a' }">{{ (detail.body?.props?.status ?? detail.main?.props?.status) || '-' }}</span></div>
-          <div class="m"><span class="k">耗时</span><span class="v">{{ detail.main?.value != null ? detail.main.value + ' ms' : '-' }}</span></div>
-          <div class="m"><span class="k">响应大小</span><span class="v">{{ detail.main?.props?.responseSize ? detail.main.props.responseSize + ' B' : '-' }}</span></div>
+          <div class="m"><span class="k">耗时</span><span class="v">{{ detail.main?.value != null ? formatDuration(detail.main.value) : '-' }}</span></div>
+          <div class="m"><span class="k">响应大小</span><span class="v">{{ detail.main?.props?.responseSize != null ? detail.main.props.responseSize + ' B' : '-' }}</span></div>
           <div class="m"><span class="k">采样</span><span class="v">{{ detail.body?.props?.bodySampled ? '命中' : (detail.body ? '错误强制' : '未采集') }}</span></div>
         </div>
 
@@ -297,6 +294,9 @@ function prettyBody(text) {
 .rr-table { width: 100%; cursor: pointer; }
 .rr-table :deep(.el-table__header th) { height: 44px; background: #fafafd; color: #777e90; font-size: 12px; font-weight: 650; }
 .rr-table :deep(.el-table__row:hover > td) { background: #f7f7ff !important; }
+.rr-table :deep(.el-table__body td:first-child .cell) { white-space: nowrap; }
+.rr-table :deep(.el-table__cell) { overflow: visible; }
+.rr-table :deep(.el-table__body .el-tag) { max-width: none; white-space: nowrap; }
 .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .muted { color: #9298a8; }
 .url { color: #3c4051; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
