@@ -53,9 +53,9 @@ function fmt(n) { return (Number(n) || 0).toLocaleString() }
   background: var(--c-surface-2);
   border: 1px solid var(--c-border);
   border-radius: 12px; padding: 14px; cursor: pointer;
-  transition: border-color .15s, box-shadow .15s, transform .15s, background .15s; position: relative;
+  transition: border-color .15s, box-shadow .15s, background .15s; position: relative;
 }
-.step-node:hover { border-color: var(--c-primary); transform: translateY(-2px); box-shadow: 0 0 0 1px var(--c-primary) inset, var(--sh-md); }
+.step-node:hover { border-color: var(--c-primary); box-shadow: 0 0 0 1px var(--c-primary) inset, var(--sh-md); }
 .step-node.selected { border-color: var(--c-primary); background: var(--c-primary-soft); box-shadow: 0 0 0 1px var(--c-primary) inset; }
 .step-node .idx {
   position: absolute; top: 6px; left: 6px;
