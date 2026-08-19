@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ArrowRight } from '@element-plus/icons-vue'
 import EventTable from '../components/EventTable.vue'
 import OverflowTip from '../components/OverflowTip.vue'
 import SearchPanel from '../components/SearchPanel.vue'
@@ -127,14 +128,26 @@ onMounted(() => { void load() })
       <el-table-column label="持续时长" width="110"><template #default="{ row }">{{ formatDuration(row.duration) }}</template></el-table-column>
       <el-table-column label="事件数" width="90" align="center"><template #default="{ row }">{{ row.event_count }}</template></el-table-column>
       <el-table-column label="错误数" width="90" align="center"><template #default="{ row }"><el-tag v-if="row.error_count" type="danger" size="small">{{ row.error_count }}</el-tag><span v-else>-</span></template></el-table-column>
-      <el-table-column label="访问页面" min-width="260" cell-class-name="no-ellipsis">
+      <el-table-column label="访问页面" min-width="220" cell-class-name="no-ellipsis">
         <template #default="{ row }">
-          <div v-if="row.paths.length" class="path-list">
-            <div v-for="(p, i) in row.paths" :key="i" class="path-item">
-              <span class="path-idx">{{ i + 1 }}.</span>
-              <span class="path-text">{{ p }}</span>
+          <el-popover v-if="row.paths.length" placement="top-start" :width="340" trigger="click">
+            <template #reference>
+              <span class="path-summary" @click.stop>
+                <span class="path-entry">{{ row.paths[0] }}</span>
+                <el-tag v-if="row.paths.length > 1" size="small" type="info" effect="plain" class="path-count">{{ row.paths.length }} 页</el-tag>
+                <el-icon class="path-more"><ArrowRight /></el-icon>
+              </span>
+            </template>
+            <div class="path-pop">
+              <div class="path-pop-title">访问路径（共 {{ row.paths.length }} 页）</div>
+              <ol class="path-pop-list">
+                <li v-for="(p, i) in row.paths" :key="i">
+                  <span class="path-pop-idx">{{ i + 1 }}</span>
+                  <span class="path-pop-text">{{ p }}</span>
+                </li>
+              </ol>
             </div>
-          </div>
+          </el-popover>
           <span v-else>-</span>
         </template>
       </el-table-column>
@@ -153,8 +166,14 @@ onMounted(() => { void load() })
 <style scoped>
 .table-error { margin-bottom: 12px; }
 :deep(.el-table .cell.no-ellipsis) { overflow: visible; text-overflow: clip; white-space: normal; }
-.path-list { display: flex; flex-direction: column; gap: 2px; }
-.path-item { display: flex; gap: 4px; line-height: 1.4; }
-.path-idx { flex: none; color: var(--el-text-color-secondary); }
-.path-text { word-break: break-all; }
+.path-summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; max-width: 100%; }
+.path-entry { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--el-color-primary); }
+.path-count { flex: none; }
+.path-more { flex: none; color: var(--el-text-color-placeholder); transition: transform .2s; }
+.path-summary:hover .path-more { transform: translateX(2px); color: var(--el-color-primary); }
+.path-pop { font-size: 13px; }
+.path-pop-title { font-weight: 600; margin-bottom: 8px; color: var(--el-text-color-primary); }
+.path-pop-list { max-height: 280px; overflow-y: auto; margin: 0; padding-left: 20px; }
+.path-pop-list li { line-height: 1.7; word-break: break-all; }
+.path-pop-idx { color: var(--el-text-color-secondary); margin-right: 6px; }
 </style>
