@@ -261,13 +261,17 @@ button, input, textarea, select { font-family: inherit; }
   overflow: visible;
   text-overflow: clip;
 }
-/* 表格内 el-tag：解除 inline-flex 截断，让 tag 内容（包括中文）始终完整渲染，不再被 cell 省略 */
+/* 表格内 el-tag：标签内容在标签背景内显示，超出时省略号裁剪（不再 overflow:visible 导致文本溢出标签背景）
+   - max-width:100% 让标签被单元格宽度约束；overflow:hidden + 内容 ellipsis 保证文本始终收在背景内 */
 .el-table .cell .el-tag {
   display: inline-flex;
   max-width: 100%;
-  overflow: visible;
+  overflow: hidden;
 }
 .el-table .cell .el-tag .el-tag__content {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .el-pagination { margin-top: 16px; }

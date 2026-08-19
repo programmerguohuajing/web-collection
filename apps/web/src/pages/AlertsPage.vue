@@ -105,7 +105,7 @@ async function dismiss(row) {
 }
 
 async function viewDetail(row) {
-  if (row.trace_id) router.push({ path: '/traces', query: { traceId: row.trace_id } })
+  if (row.traceId ?? row.trace_id) router.push({ path: '/traces', query: { traceId: row.traceId ?? row.trace_id } })
   else if (row.url) router.push({ path: '/errors', query: { path: row.url } })
   else ElMessage.info('该告警无关联的链路追踪或错误页面')
 }
@@ -231,8 +231,8 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
     <el-alert v-if="alertsError" class="table-error" type="error" :title="alertsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
     <el-table :data="rows" border v-loading="alertsLoading" empty-text="暂无告警记录">
       <el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
-      <el-table-column label="应用" width="140"><template #default="{ row }"><OverflowTip :text="row.app_id" /></template></el-table-column>
-      <el-table-column label="指标" width="100">
+      <el-table-column label="应用" width="140"><template #default="{ row }"><OverflowTip :text="row.appId ?? row.app_id" /></template></el-table-column>
+      <el-table-column label="指标" width="120">
         <template #default="{ row }">
           <el-tag :type="metricTagType(row.metric)" size="small">{{ metricLabel(row.metric) }}</el-tag>
         </template>
