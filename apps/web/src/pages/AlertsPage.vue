@@ -232,7 +232,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
     <el-table :data="rows" border v-loading="alertsLoading" empty-text="暂无告警记录">
       <el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(Number(row.created_at)).toLocaleString() }}</template></el-table-column>
       <el-table-column label="应用" width="140"><template #default="{ row }"><OverflowTip :text="row.appId ?? row.app_id" /></template></el-table-column>
-      <el-table-column label="指标" width="120" cell-class-name="no-ellipsis">
+      <el-table-column label="指标" width="150" cell-class-name="no-ellipsis">
         <template #default="{ row }">
           <el-tag :type="metricTagType(row.metric)" size="small">{{ metricLabel(row.metric) }}</el-tag>
         </template>
@@ -245,8 +245,8 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
       </el-table-column>
       <el-table-column label="当前值" width="100"><template #default="{ row }">{{ row.value != null ? Number(row.value).toFixed(2) : '-' }}</template></el-table-column>
       <el-table-column prop="threshold" label="阈值" width="100"><template #default="{ row }">{{ row.threshold != null ? Number(row.threshold).toFixed(2) : '-' }}</template></el-table-column>
-      <el-table-column label="状态" width="100" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-      <el-table-column label="通知" width="100" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.notified ? 'success' : 'info'" size="small">{{ row.notified ? '已发送' : '未发送' }}</el-tag></template></el-table-column>
+      <el-table-column label="状态" width="110" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
+      <el-table-column label="通知" width="110" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.notified ? 'success' : 'info'" size="small">{{ row.notified ? '已发送' : '未发送' }}</el-tag></template></el-table-column>
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.status === 'pending'" link type="primary" size="small" @click="acknowledge(row)">处理</el-button>
@@ -364,5 +364,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
 <style scoped>
 .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
 .table-error { margin-bottom: 12px; }
-:deep(.el-table .cell.no-ellipsis) { overflow: visible; text-overflow: clip; white-space: normal; }
+:deep(.el-table .cell.no-ellipsis) { overflow: visible !important; text-overflow: clip !important; white-space: normal; }
+:deep(.el-table .cell.no-ellipsis .el-tag) { display: inline-flex; max-width: none !important; overflow: visible !important; }
+:deep(.el-table .cell.no-ellipsis .el-tag .el-tag__content) { display: block; overflow: visible !important; text-overflow: clip !important; white-space: nowrap; }
 </style>
