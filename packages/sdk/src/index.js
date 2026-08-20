@@ -216,6 +216,10 @@ export function createEys(options = {}) {
     replayErrorTrigger: true,
     // replayWindowMsError：错误升采样期间的留存窗口（默认 60s，是常态 30s 的两倍）。
     replayWindowMsError: 60000,
+    // replayCheckoutEveryN：rrweb 每累计 N 个事件补一份全量快照（type:2）。
+    // 防止长会话里首屏快照被 replayWindowMs 环形窗口淘汰后，后续分段/分页因缺初始
+    // DOM 快照而回放黑屏（有播放时间、无画面）。默认 100，置 0 关闭（仅靠分段锚点快照）。
+    replayCheckoutEveryN: 100,
     // replayCanvas / replayIframe：Canvas 与跨域 iframe 录制显式 opt-in（默认关闭），
     // 开启后传入 rrweb 的 recordCanvas / recordCrossOriginIframes / inlineIframes。
     // 完整 Canvas 保真度需在 replayOptions.plugins 中提供 @rrweb/rrweb-plugin-canvas 实例。
@@ -1028,6 +1032,8 @@ export function createEys(options = {}) {
           recordCanvas: cfg.replayCanvas,
           recordCrossOriginIframes: cfg.replayIframe,
           inlineIframes: cfg.replayIframe,
+          // SDK-211 · 长会话保真：周期性全量快照，避免首屏快照被环形窗口淘汰后黑屏。
+          checkoutEveryN: cfg.replayCheckoutEveryN || 0,
           // SDK-211 · 录制质量：rrweb 录制内部报错转为结构化诊断（不含 PII）。
           errorHandler: (e) => diagnostic.emit('replay_recorder_error', { message: String((e && e.message) || e || '').slice(0, 200) })
         }
@@ -1038,6 +1044,10 @@ export function createEys(options = {}) {
     }
     // 极少竞态：录制刚建立即已销毁，立即停录。
     if (disposed) { stopCurrentReplay(); return }
+    // 分段锚点快照：每段录制开始即显式打一份全量快照（type:2），保证该分段（含被
+    // 独立加载的分页记录）以全量快照开头。rrweb record() 的隐式初始快照为异步发出，
+    // 在错误/路由高频切换时可能丢失，故此处确定性补打，根除「有播放时间、无画面」黑屏。
+    takeReplaySnapshot()
     clearTimeout(replayStopTimer)
     if (cfg.replayMaxDuration > 0) {
       replayStopTimer = setTimeout(() => endReplaySegment('max_duration'), cfg.replayMaxDuration)

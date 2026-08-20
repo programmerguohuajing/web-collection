@@ -15,6 +15,7 @@ import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease,
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
 import { deleteDashboard, deleteFunnel, deleteInsight, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
 import { createMaskingMiddleware } from './privacy.js'
+import { buildCapabilities, NODE_CAPABILITIES } from '../../packages/deployment-capabilities.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -56,7 +57,7 @@ app.get('/health', (req, res) => {
   res.json({ ok: true })
 })
 app.get('/api/capabilities', (req, res) => {
-  res.json({ productAnalyticsV2: true })
+  res.json(buildCapabilities(NODE_CAPABILITIES))
 })
 
 // 公开埋点入口：支持单条、数组、以及 { events: [...] } 批量格式。

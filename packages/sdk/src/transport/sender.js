@@ -2,6 +2,13 @@ import { createEventId } from './id.js'
 import { computeBackoff, classifyResponse } from './retry.js'
 
 /**
+ * 事件信封版本（Phase 0 · P0-5）。服务端据此识别字段契约，
+ * 与 SQL 端 `schema_version` 列对应；调整字段结构时递增此版本。
+ * @type {string}
+ */
+export const EVENT_ENVELOPE_VERSION = '1'
+
+/**
  * 可靠发送编排器（Reliable Transport v2 的核心）。
  *
  * 职责：
@@ -89,10 +96,13 @@ export class ReliableSender {
     return this.items.length
   }
 
-  /** 入队一个事件，自动补全稳定 eventId。 */
+  /** 入队一个事件，自动补全稳定 eventId 与信封字段（Phase 0 · P0-5）。 */
   enqueue(value) {
     if (!value || typeof value !== 'object') return
     if (!value.eventId) value.eventId = createEventId()
+    // 信封版本 + 发生时间：与采集端契约对齐，便于服务端 received_at 计算上报延迟。
+    if (!value.schemaVersion) value.schemaVersion = EVENT_ENVELOPE_VERSION
+    if (!value.occurredAt) value.occurredAt = value.ts || Date.now()
     const item = { id: value.eventId, value, retry: value.retry || 0 }
     this.items.push(item)
     if (this.items.length > this.maxQueue) {
