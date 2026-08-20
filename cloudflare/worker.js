@@ -1,5 +1,6 @@
 import { SourceMapConsumer } from 'source-map-js'
 import { alertContext, channelMatches, decryptSecrets, encryptSecrets, normalizeChannel, publicChannel, publishDelivery, sendChannel, verifyQStash } from '../packages/alerting.js'
+import { buildCapabilities, WORKER_CAPABILITIES } from '../packages/deployment-capabilities.js'
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
@@ -89,7 +90,7 @@ async function record(env, event, application) {
   }
   const id = crypto.randomUUID()
   const storedProps = event.parentSpanId ? { ...(event.props || {}), __parentSpanId: event.parentSpanId } : event.props
-  await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(storedProps||null),JSON.stringify(event.breadcrumbs||null)])
+  await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json, app_version, product_id, event_id, request_id, occurred_at, received_at, schema_version, batch_id, retry_count, contract_status, contract_errors_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(storedProps||null),JSON.stringify(event.breadcrumbs||null), event.appVersion || event.release, event.productId || null, event.eventId || id, event.requestId || null, event.occurredAt || event.ts, now, event.schemaVersion || '1', event.batchId || null, event.retryCount || 0, 'accepted', null])
   const issue = event.type === 'error' ? await upsertIssue(env, event) : null
   if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event, issue)
   return true
@@ -120,7 +121,7 @@ export function issueKey(event) { const source=['FetchError','ResourceError','Ss
 
 async function adminApi(request, env, url) {
   const path = url.pathname
-  if (path === '/api/capabilities') return json({productAnalyticsV2:false})
+  if (path === '/api/capabilities') return json(buildCapabilities(WORKER_CAPABILITIES))
   if (path === '/api/internal/alerts/deliver' && request.method === 'POST') return consumeAlertDelivery(request, env)
   if (path === '/api/events') return pagedEvents(env, url)
   if (path === '/api/logs') return pagedEvents(env, url, 'log')
@@ -228,15 +229,14 @@ async function applicationList(env,url){const select=`select app_id,name,platfor
 async function releaseList(env,appId,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare('select * from releases where app_id=? order by created_at desc limit ? offset ?').bind(appId,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from releases where app_id=?').bind(appId).first()]);return json({items:rows.results,total:Number(total.count),page,pageSize})}
 async function replayEvents(env,id){
   if(!id?.trim())return json([]);
-  // 回放按路由分段存储，仅首段含全量快照(type 2)；若按点击的分段 session_id 只读该段，
-  // 缺全量快照会导致 rrweb 渲染空白 iframe（「有播放时间、无画面」）。故先取该段的
-  // base_session_id，再拉取整段会话的所有分段（按 created_at 排序，首段全量快照在前），
-  // 保证回放可正常渲染；找不到 base_session_id 时回退按分段 session_id 直查。
-  const base=await env.DB.prepare('select base_session_id from replays where session_id=? limit 1').bind(id).first();
-  const baseId=base?.base_session_id||id;
+  // 回放按会话分段存储，仅首段含全量快照；若只按点击的分段 session_id 读取，缺全量快照
+  // 会导致 rrweb 渲染空白 iframe。故先用传入 id 定位该段并取其 base_session_id，再按
+  // base_session_id 拉取整段会话的所有分段（首段全量快照在前），保证可正常重建页面。
+  // 传入 id 既可能是分段 session_id（列表点击），也可能是事件会话 UUID（总览/分析页跳转）。
+  const hit=await env.DB.prepare('select session_id,base_session_id from replays where session_id=? limit 1').bind(id).first();
+  const baseId=hit?.base_session_id||id;
   let rows=(await env.DB.prepare('select events_json from replays where base_session_id=? order by created_at,id').bind(baseId).all()).results;
   if(!rows.length)rows=(await env.DB.prepare('select events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;
-  if(!rows.length)rows=(await env.DB.prepare('select events_json from replays where session_id like ? order by created_at,id').bind(`${id}%`).all()).results;
   return json(rows.flatMap(row=>parse(row.events_json,[])))
 }
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
