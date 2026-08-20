@@ -14,6 +14,7 @@
     "test:release-gate": "node scripts/release-gate.mjs",
     "start": "pnpm --filter @web-collection/api start",
     "test": "pnpm --filter @web-collection/api test",
+    "bench:api": "node scripts/benchmark-queries.mjs",
     "deploy:cloudflare": "pnpm build:cloudflare && wrangler deploy"
   },
   "dependencies": {
