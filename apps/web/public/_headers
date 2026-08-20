@@ -1,0 +1,8 @@
+# 入口 HTML 与 SPA 路由：不缓存，确保浏览器始终拿到最新入口，
+# 避免旧 HTML 引用已被删除的旧 chunk 导致 “Failed to fetch dynamically imported module”。
+/*
+  Cache-Control: no-cache
+
+# 带内容哈希的静态资源（/assets/index-xxxx.js、css 等）：内容永久不变，强缓存且不可变。
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

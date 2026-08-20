@@ -1,5 +1,6 @@
 <script setup>
 import { ElMessageBox } from 'element-plus'
+import { ArrowDown, ArrowRight, ArrowUp } from '@element-plus/icons-vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading, toList } from '../../../dashboard.js'
@@ -25,7 +26,7 @@ const funnelEventNames = ref([])
 const funnelResult = ref(null)
 const dashboards = ref([])
 const insights = ref([])
-const capabilities = ref({ productAnalyticsV2: false })
+const capabilities = ref({ insights: false, productAnalyticsV2: false, funnels: true, dashboards: true, paths: true, live: true, releases: true })
 const dashboardResults = ref({})
 const selectedDashboardId = ref(null)
 const sessionDrawerOpen = ref(false)
@@ -42,8 +43,31 @@ const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors
 let timer = 0
 let loadRequestId = 0
 
+// 用户会话表「访问页面」列：内联只展示前 N 个路径面包屑，超出部分行内展开查看完整路径。
+const PATH_PREVIEW = 3 // 单元格内联展示的页面数
+const sessionTableRef = ref(null)
+const sessionExpandedKeys = ref(new Set())
+function visiblePaths(row) {
+  return (row.paths || []).slice(0, PATH_PREVIEW)
+}
+function rowExpanded(row) {
+  return sessionExpandedKeys.value.has(row.session_id)
+}
+function toggleExpand(row) {
+  sessionTableRef.value?.toggleRowExpansion(row)
+}
+function onSessionExpandChange(row, expandedRows) {
+  const next = new Set(sessionExpandedKeys.value)
+  if (expandedRows.some(item => item.session_id === row.session_id)) next.add(row.session_id)
+  else next.delete(row.session_id)
+  sessionExpandedKeys.value = next
+}
+
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
 const insightOptions = computed(() => insights.value.map(item => ({ label: item.name, value: `insight:${item.id}` })))
+// 事件分析能力：优先读规范键 capabilities.insights（P0-4），兼容旧键 productAnalyticsV2。
+// 缺省 false：Worker 部署无 /api/analytics/insights 端点，入口禁用但可见（不静默隐藏）。
+const insightsSupported = computed(() => Boolean(capabilities.value.insights ?? capabilities.value.productAnalyticsV2))
 const analyticsKpis = computed(() => [
   { label: '近 5 分钟会话', value: Number(live.value?.sessions || 0).toLocaleString(), delta: '实时', valueClass: 'value-primary' },
   { label: '近 5 分钟用户', value: Number(live.value?.users || 0).toLocaleString(), delta: '实时', valueClass: 'value-success' },
@@ -134,7 +158,7 @@ async function loadFunnels() {
   setPaged(funnels, funnelPager, data)
 }
 async function loadInsights() {
-  insights.value = capabilities.value.productAnalyticsV2 ? toList(await api('/api/analytics/insights', { requestKey: 'analytics:insights' })) : []
+  insights.value = insightsSupported.value ? toList(await api('/api/analytics/insights', { requestKey: 'analytics:insights' })) : []
 }
 async function refreshInsights() {
   await Promise.all([loadInsights(), api('/api/dashboards', { requestKey: 'analytics:dashboards' }).then(data => { dashboards.value = toList(data) })])
@@ -146,11 +170,11 @@ async function load() {
   analyticsError.value = ''
   pageLoading.value = true
   try {
-    capabilities.value = await api('/api/capabilities').catch(() => ({ productAnalyticsV2: false }))
+    capabilities.value = await api('/api/capabilities').catch(() => ({ insights: false, productAnalyticsV2: false, funnels: true, dashboards: true, paths: true, live: true, releases: true }))
     const query = queryFromFilters()
     const [, pathData, liveData, releaseData, eventNameData, , dashboardData, insightData] = await Promise.all([
       loadSessions(), api(`/api/analytics/paths?${query}`, { requestKey: 'analytics:paths' }), api(`/api/analytics/live?${query}`, { requestKey: 'analytics:live' }), api(`/api/analytics/releases?${query}`, { requestKey: 'analytics:releases' }), api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`, { requestKey: 'analytics:event-names' }), loadFunnels(), api('/api/dashboards', { requestKey: 'analytics:dashboards' })
-      , capabilities.value.productAnalyticsV2 ? api('/api/analytics/insights') : []
+      , insightsSupported.value ? api('/api/analytics/insights') : []
     ])
     if (requestId !== loadRequestId) return
     paths.value = normalizePageResponse(pathData).items
@@ -173,7 +197,7 @@ async function load() {
 
 async function saveFunnel() {
   const selectedSteps = funnelForm.steps.filter(step => step.eventName)
-  const steps = capabilities.value.productAnalyticsV2 ? selectedSteps.map(step => ({
+  const steps = insightsSupported.value ? selectedSteps.map(step => ({
     eventName: step.eventName,
     filters: step.filterField && (step.filterOperator === 'exists' || step.filterValue)
       ? [{ field: step.filterField.startsWith('props.') ? step.filterField : `props.${step.filterField}`, operator: step.filterOperator, value: step.filterOperator === 'in' ? step.filterValue.split(',').map(value => value.trim()).filter(Boolean) : step.filterValue }]
@@ -306,18 +330,48 @@ watch(selectedFunnelStep, () => { lostPager.page = 1 })
   <el-alert v-if="analyticsError" class="table-error" type="error" :title="analyticsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
   <KpiGrid :items="analyticsKpis" />
   <el-tabs v-model="tab" class="panel section analytics-tabs" @tab-change="changeTab">
-    <el-tab-pane v-if="capabilities.productAnalyticsV2" label="事件分析" name="insights">
-      <EventInsightPanel :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
+    <el-tab-pane :disabled="!insightsSupported" label="事件分析" name="insights">
+      <EventInsightPanel v-if="insightsSupported" :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
+      <el-alert v-else type="info" :closable="false" show-icon title="当前部署暂不支持事件分析">
+        <template #default>当前部署（Cloudflare Worker）未实现事件分析能力，已切换到 Node API 部署或等待后续版本后将自动开放，不会静默隐藏此入口。</template>
+      </el-alert>
     </el-tab-pane>
     <el-tab-pane label="用户会话" name="sessions">
-      <el-table :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession">
+      <el-table ref="sessionTableRef" :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession" @expand-change="onSessionExpandChange" style="cursor:pointer">
+        <el-table-column type="expand" width="24">
+          <template #default="{ row }">
+            <div class="path-expand">
+              <div class="path-expand-title">完整访问路径（共 {{ (row.paths || []).length }} 页）</div>
+              <div class="path-expand-body">
+                <template v-for="(p, i) in row.paths || []" :key="i">
+                  <span class="path-crumb">{{ p }}</span>
+                  <el-icon v-if="i < (row.paths || []).length - 1" class="path-crumb-arrow"><ArrowRight /></el-icon>
+                </template>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="user_name" label="用户" width="130"><template #default="{ row }">{{ row.user_name || row.user_id || row.device_id }}</template></el-table-column>
         <el-table-column label="会话" min-width="200"><template #default="{ row }"><OverflowTip :text="row.session_id" /></template></el-table-column>
         <el-table-column label="开始时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template></el-table-column>
         <el-table-column prop="duration" label="时长(ms)" width="110" />
         <el-table-column prop="event_count" label="事件" width="80" />
         <el-table-column prop="error_count" label="错误" width="80" />
-        <el-table-column prop="paths" label="访问页面" min-width="260"><template #default="{ row }">{{ row.paths?.join(' → ') }}</template></el-table-column>
+        <el-table-column label="访问页面" min-width="240" cell-class-name="no-ellipsis">
+          <template #default="{ row }">
+            <span v-if="(row.paths || []).length" class="path-cell">
+              <template v-for="(p, i) in visiblePaths(row)" :key="i">
+                <span class="path-crumb" :title="p">{{ p }}</span>
+                <el-icon v-if="i < visiblePaths(row).length - 1" class="path-crumb-arrow"><ArrowRight /></el-icon>
+              </template>
+              <span v-if="(row.paths || []).length > PATH_PREVIEW" class="path-toggle" :class="{ 'is-expanded': rowExpanded(row) }" @click.stop="toggleExpand(row)">
+                +{{ row.paths.length - PATH_PREVIEW }} 页
+                <el-icon class="path-toggle-arrow"><ArrowDown v-if="!rowExpanded(row)" /><ArrowUp v-else /></el-icon>
+              </span>
+            </span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="回放" width="80"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><span v-else>-</span></template></el-table-column>
       </el-table>
       <el-pagination v-if="sessionPager.total > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
@@ -350,7 +404,7 @@ watch(selectedFunnelStep, () => { lostPager.page = 1 })
             <div class="funnel-step-index"><span>{{ index + 1 }}</span><small>步骤</small></div>
             <div class="funnel-step-fields">
               <el-select v-model="step.eventName" class="funnel-event-select" filterable placeholder="选择事件"><el-option v-for="item in funnelEventNames" :key="item.name" :label="`${item.name}（${item.count}）`" :value="item.name" /></el-select>
-              <div v-if="capabilities.productAnalyticsV2" class="funnel-filter-fields">
+              <div v-if="insightsSupported" class="funnel-filter-fields">
                 <el-input v-model="step.filterField" placeholder="可选属性，如 plan" />
                 <el-select v-model="step.filterOperator"><el-option label="等于" value="eq" /><el-option label="属于集合" value="in" /><el-option label="已设置" value="exists" /></el-select>
                 <el-input v-if="step.filterOperator !== 'exists'" v-model="step.filterValue" placeholder="过滤值" />
@@ -428,7 +482,7 @@ watch(selectedFunnelStep, () => { lostPager.page = 1 })
     </el-tab-pane>
     <el-tab-pane label="自定义仪表盘" name="dashboards">
       <el-space class="section"><el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select><el-button type="danger" plain :disabled="!selectedDashboardId" @click="removeDashboard">删除仪表盘</el-button></el-space>
-      <el-form><el-form-item label="名称"><el-input v-model="dashboardForm.name" style="width:260px" /></el-form-item><el-form-item label="基础组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in ['live','sessions','errors','releases']" :key="item" :value="item">{{ widgetLabel(item) }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightOptions.length" label="分析组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in insightOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="capabilities.productAnalyticsV2 && funnelOptions.length" label="漏斗组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in funnelOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-button type="primary" @click="saveDashboard">保存仪表盘</el-button></el-form>
+      <el-form><el-form-item label="名称"><el-input v-model="dashboardForm.name" style="width:260px" /></el-form-item><el-form-item label="基础组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in ['live','sessions','errors','releases']" :key="item" :value="item">{{ widgetLabel(item) }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightOptions.length" label="分析组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in insightOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightsSupported && funnelOptions.length" label="漏斗组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in funnelOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-button type="primary" @click="saveDashboard">保存仪表盘</el-button></el-form>
       <el-alert v-if="activeDashboard" :title="`当前仪表盘：${activeDashboard.name}（${activeDashboard.widgets_json?.map(widgetLabel).join('、')}）`" type="success" :closable="false" />
       <KpiGrid v-if="activeDashboard" :items="dashboardKpis" />
       <template v-for="widget in activeDashboard?.widgets_json || []" :key="widgetKey(widget)">
@@ -448,6 +502,17 @@ watch(selectedFunnelStep, () => { lostPager.page = 1 })
 
 <style scoped>
 .table-error { margin-bottom: 12px; }
+:deep(.el-table .cell.no-ellipsis) { overflow: visible; text-overflow: clip; white-space: normal; }
+.path-cell { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 100%; }
+.path-crumb { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--el-text-color-primary); }
+.path-crumb-arrow { flex: none; color: var(--el-text-color-placeholder); font-size: 12px; }
+.path-toggle { display: inline-flex; align-items: center; gap: 2px; flex: none; margin-left: 2px; color: var(--el-color-primary); cursor: pointer; font-size: 12px; user-select: none; }
+.path-toggle:hover { color: var(--el-color-primary-light-3); }
+.path-toggle-arrow { font-size: 12px; transition: transform .2s; }
+.path-toggle.is-expanded .path-toggle-arrow { transform: rotate(180deg); }
+.path-expand { padding: 4px 8px; }
+.path-expand-title { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
+.path-expand-body { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .funnel-builder { margin-bottom: 18px; }
 .funnel-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .funnel-builder-head h2 { margin: 0; color: var(--c-text); font-size: 16px; }
