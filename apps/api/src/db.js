@@ -69,6 +69,18 @@ export async function ensureSchema() {
   await run(`alter table events add column if not exists environment varchar(64)`)
   await run(`alter table events add column if not exists source varchar(32)`)
   await run(`alter table events add column if not exists context_json jsonb`)
+  // Phase 0 · P0-5：事件信封字段扩展（向后兼容，旧事件新列为空不报错）
+  await run(`alter table events add column if not exists app_version varchar(64)`)
+  await run(`alter table events add column if not exists product_id varchar(64)`)
+  await run(`alter table events add column if not exists event_id varchar(64)`)
+  await run(`alter table events add column if not exists request_id varchar(64)`)
+  await run(`alter table events add column if not exists occurred_at bigint`)
+  await run(`alter table events add column if not exists received_at bigint`)
+  await run(`alter table events add column if not exists schema_version varchar(16)`)
+  await run(`alter table events add column if not exists batch_id varchar(64)`)
+  await run(`alter table events add column if not exists retry_count integer not null default 0`)
+  await run(`alter table events add column if not exists contract_status varchar(16)`)
+  await run(`alter table events add column if not exists contract_errors_json jsonb`)
 
   // events 表注释
   await run(`comment on table events is '原始事件存储表，记录 SDK 上报的所有事件（页面访问、点击、错误、性能指标等）'`)
@@ -363,6 +375,9 @@ export async function ensureSchema() {
   await run(`create index if not exists idx_events_app_release_ts on events(app_id, release_name, ts desc)`)
   await run(`create index if not exists idx_events_type_ts on events(type, ts desc)`)
   await run(`create index if not exists idx_events_analytics on events(app_id, name, ts)`)
+  await run(`create index if not exists idx_events_event_id on events(event_id)`)
+  await run(`create index if not exists idx_events_request_id on events(request_id)`)
+  await run(`create index if not exists idx_events_app_version_ts on events(app_id, app_version, ts desc)`)
   await run(`create index if not exists idx_events_props_gin on events using gin(props_json jsonb_path_ops)`)
   await run(`create index if not exists idx_replay_events_created_at on replay_events(created_at)`)
   await run(`create index if not exists idx_replay_events_app_created_at on replay_events(app_id, created_at)`)

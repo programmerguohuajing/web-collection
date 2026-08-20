@@ -6,49 +6,70 @@
 import { all, run, scalar } from '../db.js'
 
 /**
+ * 构建事件插入的 SQL 与参数（纯函数，便于契约测试，不触碰数据库）。
+ * @param {object} event - 事件对象（字段已映射为 snake_case）
+ * @returns {{sql: string, params: Array}}
+ */
+export function buildEventInsert(event) {
+  const sql = `insert into events (
+      id, ts, type, app_id, release_name, user_id, user_name, user_phone, session_id, device_id, trace_id, span_id, parent_span_id, url, path, title, referrer, user_agent, sdk_version, environment, source, context_json, browser, os, device, name, metric, value, message, stack, props_json, breadcrumbs_json,
+      app_version, product_id, event_id, request_id, occurred_at, received_at, schema_version, batch_id, retry_count, contract_status, contract_errors_json
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  const params = [
+    event.id,
+    event.ts,
+    event.type,
+    event.appId,
+    event.release,
+    event.userId || null,
+    event.userName || null,
+    event.userPhone || null,
+    event.sessionId || null,
+    event.deviceId || null,
+    event.traceId || null,
+    event.spanId || null,
+    event.parentSpanId || null,
+    event.url || null,
+    event.path || null,
+    event.title || null,
+    event.referrer || null,
+    event.userAgent || null,
+    event.sdkVersion || null,
+    event.environment || null,
+    event.source || null,
+    JSON.stringify(event.context ?? null),
+    event.browser || null,
+    event.os || null,
+    event.device || null,
+    event.name || null,
+    event.metric || null,
+    event.value ?? null,
+    event.message || null,
+    event.stack || null,
+    JSON.stringify(event.props ?? null),
+    JSON.stringify(event.breadcrumbs ?? null),
+    event.appVersion || event.release || null,
+    event.productId || null,
+    event.eventId || event.id,
+    event.requestId || null,
+    event.occurredAt || event.ts,
+    Date.now(),
+    event.schemaVersion || '1',
+    event.batchId || null,
+    event.retryCount || 0,
+    'accepted',
+    null
+  ]
+  return { sql, params }
+}
+
+/**
  * 插入一条事件记录。
  * @param {object} event - 事件对象（字段已映射为 snake_case）
  */
 export async function insertEventRow(event) {
-  await run(
-    `insert into events (
-      id, ts, type, app_id, release_name, user_id, user_name, user_phone, session_id, device_id, trace_id, span_id, parent_span_id, url, path, title, referrer, user_agent, sdk_version, environment, source, context_json, browser, os, device, name, metric, value, message, stack, props_json, breadcrumbs_json
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      event.id,
-      event.ts,
-      event.type,
-      event.appId,
-      event.release,
-      event.userId || null,
-      event.userName || null,
-      event.userPhone || null,
-      event.sessionId || null,
-      event.deviceId || null,
-      event.traceId || null,
-      event.spanId || null,
-      event.parentSpanId || null,
-      event.url || null,
-      event.path || null,
-      event.title || null,
-      event.referrer || null,
-      event.userAgent || null,
-      event.sdkVersion || null,
-      event.environment || null,
-      event.source || null,
-      JSON.stringify(event.context ?? null),
-      event.browser || null,
-      event.os || null,
-      event.device || null,
-      event.name || null,
-      event.metric || null,
-      event.value ?? null,
-      event.message || null,
-      event.stack || null,
-      JSON.stringify(event.props ?? null),
-      JSON.stringify(event.breadcrumbs ?? null)
-    ]
-  )
+  const { sql, params } = buildEventInsert(event)
+  await run(sql, params)
 }
 
 /**

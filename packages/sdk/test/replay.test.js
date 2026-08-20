@@ -446,3 +446,49 @@ test('createEys 错误触发升采样扩展窗口并发出 replay_error_triggere
   }
 })
 
+// SDK-211 · 黑屏根治：每个分段录制开始即显式打一份全量快照（type:2）。
+// 否则非首段（seg2+）或服务端采样丢弃首段后，回放事件流不以 FullSnapshot 开头，
+// rrweb 无法重建初始 DOM → 播放窗口有播放时间、无画面（黑屏）。
+test('startReplay 在分段启动处显式触发全量快照 takeFullSnapshot(true)', async () => {
+  const props = {}
+  for (const k of ['window', 'document', 'navigator', 'location', 'history']) {
+    if (globalThis[k] === undefined) props[k] = {}
+  }
+  const originals = {}
+  for (const k of Object.keys(props)) {
+    originals[k] = Object.getOwnPropertyDescriptor(globalThis, k)
+    Object.defineProperty(globalThis, k, { value: props[k], configurable: true, writable: true })
+  }
+  let fullSnapshotCalls = 0
+  let lastCheckoutArg = null
+  let capturedEmit = null
+  // rrweb v2 的 record 既是可调用函数，又挂有静态方法 takeFullSnapshot。
+  const mockRecord = (opts) => { capturedEmit = opts?.emit; return () => {} }
+  mockRecord.takeFullSnapshot = (isCheckout) => { fullSnapshotCalls++; lastCheckoutArg = isCheckout }
+  __setDriver({ record: mockRecord })
+  let client
+  try {
+    client = createEys({
+      distributedTracing: false, replaySegmentByRoute: false, behavior: false, exposure: false,
+      requests: false, performance: false, console: false, whiteScreen: false, memory: false,
+      runtime: false, environment: false, runtimeInfo: false,
+      replay: true, replayErrorTrigger: true, replayWindowMs: 30000, replayWindowMsError: 60000,
+      replaySampleRate: 1, replayCompression: false,
+      appId: 't', endpoint: '/api/collect'
+    })
+    await client.startReplay()
+    assert.ok(capturedEmit, 'record 应被调用并提供 emit 回调')
+    // 分段启动锚点：必须至少调用一次 takeFullSnapshot(true) 打全量快照，
+    // 保证该分段（含被独立加载的分页）以 FullSnapshot 开头，根除黑屏。
+    assert.ok(fullSnapshotCalls >= 1, 'startReplay 应在分段启动处显式触发全量快照')
+    assert.equal(lastCheckoutArg, true, 'takeFullSnapshot 应以 isCheckout=true 触发（强制全量快照）')
+  } finally {
+    await client?.destroy?.()
+    __setDriver(null)
+    for (const k of Object.keys(props)) {
+      if (originals[k]) Object.defineProperty(globalThis, k, originals[k])
+      else delete globalThis[k]
+    }
+  }
+})
+
