@@ -30,7 +30,6 @@ jobs:
     # 匹配任意 self-hosted X64 runner（Windows runner 经 Git Bash 运行 bash；Linux runner 原生 bash）。
     # 如需收紧到特定 runner，可在 runner 上加自定义标签（如 web-collection）并把此处改为 [self-hosted, web-collection]。
     runs-on: [self-hosted, X64]
-    environment: production
     timeout-minutes: 20
     env:
       # 仓库 Settings → Variables 可设 DEPLOY_ROOT 覆盖；未设时脚本按 OS 选默认路径。
