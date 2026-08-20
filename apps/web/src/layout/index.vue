@@ -128,14 +128,14 @@ onMounted(async () => {
           </template>
         </nav>
       </el-scrollbar>
-      <div class="sidebar-foot">v2.4.0 · 实时采集节点 12</div>
+      <div class="sidebar-foot">Web Collection · 前端遥测平台</div>
     </aside>
 
     <section class="main-container">
       <header class="navbar">
         <div class="topbar-title">
           <h1>{{ currentTitle }}</h1>
-          <div class="sub">实时遥测 · 全量环境</div>
+          <div class="sub">实时遥测</div>
         </div>
         <div class="topbar-spacer" />
         <div class="context-selectors" aria-label="全局筛选">
@@ -156,7 +156,7 @@ onMounted(async () => {
         <div class="navbar-actions">
           <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
-          <span class="environment-pill" title="当前采集环境：生产"><i />生产环境</span>
+          <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>
           <span class="user-avatar" aria-label="当前用户">运</span>
         </div>
       </header>

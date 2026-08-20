@@ -9,6 +9,9 @@ export const useFilterStore = defineStore('filters', {
   state: () => ({
     appId: '',
     release: '',
+    // 采集环境（prod/staging/trial/dev）。默认空：不写死“生产环境”，
+    // 后续由全局上下文从真实应用配置或聚合查询填充；为空时顶栏不展示环境药丸。
+    environment: '',
     range: []
   })
 })
