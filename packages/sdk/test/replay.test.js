@@ -450,9 +450,26 @@ test('createEys 错误触发升采样扩展窗口并发出 replay_error_triggere
 // 否则非首段（seg2+）或服务端采样丢弃首段后，回放事件流不以 FullSnapshot 开头，
 // rrweb 无法重建初始 DOM → 播放窗口有播放时间、无画面（黑屏）。
 test('startReplay 在分段启动处显式触发全量快照 takeFullSnapshot(true)', async () => {
-  const props = {}
-  for (const k of ['window', 'document', 'navigator', 'location', 'history']) {
-    if (globalThis[k] === undefined) props[k] = {}
+  // 对齐本文件其它 replay 测试的完整全局 mock：createEys 会在初始化期间调用
+  // setInterval(flushAll) 与 addEventListener('pagehide') 等，若 mock 缺失会在
+  // 抛错前留下孤立定时器导致进程无法退出（CI 卡死）。
+  const props = {
+    window: globalThis,
+    location: { href: 'https://example.com/', pathname: '/', referrer: '' },
+    document: {
+      title: '', hidden: false,
+      addEventListener() {}, removeEventListener() {}, querySelector: () => null,
+      head: { appendChild() {} },
+      createElement: () => ({ dataset: {}, addEventListener() {}, style: {} })
+    },
+    navigator: { userAgent: 'node-test' },
+    history: { pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    requestAnimationFrame: (cb) => setTimeout(() => cb(Date.now()), 0),
+    cancelAnimationFrame: () => {},
+    BroadcastChannel: undefined,
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({}) })
   }
   const originals = {}
   for (const k of Object.keys(props)) {
