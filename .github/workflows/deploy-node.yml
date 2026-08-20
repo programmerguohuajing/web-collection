@@ -33,6 +33,12 @@ jobs:
     # 若后续注册 Linux runner，可改为 [self-hosted, linux, X64] 或加自定义标签。
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 20
+    # Windows 上 PATH 里 C:\Windows\System32\bash.exe（WSL stub）会屏蔽 Git Bash，
+    # 导致 GitHub Actions 的 shell: bash 误用 WSL → "execvpe(/bin/bash) failed"。
+    # 显式指定 Git Bash 路径。Linux runner 需改为 bash 或装 pwsh。
+    defaults:
+      run:
+        shell: '"C:\Program Files\Git\bin\bash.exe" --noprofile --norc -e -o pipefail {0}'
     env:
       # 仓库 Settings → Variables 可设 DEPLOY_ROOT 覆盖；未设时脚本按 OS 选默认路径。
       DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
@@ -51,13 +57,11 @@ jobs:
           cache: pnpm
 
       - name: Install and build
-        shell: bash
         run: |
           pnpm install --frozen-lockfile
           pnpm build
 
       - name: Deploy release
-        shell: bash
         run: |
           set -Eeuo pipefail
 
