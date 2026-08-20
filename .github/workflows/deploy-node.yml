@@ -1,16 +1,16 @@
-name: Deploy Node (Linux self-hosted)
+name: Deploy Node (self-hosted)
 
-# Node + PostgreSQL 后端（apps/api）部署到 Linux self-hosted runner。
-# 与部署 Cloudflare Worker 的 deploy.yml 解耦：本工作流负责 Linux/云服务器路径，
-# deploy.yml 负责 Cloudflare 路径。两者可独立触发，实现「Cloudflare + Linux 双部署」。
-# README「GitHub Actions self-hosted Runner deployment」章节描述的即本工作流。
+# Node + PostgreSQL 后端（apps/api）部署到 self-hosted runner。
+# 跨平台：Windows runner（Git Bash）与 Linux runner 均可。与部署 Cloudflare Worker 的
+# deploy.yml 解耦，实现「Cloudflare + Linux/Windows 服务器」双部署。
+# 依赖：runner 需预装 Node.js、pnpm、pm2、curl；并准备好 $DEPLOY_ROOT/shared/.env（PG 凭据等）。
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      # 仅当 Node 后端或其依赖变化时才触发 Linux 部署，避免每次改 SDK/web 都重部 Linux。
+      # 仅当 Node 后端或其依赖变化时才触发，避免每次改 SDK/web 都重部 Linux。
       - 'apps/api/**'
       - 'packages/**'
       - 'pnpm-lock.yaml'
@@ -27,11 +27,14 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, linux, x64, web-collection]
+    # 匹配任意 self-hosted X64 runner（Windows runner 经 Git Bash 运行 bash；Linux runner 原生 bash）。
+    # 如需收紧到特定 runner，可在 runner 上加自定义标签（如 web-collection）并把此处改为 [self-hosted, web-collection]。
+    runs-on: [self-hosted, X64]
     environment: production
     timeout-minutes: 20
     env:
-      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/web-collection' }}
+      # 仓库 Settings → Variables 可设 DEPLOY_ROOT 覆盖；未设时脚本按 OS 选默认路径。
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
       HEALTH_URL: ${{ vars.HEALTH_URL || 'http://127.0.0.1:8787/health' }}
 
     steps:
@@ -47,6 +50,7 @@ jobs:
           cache: pnpm
 
       - name: Install and build
+        shell: bash
         run: |
           pnpm install --frozen-lockfile
           pnpm build
@@ -55,37 +59,52 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          # OS 感知的默认部署根目录（Windows Git Bash 用 $HOME 下目录，Linux 用 /opt）。
+          # 优先用仓库变量 DEPLOY_ROOT 覆盖。
+          if [ -z "${DEPLOY_ROOT:-}" ]; then
+            case "$(uname -s)" in
+              MINGW*|MSYS*|CYGWIN*) DEPLOY_ROOT="$HOME/web-collection" ;;
+              *) DEPLOY_ROOT="/opt/web-collection" ;;
+            esac
+          fi
+          echo "DEPLOY_ROOT=$DEPLOY_ROOT"
+
           command -v pm2 >/dev/null || { echo 'pm2 is required on the runner'; exit 1; }
-          test -f "$DEPLOY_ROOT/shared/.env" || { echo "$DEPLOY_ROOT/shared/.env is missing"; exit 1; }
+          ENV_FILE="$DEPLOY_ROOT/shared/.env"
+          test -f "$ENV_FILE" || { echo "$ENV_FILE is missing — put your PostgreSQL/env config there first"; exit 1; }
 
-          release="$DEPLOY_ROOT/releases/$GITHUB_SHA"
-          previous="$(readlink -f "$DEPLOY_ROOT/current" 2>/dev/null || true)"
-          mkdir -p "$release"
-          cp -a dist/. "$release/"
-          ln -sfn "$DEPLOY_ROOT/shared/.env" "$release/.env"
+          RELEASE="$DEPLOY_ROOT/releases/$GITHUB_SHA"
+          CURRENT="$DEPLOY_ROOT/current.txt"          # 用文件而非软链跟踪当前版本（Windows 软链需管理员）
+          PREVIOUS="$(cat "$CURRENT" 2>/dev/null || true)"
 
-          cd "$release"
+          mkdir -p "$RELEASE"
+          cp -r dist/. "$RELEASE/"
+          cp "$ENV_FILE" "$RELEASE/.env"
+
+          cd "$RELEASE"
           pnpm install --prod --frozen-lockfile
-          ln -sfn "$release" "$DEPLOY_ROOT/current"
+          echo "$RELEASE" > "$CURRENT"
 
           rollback() {
-            if [[ -n "$previous" && -d "$previous" ]]; then
-              ln -sfn "$previous" "$DEPLOY_ROOT/current"
-              cd "$previous"
+            if [ -n "$PREVIOUS" ] && [ -d "$PREVIOUS" ]; then
+              echo "$PREVIOUS" > "$CURRENT"
+              cd "$PREVIOUS"
               pm2 startOrReload ecosystem.config.cjs --env production
             fi
           }
           trap rollback ERR
 
-          cd "$DEPLOY_ROOT/current"
+          cd "$RELEASE"
           pm2 startOrReload ecosystem.config.cjs --env production
           for attempt in $(seq 1 15); do
             curl --fail --silent --show-error "$HEALTH_URL" && break
-            [[ "$attempt" -eq 15 ]] && exit 1
+            [ "$attempt" -eq 15 ] && { echo "health check failed after 15 attempts"; exit 1; }
             sleep 2
           done
           pm2 save
           trap - ERR
 
-          # 保留最近 5 个 release，更老的清理
-          ls -1dt "$DEPLOY_ROOT"/releases/* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+          # 保留最近 5 个 release，更老的清理（用 while read 替代 xargs -r，兼容 Git Bash）。
+          ls -1dt "$DEPLOY_ROOT"/releases/* 2>/dev/null | tail -n +6 | while read -r old; do rm -rf "$old"; done
+          echo "Deployed $RELEASE"
