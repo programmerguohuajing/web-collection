@@ -175,11 +175,14 @@ pm2 restart web-collection-api --update-env
 pm2 stop web-collection-api
 ```
 
-### GitHub Actions self-hosted Runner deployment
+### GitHub Actions self-hosted Runner deployment (Node + PostgreSQL)
 
-The in-repo `.github/workflows/deploy.yml` builds, tests and deploys to a Linux self-hosted Runner tagged `web-collection` whenever the `main` branch is updated.
+The repo ships **two deployment workflows** for the two backends:
 
-The runner host must have Node.js, PM2 and curl pre-installed, and a deployment directory prepared:
+- `.github/workflows/deploy.yml` — deploys the **Cloudflare Worker** (`cloudflare/worker.js` + D1) on every push to `main`.
+- `.github/workflows/deploy-node.yml` — deploys the **Node + PostgreSQL** backend (`apps/api` + pm2) to a Linux self-hosted Runner tagged `web-collection`, on `workflow_dispatch` or when `apps/api` / `packages` / lockfile change.
+
+Both can run side-by-side, enabling **dual deployment** (Cloudflare + Linux/cloud server). The runner host must have Node.js, PM2 and curl pre-installed, and a deployment directory prepared:
 
 ```bash
 sudo mkdir -p /opt/web-collection/{shared,releases}
