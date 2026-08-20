@@ -196,11 +196,11 @@ async function summary(env,url){
   // （需要 props_json 里的 url/name 做分组）仍拉行，且不再夹带无关 metric。
   const perfGuard="typeof(value) in ('integer','real') and (ifnull(metric,'')<>'page_load' or value>0)"
   const [byTypeRows,behaviorRows,eventStats,perfStats,p75Rows,apiRows,issueResult,issueStats]=await Promise.all([
-    env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values).all(),
-    env.DB.prepare(`select name,count(*) count from events ${where}${where?' and':' where'} type in ('behavior','track') group by name`).bind(...values).all(),
+    env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values).all().results,
+    env.DB.prepare(`select name,count(*) count from events ${where}${where?' and':' where'} type in ('behavior','track') group by name`).bind(...values).all().results,
     env.DB.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values).first(),
-    env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values).all(),
-    env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values).all(),
+    env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values).all().results,
+    env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values).all().results,
     env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 50000`).bind(...perfFilter.values).all(),
     env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values).all(),
     env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values).first()
