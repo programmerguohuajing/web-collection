@@ -20,7 +20,9 @@ on:
 
 concurrency:
   group: web-collection-node
-  cancel-in-progress: false
+  # true：新 push 触发的新 run 会自动取消卡在 queued/pending 的旧 run，
+  # 避免某个因 runner 会话失活而卡住的 run 长期占组、阻塞后续部署。
+  cancel-in-progress: true
 
 permissions:
   contents: read
