@@ -51,4 +51,4 @@ create table if not exists ai_kb_meta (
 );
 
 -- ADR-005：解法字段，闭环 issue 时选填；空值不进 KB
-alter table issues add column resolution_notes text;
+-- 注意：resolution_notes 列已由 0016_issue_resolution_notes.sql 添加，此处不再重复添加
