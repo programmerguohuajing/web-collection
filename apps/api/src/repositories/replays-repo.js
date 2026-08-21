@@ -67,13 +67,33 @@ export async function countReplaySessions(filters = {}) {
 export async function listReplayEventRows(idOrSessionId, limit = 500) {
   const rowLimit = safeLimit(limit, 500, 1, 100000)
   if (/^\d+$/.test(String(idOrSessionId))) {
+    // 回放列表的 replayId 是当前分段的自增 id。点击后必须先解析该分段的
+    // base_session_id，再把同一会话的首段快照和后续分段一起取回；否则点到
+    // 后续分段时只有增量事件，rrweb 无法建立页面画面，表现为“有时长但空白”。
+    const hit = await all(
+      'select session_id, base_session_id from replay_events where id = ? limit 1',
+      [idOrSessionId]
+    )
+    const row = hit[0]
+    if (!row) return []
+    if (row.base_session_id) {
+      const grouped = await all(
+        `select events_json
+         from replay_events
+         where base_session_id = ?
+         order by created_at asc, id asc
+         limit ?`,
+        [row.base_session_id, rowLimit]
+      )
+      if (grouped.length) return grouped
+    }
     return all(
       `select events_json
        from replay_events
-       where session_id = (select session_id from replay_events where id = ?)
+       where session_id = ?
        order by created_at asc, id asc
        limit ?`,
-      [idOrSessionId, rowLimit]
+      [row.session_id, rowLimit]
     )
   }
   // 优先精确匹配；若精确匹配无结果，再用 ILIKE 前缀匹配（兼容分段扩展 sessionId）。
