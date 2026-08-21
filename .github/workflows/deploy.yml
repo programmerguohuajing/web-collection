@@ -39,13 +39,13 @@ jobs:
         run: pnpm build:cloudflare
 
       - name: Apply D1 migrations
-        run: wrangler d1 migrations apply web-collection --remote
+        run: pnpm exec wrangler d1 migrations apply web-collection --remote
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy Worker
-        run: wrangler deploy
+        run: pnpm exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
