@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Replayer } from '@rrweb/replay'
+import '@rrweb/replay/dist/style.css'
 import {
   Calendar,
   Clock,
@@ -37,6 +38,9 @@ const replayViewport = ref({ width: 0, height: 0 })
 let currentReplayer = null
 let progressTimer = 0
 let playRequestId = 0
+
+// @rrweb/replay 的运行时入口未导出 ReplayerEvents，使用其稳定的公开事件名。
+const RRWEB_FULL_SNAPSHOT = 'fullsnapshot-rebuilded'
 
 const REASON_MAP = {
   error: '报错结束',
@@ -174,6 +178,32 @@ function fitReplay(width, height) {
   iframe.style.height = `${height}px`
 }
 
+function waitForInitialRender(replayer, timeout = 350) {
+  return new Promise(resolve => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      replayer.off(RRWEB_FULL_SNAPSHOT, finish)
+      window.clearTimeout(timer)
+      resolve()
+    }
+    const timer = window.setTimeout(finish, timeout)
+    // rrweb creates the iframe hidden and only reveals it after the first
+    // full snapshot. Waiting for that exact event prevents an immediate pause
+    // after the Meta/resize event from cancelling the first frame.
+    replayer.on(RRWEB_FULL_SNAPSHOT, finish)
+  })
+}
+
+function ensureReplayFrameVisible(width, height) {
+  const iframe = replayEl.value?.querySelector('iframe')
+  if (!iframe) return
+  iframe.style.display = 'inherit'
+  iframe.setAttribute('width', String(width))
+  iframe.setAttribute('height', String(height))
+}
+
 async function openReplay(item, autoPlay = false) {
   if (!item?.replayId || loadingReplayId.value === item.replayId) return
   const requestId = ++playRequestId
@@ -220,8 +250,11 @@ async function openReplay(item, autoPlay = false) {
     })
     duration.value = Math.max(validEvents[validEvents.length - 1].timestamp - validEvents[0].timestamp, 0)
     progress.value = 0
-    fitReplay(width, height)
     currentReplayer.play(0)
+    await waitForInitialRender(currentReplayer)
+    if (requestId !== playRequestId || currentReplayId.value !== String(item.replayId)) return
+    ensureReplayFrameVisible(width, height)
+    fitReplay(width, height)
     if (autoPlay) {
       isPlaying.value = true
       startProgress()
@@ -293,7 +326,9 @@ function destroyPlayer() {
   progress.value = 0
   duration.value = 0
   isPlaying.value = false
+  const player = currentReplayer
   currentReplayer = null
+  try { player?.destroy() } catch { /* 已由 Vue 清理 DOM 时无需重复销毁 */ }
   if (replayEl.value) replayEl.value.innerHTML = ''
 }
 
