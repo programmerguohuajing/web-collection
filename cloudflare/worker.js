@@ -158,7 +158,7 @@ async function adminApi(request, env, url) {
   if (/^\/api\/alert-channels\/\d+\/test$/.test(path) && request.method === 'POST') return testAlertChannel(env, Number(path.split('/').at(-2)))
   if (path === '/api/alert-deliveries' && request.method === 'GET') return alertDeliveryList(env, url)
   if (/^\/api\/alert-deliveries\/\d+\/retry$/.test(path) && request.method === 'POST') return retryAlertDelivery(env, Number(path.split('/').at(-2)))
-  if (/\/issues\/[^/]+\/resolve$/.test(path) && request.method === 'POST') { const id=decodeURIComponent(path.split('/').at(-2)); await env.DB.prepare(`update issues set status='resolved',resolved_at=? where fingerprint=?`).bind(Date.now(),id).run(); return json(await env.DB.prepare('select * from issues where fingerprint=?').bind(id).first()) }
+  if (/\/issues\/[^/]+\/resolve$/.test(path) && request.method === 'POST') { const id=decodeURIComponent(path.split('/').at(-2)); const resNote=(await request.json().catch(()=>({})))?.resolutionNotes||null; await env.DB.prepare(`update issues set status='resolved',resolved_at=?,resolution_notes=coalesce(?,resolution_notes) where fingerprint=?`).bind(Date.now(),resNote,id).run(); return json(await env.DB.prepare('select * from issues where fingerprint=?').bind(id).first()) }
   if (path === '/api/sourcemaps' && request.method === 'POST') return saveSourceMap(env, await request.json())
   if (path === '/api/funnels' && request.method === 'GET') return funnelList(env, url)
   if (path === '/api/funnels' && request.method === 'POST') return saveFunnel(env, await request.json())
