@@ -16,6 +16,7 @@ import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertD
 import { deleteDashboard, deleteFunnel, deleteInsight, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
 import { createMaskingMiddleware } from './privacy.js'
 import { buildCapabilities, NODE_CAPABILITIES } from '../../packages/deployment-capabilities.js'
+import { createAiRouter } from './ai-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -59,6 +60,9 @@ app.get('/health', (req, res) => {
 app.get('/api/capabilities', (req, res) => {
   res.json(buildCapabilities(NODE_CAPABILITIES))
 })
+
+// AI 诊断（M2）：/api/ai/*（Node + PG + pgvector，复用 packages/ai 共享逻辑）
+app.use('/api/ai', createAiRouter())
 
 // 公开埋点入口：支持单条、数组、以及 { events: [...] } 批量格式。
 app.post('/api/collect', async (req, res, next) => {
@@ -137,7 +141,7 @@ app.post('/api/sourcemaps', async (req, res, next) => {
 })
 app.post('/api/issues/:id/resolve', async (req, res, next) => {
   try {
-    res.json(await resolveIssue(req.params.id))
+    res.json(await resolveIssue(req.params.id, req.body?.resolutionNotes))
   } catch (err) {
     next(err)
   }

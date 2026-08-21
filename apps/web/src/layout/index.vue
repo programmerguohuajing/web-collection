@@ -3,17 +3,22 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
-  Histogram, House, Menu, Monitor, Operation, Setting, Stopwatch, User, Warning
+  Histogram, House, Menu, Monitor, Operation, Setting, Stopwatch, User, Warning, MagicStick
 } from '@element-plus/icons-vue'
 import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
+import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
+import AiDiagnosisDrawer from '../components/AiDiagnosisDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useFilterStore()
+const diagnosisStore = useDiagnosisStore()
 const applications = ref([])
 const menuOpen = ref(false)
+const aiDrawerOpen = ref(false)
+const aiDrawerRef = ref(null)
 
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
@@ -73,6 +78,8 @@ async function applyQuickRange(value) {
 }
 
 onMounted(async () => {
+  // ADR-006：深链 ?traceId= 写入全局诊断上下文（applyRoutePrefill 已把深链写入 filters.traceId）
+  if (route.query.traceId) diagnosisStore.setTrace(route.query.traceId)
   try {
     const [applicationData] = await Promise.all([
       api('/api/applications', { requestKey: 'layout:applications' }),
@@ -94,6 +101,11 @@ onMounted(async () => {
   <div class="app-wrapper">
     <button class="mobile-menu-btn" type="button" aria-label="打开导航" @click="toggleMenu">
       <el-icon><component :is="menuOpen ? Fold : Menu" /></el-icon>
+    </button>
+
+    <!-- ADR-006：全局 AI 诊断 FAB，任何页面常驻可见 -->
+    <button class="ai-fab" type="button" aria-label="AI 诊断" @click="aiDrawerOpen = true">
+      <el-icon><MagicStick /></el-icon>
     </button>
 
     <div v-if="menuOpen" class="mobile-menu-overlay" @click.self="closeMenu">
@@ -169,5 +181,7 @@ onMounted(async () => {
         </div>
       </main>
     </section>
+
+    <AiDiagnosisDrawer v-model="aiDrawerOpen" />
   </div>
 </template>
