@@ -195,17 +195,21 @@ async function summary(env,url){
   // 在库内仅取每个 metric 的边界行（约 2 行/metric），只有 fetch/xhr/resource 明细
   // （需要 props_json 里的 url/name 做分组）仍拉行，且不再夹带无关 metric。
   const perfGuard="typeof(value) in ('integer','real') and (ifnull(metric,'')<>'page_load' or value>0)"
+  // 防御：单个子查询失败（D1 超时/资源受限时 .all() 可能返回缺失 results 的对象）
+  // 统一兜底为空数组/null，避免 for...of 抛 "X is not iterable" 把整个接口打 500。
+  const all=(s)=>s.all().catch(()=>({results:[]})).then(r=>(r&&r.results)||[])
+  const one=(s)=>s.first().catch(()=>null)
   const [byTypeRows,behaviorRows,eventStats,perfStats,p75Rows,apiRows,issueResult,issueStats]=await Promise.all([
-    env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values).all().results,
-    env.DB.prepare(`select name,count(*) count from events ${where}${where?' and':' where'} type in ('behavior','track') group by name`).bind(...values).all().results,
-    env.DB.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values).first(),
-    env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values).all().results,
-    env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values).all().results,
-    env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 50000`).bind(...perfFilter.values).all(),
-    env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values).all(),
-    env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values).first()
+    all(env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values)),
+    all(env.DB.prepare(`select name,count(*) count from events ${where}${where?' and':' where'} type in ('behavior','track') group by name`).bind(...values)),
+    one(env.DB.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values)),
+    all(env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values)),
+    all(env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values)),
+    all(env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 1000`).bind(...perfFilter.values)),
+    all(env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values)),
+    one(env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values))
   ])
-  const issues=issueResult.results,byType={},behavior={},perf={},perfCounts={}
+  const issues=issueResult,byType={},behavior={},perf={},perfCounts={}
   for(const row of byTypeRows)byType[row.type]=Number(row.count)
   for(const row of behaviorRows)behavior[row.name ?? 'null']=Number(row.count)
   for(const row of perfStats)perfCounts[row.metric ?? 'null']=Number(row.count)
@@ -218,7 +222,7 @@ async function summary(env,url){
     else{const rows=p75ByMetric.get(metric);if(rows&&rows.length){const n=Number(rows[0].n),index=(n-1)*.75,lower=Math.floor(index),upper=Math.ceil(index),lo=rows.find(r=>Number(r.rn)===lower+1)?.value,hi=rows.find(r=>Number(r.rn)===upper+1)?.value;if(lo!=null&&hi!=null)value=lower===upper?Number(lo):Number(lo)+(Number(hi)-Number(lo))*(index-lower)}}
     if(value!==null)perf[metric]=Number(value.toFixed(metric==='cls'?4:0))
   }
-  const perfRows=apiRows.results.map(row=>({metric:row.metric,value:Number(row.value),name:row.name,props:parse(row.props_json,{})}))
+  const perfRows=apiRows.map(row=>({metric:row.metric,value:Number(row.value),name:row.name,props:parse(row.props_json,{})}))
   return json({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
 }
 
