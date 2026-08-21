@@ -289,6 +289,19 @@ button, input, textarea, select { font-family: inherit; }
 .sourcemap-form, .governance-form { gap: 14px; }
 .mobile-menu-btn { display: none; }
 
+/* ADR-006：全局 AI 诊断 FAB —— 任何页面右下角常驻可见，点击打开 AiDiagnosisDrawer。 */
+.ai-fab {
+  position: fixed; right: 22px; bottom: 22px; z-index: 1003;
+  width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 20px;
+  background: linear-gradient(135deg, #409eff, #7c5cff);
+  box-shadow: 0 6px 18px rgba(64, 158, 255, .35);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.ai-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(64, 158, 255, .45); }
+
+
 /* Traces is intentionally a workbench rather than a card grid. Keep the
    split-pane interaction but use the same light surfaces, indigo active state,
    and 14px radii as the rest of the Style B shell. */

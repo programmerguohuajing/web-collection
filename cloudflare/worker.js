@@ -1,6 +1,8 @@
 import { SourceMapConsumer } from 'source-map-js'
 import { alertContext, channelMatches, decryptSecrets, encryptSecrets, normalizeChannel, publicChannel, publishDelivery, sendChannel, verifyQStash } from '../packages/alerting.js'
 import { buildCapabilities, WORKER_CAPABILITIES } from '../packages/deployment-capabilities.js'
+import { maybeAutoDiagnose } from '../packages/ai/alert-diagnosis.js'
+import { buildDistributedTrace } from '../packages/ai/queries.js'
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
@@ -36,7 +38,7 @@ async function collect(request, env, ctx) {
   if (app?.collect_key_hash && await sha256(request.headers.get('x-app-key') || '') !== app.collect_key_hash) return new Response('bad app key', { status: 401 })
   const events = inputs.slice(0, 100).map(sanitize)
   // ponytail: acknowledge after validation; add a Queue if guaranteed ingestion is required.
-  ctx.waitUntil((async () => { for (const event of events) await record(env, event, app) })())
+  ctx.waitUntil((async () => { for (const event of events) await record(env, event, app, ctx) })())
   return json({ ok: true, accepted: events.length, received: inputs.length })
 }
 
@@ -44,6 +46,44 @@ async function collectGif(url, env) {
   const data = url.searchParams.get('data')
   if (data) await record(env, sanitize(JSON.parse(data)))
   return new Response(Uint8Array.from(atob('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=='), c => c.charCodeAt(0)), { headers: { 'content-type': 'image/gif', 'cache-control': 'no-store' } })
+}
+
+// M5：后端服务 span 上报（spans 表 + /api/spans），支持跨服务诊断
+async function recordSpans(env, payload) {
+  const raw = Array.isArray(payload) ? payload : Array.isArray(payload?.spans) ? payload.spans : payload && typeof payload === 'object' ? [payload] : []
+  if (!raw.length) return json({ ok: true, count: 0, received: 0, rejected: 0 })
+  const now = Date.now()
+  const accepted = raw.slice(0, 1000).map((s, i) => normalizeBackendSpan(s, now, i)).filter(Boolean)
+  for (let offset = 0; offset < accepted.length; offset += 100) {
+    const batch = accepted.slice(offset, offset + 100)
+    const ph = batch.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',')
+    const vals = batch.flatMap(sp => [sp.id, sp.traceId, sp.spanId, sp.parentSpanId, sp.serviceName, sp.operationName, sp.kind, sp.startTs, sp.duration, sp.statusCode, sp.statusMessage, JSON.stringify(sp.attributes), now])
+    await storageWrite(env, `insert into spans (id,trace_id,span_id,parent_span_id,service_name,operation_name,kind,start_ts,duration,status_code,status_message,attributes_json,ts) values ${ph} on conflict(id) do update set duration=excluded.duration,status_code=excluded.status_code,status_message=excluded.status_message,attributes_json=excluded.attributes_json`, vals)
+  }
+  return json({ ok: true, count: accepted.length, received: raw.length, rejected: raw.length - accepted.length })
+}
+
+function normalizeBackendSpan(span = {}, now = Date.now(), index = 0) {
+  if (!span || typeof span !== 'object') return null
+  const traceId = clip(span.traceId || span.trace_id || '', 64)
+  if (!traceId) return null
+  const spanId = clip(span.spanId || span.span_id || `ingest-${now}-${index}`, 32)
+  const parentSpanId = clip(span.parentSpanId || span.parent_span_id || '', 32)
+  let attributes = span.attributes || span.attributes_json
+  attributes = typeof attributes === 'string' ? parse(attributes, {}) : attributes
+  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) attributes = {}
+  return {
+    id: clip(span.id || `${traceId}-${spanId}-${now}-${index}`, 64),
+    traceId, spanId, parentSpanId,
+    serviceName: clip(span.serviceName || span.service_name || 'unknown', 128),
+    operationName: clip(span.operationName || span.operation_name || 'span', 256),
+    kind: clip(span.kind || 'INTERNAL', 16),
+    startTs: Number(span.startTime ?? span.start_ts ?? now) || now,
+    duration: Math.max(0, Number(span.duration ?? 0) || 0),
+    statusCode: clip(span.status?.code || span.status_code || 'UNSET', 16),
+    statusMessage: clip(span.status?.message || span.status_message || '', 2000),
+    attributes
+  }
 }
 
 async function resolveReplayEvents(event) {
@@ -74,7 +114,7 @@ async function resolveReplayEvents(event) {
   return []
 }
 
-async function record(env, event, application) {
+async function record(env, event, application, ctx) {
   const now = Date.now()
   if (event.type === 'error' && event.props?.name) event.name = clip(event.props.name, 160)
   await storageWrite(env, `insert into applications (app_id,name,enabled,sample_rate,replay_sample_rate,created_at,updated_at) values (?,?,1,1,1,?,?) on conflict(app_id) do nothing`, [event.appId, event.appId, now, now])
@@ -92,7 +132,7 @@ async function record(env, event, application) {
   const storedProps = event.parentSpanId ? { ...(event.props || {}), __parentSpanId: event.parentSpanId } : event.props
   await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json, app_version, product_id, event_id, request_id, occurred_at, received_at, schema_version, batch_id, retry_count, contract_status, contract_errors_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(storedProps||null),JSON.stringify(event.breadcrumbs||null), event.appVersion || event.release, event.productId || null, event.eventId || id, event.requestId || null, event.occurredAt || event.ts, now, event.schemaVersion || '1', event.batchId || null, event.retryCount || 0, 'accepted', null])
   const issue = event.type === 'error' ? await upsertIssue(env, event) : null
-  if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event, issue)
+  if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event, issue, ctx)
   return true
 }
 
@@ -122,6 +162,7 @@ export function issueKey(event) { const source=['FetchError','ResourceError','Ss
 async function adminApi(request, env, url) {
   const path = url.pathname
   if (path === '/api/capabilities') return json(buildCapabilities(WORKER_CAPABILITIES))
+  if (path === '/api/spans' && request.method === 'POST') return recordSpans(env, await request.json())
   if (path === '/api/internal/alerts/deliver' && request.method === 'POST') return consumeAlertDelivery(request, env)
   if (path === '/api/events') return pagedEvents(env, url)
   if (path === '/api/logs') return pagedEvents(env, url, 'log')
@@ -263,81 +304,8 @@ async function replayEvents(env,id){
 }
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
 async function traceEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where trace_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
-async function distributedTrace(env,id){if(!id?.trim())return json({root:null,nodes:[],edges:[],criticalPath:[],errorSpans:[]});const rows=(await env.DB.prepare('select * from events where trace_id=? order by ts').bind(id).all()).results;return json(buildDistributedTrace(rows))}
-export function buildDistributedTrace(events = []) {
-  const spanMap = new Map()
-  for (const [index, event] of events.entries()) {
-    const attributes = parse(event.props_json, {}) || {}
-    const span = {
-      spanId: String(event.span_id || '').trim() || `event-${event.id || index}`,
-      parentSpanId: String(event.parent_span_id || attributes.__parentSpanId || '').trim(),
-      serviceName: 'frontend',
-      operationName: event.metric || event.name || event.type || 'event',
-      kind: 'CLIENT',
-      startTs: Number(event.ts) || 0,
-      duration: event.type === 'perf' ? Number(event.value) || 0 : 0,
-      statusCode: event.type === 'error' || attributes.failed === true || attributes.failed === 'true' || Number(attributes.status) >= 400 ? 'ERROR' : 'OK',
-      attributes
-    }
-    const existing = spanMap.get(span.spanId)
-    spanMap.set(span.spanId, existing ? {
-      ...existing,
-      parentSpanId: existing.parentSpanId || span.parentSpanId,
-      startTs: Math.min(existing.startTs || Infinity, span.startTs || Infinity),
-      duration: Math.max(existing.duration, span.duration),
-      statusCode: traceSpanHasError(existing) || traceSpanHasError(span) ? 'ERROR' : existing.statusCode,
-      attributes: { ...existing.attributes, ...span.attributes }
-    } : span)
-  }
-
-  const ids = new Set(spanMap.keys())
-  const spans = [...spanMap.values()]
-  const nodes = spans.map(span => ({
-    id: span.spanId,
-    name: span.operationName,
-    service: span.serviceName,
-    kind: span.kind,
-    startTs: Number.isFinite(span.startTs) ? span.startTs : 0,
-    duration: span.duration,
-    status: span.statusCode,
-    hasError: traceSpanHasError(span)
-  }))
-  const edges = spans
-    .filter(span => span.parentSpanId && span.parentSpanId !== span.spanId && ids.has(span.parentSpanId))
-    .map(span => ({ source: span.parentSpanId, target: span.spanId }))
-  const errorSpans = spans.filter(traceSpanHasError).map(span => span.spanId)
-  const roots = nodes.filter(node => !edges.some(edge => edge.target === node.id))
-  return { root: roots[0] || null, nodes, edges, criticalPath: traceCriticalPath(roots, spanMap), errorSpans }
-}
-
-function traceSpanHasError(span) {
-  if (String(span.statusCode || '').toUpperCase() === 'ERROR') return true
-  return Object.values(span.attributes || {}).some(value => String(value).toLowerCase().includes('error'))
-}
-
-function traceCriticalPath(roots, spanMap) {
-  const childrenByParent = new Map()
-  for (const span of spanMap.values()) {
-    if (!span.parentSpanId) continue
-    const children = childrenByParent.get(span.parentSpanId) || []
-    children.push(span)
-    childrenByParent.set(span.parentSpanId, children)
-  }
-  let longest = { path: [], duration: 0 }
-  function visit(spanId, path, duration, visited) {
-    if (visited.has(spanId)) return
-    visited.add(spanId)
-    path.push(spanId)
-    const total = duration + (spanMap.get(spanId)?.duration || 0)
-    const children = childrenByParent.get(spanId) || []
-    if (!children.length && (total > longest.duration || (total === longest.duration && path.length > longest.path.length))) longest = { path: [...path], duration: total }
-    for (const child of children) visit(child.spanId, path, total, visited)
-    path.pop()
-    visited.delete(spanId)
-  }
-  for (const root of roots) visit(root.id, [], 0, new Set())
-  return longest.path
-}
+async function distributedTrace(env,id){if(!id?.trim())return json({root:null,nodes:[],edges:[],criticalPath:[],errorSpans:[]});const[events,backendSpans]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts').bind(id).all(),env.DB.prepare('select * from spans where trace_id=? order by start_ts').bind(id).all().catch(()=>({results:[]}))]);return json(buildDistributedTrace(events.results||[],backendSpans.results||[]))}
+export { buildDistributedTrace }
 async function sessions(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["session_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select session_id,max(user_id) user_id,max(user_name) user_name,max(device_id) device_id,min(ts) started_at,max(ts) ended_at,count(*) event_count,sum(case when type='error' then 1 else 0 end) error_count,group_concat(distinct path) paths from events ${where} group by session_id order by ended_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by session_id)`).bind(...values).first()]),replayIds=(await env.DB.prepare('select distinct session_id from replays').all()).results;return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at,paths:(r.paths||'').split(',').filter(Boolean),replaySessionId:replayIds.find(x=>x.session_id.startsWith(r.session_id))?.session_id})),total:Number(total.count),page,pageSize})}
 async function sessionEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where session_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where session_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
 async function paths(env,url){const {where,values}=filters(url,'behavior',[`name in ('pv','pushState','replaceState','popstate','hashchange')`]);const rows=(await env.DB.prepare(`select session_id,path,ts,user_id,user_name from events ${where} order by session_id,ts limit 20000`).bind(...values).all()).results;const grouped=group(rows,r=>r.session_id),counts={};for(const events of Object.values(grouped)){const value=events.map(e=>e.path).filter((v,i,a)=>v&&v!==a[i-1]).slice(0,8).join(' → ');if(value){const existing=counts[value]||{path:value,count:0,users:[]};existing.count++;const userId=events[0]?.user_id?.trim(),userName=events[0]?.user_name?.trim();if(userId&&!existing.users.find(u=>u.id===userId))existing.users.push({id:userId,name:userName||userId});counts[value]=existing}}return json(Object.entries(counts).map(([,v])=>({path:v.path,count:v.count,users:v.users})).sort((a,b)=>b.count-a.count).slice(0,50))}
@@ -358,7 +326,7 @@ async function resolveSourceMap(env,event){const match=[...String(event.stack||'
 async function saveFunnel(env,input){const steps=strings(input.steps).slice(0,10);if(!input.name||steps.length<2)throw new Error('漏斗名称和至少两个步骤不能为空');const now=Date.now();const windowMs=input.windowMs>0?Math.floor(Number(input.windowMs)):null;const result=await env.DB.prepare('insert into funnel_definitions(name,app_id,steps_json,window_ms,created_at,updated_at) values(?,?,?,?,?,?)').bind(clip(input.name,128),input.appId||null,JSON.stringify(steps),windowMs,now,now).run();return json({id:result.meta.last_row_id})}
 async function runFunnel(env,id,url){const def=await env.DB.prepare('select * from funnel_definitions where id=?').bind(id).first();if(!def)throw new Error('漏斗不存在');const scoped=new URL(url);if(def.app_id&&!scoped.searchParams.get('appId'))scoped.searchParams.set('appId',def.app_id);const steps=parse(def.steps_json,[]),windowMs=def.window_ms?Number(def.window_ms):null,{where,values}=filters(scoped);const rows=(await env.DB.prepare(`select session_id,coalesce(nullif(user_id,''),device_id,session_id) actor,name,type,ts,release_name,case when user_agent like '%Edg/%' then 'Edge' when user_agent like '%Chrome/%' then 'Chrome' when user_agent like '%Firefox/%' then 'Firefox' when user_agent like '%Safari/%' then 'Safari' else 'Other' end browser,case when user_agent like '%Mobile%' then 'Mobile' else 'Desktop' end device from events ${where} ${where?'and':'where'} (name in (${steps.map(()=>'?').join(',')}) or type='error') order by ts limit 50000`).bind(...values,...steps).all()).results,actors=Object.values(group(rows,r=>r.actor)),matched=actors.map(a=>matchSteps(a,steps,windowMs)),counts=steps.map((_,i)=>matched.filter(m=>m[i]!=null).length),ttcByStep=steps.map(()=>[]);matched.forEach(m=>{for(let i=1;i<m.length;i++)if(m[i]!=null&&m[i-1]!=null)ttcByStep[i].push(m[i]-m[i-1])});const median=v=>{if(!v.length)return null;const s=[...v].sort((a,b)=>a-b),m=s.length>>1;return s.length%2?s[m]:Math.round((s[m-1]+s[m])/2)};const p90=v=>{if(!v.length)return null;const s=[...v].sort((a,b)=>a-b);return s[Math.min(s.length-1,Math.max(0,Math.ceil(0.9*s.length)-1))]};const replayIds=(await env.DB.prepare('select distinct session_id, base_session_id from replays').all()).results;const lostSessions=actors.filter(a=>reaches(a,steps,0,windowMs)&&!reaches(a,steps,steps.length-1,windowMs)).slice(0,100).map(a=>({sessionId:a[0].session_id,actor:a[0].actor,lastEvent:a.filter(x=>x.type!=='error').at(-1)?.name,errors:a.filter(x=>x.type==='error').length,replaySessionId:replayIds.find(x=>x.base_session_id===a[0].session_id)?.session_id}));return json({definition:def,steps:steps.map((step,i)=>({step,count:counts[i],rate:counts[0]?Number((counts[i]/counts[0]*100).toFixed(2)):0,stepRate:i?counts[i-1]?Number((counts[i]/counts[i-1]*100).toFixed(2)):0:100,lost:i?counts[i-1]-counts[i]:0,timeToConvert:i?median(ttcByStep[i]):null,timeToConvertP90:i?p90(ttcByStep[i]):null})),lostSessions,dimensions:['release_name','browser','device'].map(field=>({field,items:dimensions(rows,steps,field,windowMs)})),trend:dimensions(rows,steps,'day',windowMs),windowMs})}
 async function saveDashboard(env,input){if(!input.name)throw new Error('仪表盘名称不能为空');const now=Date.now();const widgets=Array.isArray(input.widgets)?input.widgets.slice(0,12).map(item=>{if(typeof item==='string')return item.trim().slice(0,64);const type=item&&item.type==='funnel'?'funnel':item&&item.type==='insight'?'insight':'';const id=Number(item&&item.id);return type&&Number.isInteger(id)&&id>0?{type,id}:null}).filter(Boolean):[];const result=await env.DB.prepare('insert into dashboards(name,widgets_json,created_at,updated_at) values(?,?,?,?)').bind(clip(input.name,128),JSON.stringify(widgets),now,now).run();return json({id:result.meta.last_row_id})}
-async function alert(env,event,issue){
+async function alert(env,event,issue,ctx){
   const config=(await settings(env)).alerts
   if(!config.enabled)return
   const metric=event.type==='log'?'log_error':event.type==='error'&&issue?.status==='regression'?'regression':event.type==='error'?'error':String(event.metric||'').toLowerCase(),threshold=Number(config[metric])
@@ -371,6 +339,15 @@ async function alert(env,event,issue){
   const now=Date.now(),level=metric==='regression'?'critical':event.type==='perf'?'warning':'error'
   const result=await env.DB.prepare('insert into alert_history(app_id,metric,fingerprint,level,value,message,threshold,notified,context_json,created_at) values(?,?,?,?,?,?,?,0,?,?)').bind(event.appId,metric,fingerprint,level,event.value||1,alertMessage(event,metric,threshold),threshold,JSON.stringify(alertContext(event,event.type==='perf'?threshold:undefined)),now).run()
   await createAlertDeliveries(env,Number(result.meta.last_row_id))
+  // M5：告警触发自动诊断（error/regression 时异步补充分析，写回 alert_history.context_json.diagnosis；静默降级不影响告警主流程）
+  if((metric==='error'||metric==='regression')&&ctx)ctx.waitUntil(maybeAutoDiagnose({
+    env,
+    db:{ prepare: sql => env.DB.prepare(sql) },
+    alertId:Number(result.meta.last_row_id),
+    appId:event.appId,
+    issueId:issue?.fingerprint,
+    traceId:event.traceId
+  }))
 }
 export function alertMessage(event,metric,threshold){const page=event.path||event.url||'-';if(event.type==='perf'){const unit=metric==='cls'?'':'ms';return`[Web Collection] ${event.appId} ${metric.toUpperCase()} ${event.value}${unit}，超过阈值 ${threshold}${unit}，页面 ${page}`}return`[Web Collection] ${event.appId} ${event.name||metric}: ${event.message||'未知错误'}，页面 ${page}，版本 ${event.release||'-'}，Trace ${event.traceId||'-'}`}
 

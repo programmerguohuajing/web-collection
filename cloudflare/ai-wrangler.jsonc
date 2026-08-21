@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "web-collection-ai",
+  "main": "ai-worker.js",
+  "compatibility_date": "2026-07-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "triggers": { "crons": ["17 4 * * *"] },
+  "observability": { "enabled": true },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "web-collection",
+      "database_id": "eddcfc58-339c-480b-98c1-2d0d264450ec"
+    }
+  ],
+
+  "vectorize": [
+    { "binding": "AI_KB", "index_name": "ai-kb" }
+  ],
+
+  "ai": { "binding": "AI" },
+
+  "vars": {
+    "MODEL_ORDER": "local,domestic,overseas"
+  }
+
+  // Secrets 不在此配置：部署时用 `wrangler secret put` 设置以下键（--config cloudflare/ai-wrangler.jsonc）：
+  //   DOMESTIC_API_KEY / OVERSEAS_API_KEY（模型供应商 key）
+  //   LOCAL_MODEL_BASE_URL / LOCAL_MODEL_NAME / LOCAL_MODEL_API_KEY（本地 Ollama，可选）
+  //   AI_API_KEY（/api/ai/* 开放 API 鉴权，可选）
+}

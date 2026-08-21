@@ -114,11 +114,11 @@ export async function getSummary(filters = {}) {
  * @param {string} id - issue 指纹
  * @returns {Promise<object|null>} 更新后的 issue 对象
  */
-export async function resolveIssue(id) {
+export async function resolveIssue(id, resolutionNotes) {
   await initPromise
   const issue = await getIssueRow(id)
   if (!issue) return null
-  await resolveIssueRow(id, Date.now())
+  await resolveIssueRow(id, Date.now(), resolutionNotes)
   return mapIssue(await getIssueRow(id))
 }
 

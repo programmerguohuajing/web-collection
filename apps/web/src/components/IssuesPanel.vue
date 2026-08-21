@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import OverflowTip from './OverflowTip.vue'
+import { useDiagnosisStore } from '../stores/diagnosis.js'
 
 defineProps({
   issues: { type: Array, default: () => [] },
@@ -15,6 +16,8 @@ const detailVisible = ref(false)
 
 function showDetail(row) {
   selected.value = row
+  // ADR-006：查看 issue 详情时写入全局诊断上下文（AI 诊断抽屉可感知）
+  if (row?.fingerprint) useDiagnosisStore().setIssue(row.fingerprint)
   detailVisible.value = true
 }
 

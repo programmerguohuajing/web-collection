@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Download, RefreshRight, Search, Select, Share } from '@element-plus/icons-vue'
 import { api, normalizePageResponse, queryFromFilters, pageLoading, refreshVersion, filters } from '../../../dashboard.js'
+import { useDiagnosisStore } from '../../../stores/diagnosis.js'
 import { formatDuration } from '../../../utils/format.js'
 import TraceTopology from '../../../components/TraceTopology.vue'
 import TraceWaterfall from '../../../components/TraceWaterfall.vue'
@@ -105,6 +106,8 @@ async function selectTrace(row) {
   const trace = normalizeTrace(row)
   if (!trace.trace_id.trim()) return
   active.value = trace
+  // ADR-006：选中 trace 写入全局诊断上下文（AI 诊断抽屉可感知）
+  useDiagnosisStore().setTrace(trace.trace_id)
   tracePickerOpen.value = false
   closeDetail()
 }

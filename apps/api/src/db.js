@@ -388,6 +388,63 @@ export async function ensureSchema() {
   await run(`create index if not exists idx_alert_history_status_metric on alert_history(status, metric, created_at desc)`)
   await run(`create index if not exists idx_alert_deliveries_alert on alert_deliveries(alert_id, created_at)`)
   await run(`create index if not exists idx_alert_deliveries_pending on alert_deliveries(status, updated_at)`)
+
+  // ==================== AI 诊断（M1 知识库底座，双后端对齐） ====================
+  // ADR-005：解法字段，闭环 issue 时选填；空值不进 KB
+  await run(`alter table issues add column if not exists resolution_notes text`)
+
+  // 诊断记录（用于缓存/评估/反馈关联）
+  await run(`create table if not exists ai_diagnoses (
+    id varchar(64) primary key,
+    ref_type varchar(16) not null,
+    ref_id text not null,
+    app_id varchar(64),
+    request_summary jsonb,
+    response_json jsonb,
+    model varchar(128),
+    confidence double precision,
+    degraded integer not null default 0,
+    created_at bigint not null
+  )`)
+  await run(`create index if not exists idx_diag_ref on ai_diagnoses(ref_type, ref_id)`)
+
+  // 用户反馈
+  await run(`create table if not exists ai_feedback (
+    id varchar(64) primary key,
+    diagnosis_id varchar(64),
+    rating varchar(8),
+    correction text,
+    created_at bigint not null
+  )`)
+
+  // RAG 原文 + 向量（pgvector 可用时含 embedding 列；不可用则降级为关键词检索的表）
+  const vectorExt = await first(`select name from pg_available_extensions where name = 'vector'`)
+  const hasVector = Boolean(vectorExt && vectorExt.name)
+  await run(`create table if not exists ai_kb_chunks (
+    id varchar(128) primary key,
+    source_type varchar(16),
+    source_id text,
+    app_id varchar(64),
+    chunk_idx integer,
+    text text,
+    metadata_json jsonb,
+    updated_at bigint
+    ${hasVector ? `, embedding vector(1024)` : ''}
+  )`)
+  await run(`create index if not exists idx_kb_src on ai_kb_chunks(source_type, source_id)`)
+  if (hasVector) {
+    await run(`create index if not exists idx_kb_embedding on ai_kb_chunks using hnsw (embedding vector_cosine_ops)`)
+  }
+
+  // 摄取元数据（增量判定）
+  await run(`create table if not exists ai_kb_meta (
+    id varchar(128) primary key,
+    source_type varchar(16),
+    source_id text,
+    content_hash text,
+    version varchar(64),
+    updated_at bigint
+  )`)
 }
 
 /**
@@ -421,6 +478,15 @@ export async function scalar(sql, params = []) {
   const rows = await all(sql, params)
   const row = rows[0] || {}
   return Number(row.count ?? row.total ?? 0)
+}
+
+/**
+ * 执行查询，返回第一行（语义对齐 Cloudflare D1 的 .first()）。
+ * @returns {Promise<object|null>}
+ */
+export async function first(sql, params = []) {
+  const rows = await all(sql, params)
+  return rows[0] ?? null
 }
 
 /** 创建 PostgreSQL 连接池，支持 DATABASE_URL / PG_URL 或分项环境变量配置 */
