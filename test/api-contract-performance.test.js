@@ -5,7 +5,7 @@ import { all, run } from '../apps/api/src/db.js'
 import { listApplications, listAlerts, listReleases, updateAlertStatus } from '../apps/api/src/governance.js'
 import { buildDistributedTrace, getDistributedTrace, getSessions, getTrace, recordSpans, whereFor } from '../apps/api/src/services/analytics-service.js'
 import { initDatabase } from '../apps/api/src/store.js'
-import { countReplaySessions, listReplaySessions } from '../apps/api/src/repositories/replays-repo.js'
+import { countReplaySessions, listReplayEventRows, listReplaySessions } from '../apps/api/src/repositories/replays-repo.js'
 
 await initDatabase()
 
@@ -80,6 +80,41 @@ test('replay list groups segments and preserves latest non-empty metadata', asyn
     assert.equal(Number(rows[0].firstSeen), first)
     assert.equal(Number(rows[0].lastSeen), first + 1000)
     assert.equal(await countReplaySessions({ appId }), 1)
+  } finally {
+    await run('delete from replay_events where app_id=?', [appId])
+  }
+})
+
+test('numeric replay id loads the base session snapshot across segments', async () => {
+  const suffix = randomUUID().replaceAll('-', '')
+  const appId = `replay-detail-${suffix}`
+  const baseSessionId = `base-${suffix}`
+  const firstSessionId = `segment-1-${suffix}`
+  const secondSessionId = `segment-2-${suffix}`
+  const first = Date.now() - 1000
+  let latestId
+  try {
+    await run(`insert into replay_events (app_id, session_id, base_session_id, created_at, events_json)
+      values (?, ?, ?, ?, ?::jsonb)`, [
+      appId,
+      firstSessionId,
+      baseSessionId,
+      first,
+      JSON.stringify([{ type: 2, timestamp: first, data: { width: 800, height: 600 } }])
+    ])
+    const inserted = await run(`insert into replay_events (app_id, session_id, base_session_id, created_at, events_json)
+      values (?, ?, ?, ?, ?::jsonb) returning id`, [
+      appId,
+      secondSessionId,
+      baseSessionId,
+      first + 1000,
+      JSON.stringify([{ type: 3, timestamp: first + 1000, data: { source: 2 } }])
+    ])
+    latestId = Number(inserted.rows[0].id)
+
+    const rows = await listReplayEventRows(String(latestId))
+    assert.equal(rows.length, 2)
+    assert.deepEqual(rows.flatMap(row => row.events_json).map(event => event.type), [2, 3])
   } finally {
     await run('delete from replay_events where app_id=?', [appId])
   }
