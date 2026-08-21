@@ -77,8 +77,8 @@ function addLike(parts, params, field, value) {
  * @param {string} fingerprint - issue 指纹
  * @param {number} resolvedAt - 解决时间戳
  */
-export async function resolveIssueRow(fingerprint, resolvedAt) {
-  await run('update issues set status = ?, resolved_at = ? where fingerprint = ?', ['resolved', resolvedAt, fingerprint])
+export async function resolveIssueRow(fingerprint, resolvedAt, resolutionNotes) {
+  await run('update issues set status = ?, resolved_at = ?, resolution_notes = coalesce(?, resolution_notes) where fingerprint = ?', ['resolved', resolvedAt, resolutionNotes ?? null, fingerprint])
 }
 
 /**
