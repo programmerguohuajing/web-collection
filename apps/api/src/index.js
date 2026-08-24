@@ -15,7 +15,7 @@ import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease,
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
 import { deleteDashboard, deleteFunnel, deleteInsight, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
 import { createMaskingMiddleware } from './privacy.js'
-import { buildCapabilities, NODE_CAPABILITIES } from '../../packages/deployment-capabilities.js'
+import { buildCapabilities, NODE_CAPABILITIES } from '../../../packages/deployment-capabilities.js'
 import { createAiRouter } from './ai-service.js'
 
 /** 服务监听端口 */

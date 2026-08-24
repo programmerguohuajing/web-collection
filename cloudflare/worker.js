@@ -15,6 +15,7 @@ export default {
       if (url.pathname === '/health') response = json({ ok: true, runtime: 'cloudflare-workers' })
       else if (url.pathname === '/api/collect' && request.method === 'POST') response = await collect(request, env, ctx)
       else if (url.pathname === '/api/collect.gif') response = await collectGif(url, env)
+      else if (url.pathname.startsWith('/api/ai/')) response = await proxyAi(request, env, url)
       else if (url.pathname.startsWith('/api/')) response = await adminApi(request, env, url)
       else if (url.pathname.startsWith('/sdk/')) response = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request))
       else response = await env.ASSETS.fetch(request)
@@ -158,6 +159,30 @@ async function upsertIssue(env, event) {
 }
 
 export function issueKey(event) { const source=['FetchError','ResourceError','SseError','WebSocketError'].includes(event.name)?event.props?.source:'';return`${event.appId}|${event.name}|${source||String(event.stack||event.message).split('\n').slice(0,3).join('\n')}` }
+
+// 将前端 /api/ai/* 请求代理到独立 ai-worker（web-collection-ai）。
+// ai-worker 提供 D1 + Vectorize(ai-kb) + Workers AI 的诊断能力，隔离 LLM/向量故障对采集热路径的影响。
+// ai-worker 鉴权是「同源免 key，开放调用需 x-ai-key」；主 worker 服务端转发时：
+//   - 去掉 host，避免目标 URL 被误判；
+//   - 去掉 origin/referer，避免 ai-worker 把主 worker 域名当作调用方来源导致 401；
+//   - 若主 worker 配置了 AI_API_KEY，透传为 x-ai-key 走开放 API 鉴权路径。
+async function proxyAi(request, env, url) {
+  const workerUrl = env.AI_WORKER_URL
+  if (!workerUrl) return json({ error: 'AI 诊断未配置（主 worker 缺少 AI_WORKER_URL）' }, 503)
+  const target = new URL(url.pathname + url.search, String(workerUrl).replace(/\/?$/, '/'))
+  const headers = new Headers(request.headers)
+  headers.delete('host')
+  headers.delete('origin')
+  headers.delete('referer')
+  if (env.AI_API_KEY) headers.set('x-ai-key', env.AI_API_KEY)
+  const res = await fetch(target, {
+    method: request.method,
+    headers,
+    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer(),
+    redirect: 'manual'
+  })
+  return new Response(res.body, res)
+}
 
 async function adminApi(request, env, url) {
   const path = url.pathname
@@ -528,7 +553,7 @@ function group(items,key){return items.reduce((out,item)=>((out[key(item)]||=[])
 function cleanObject(value){if(!value||typeof value!=='object')return null;return Object.fromEntries(Object.entries(value).slice(0,50).map(([k,v])=>[clip(k,80),redact(clip(typeof v==='object'?JSON.stringify(v):v,1000))]))}
 function cleanUrl(value){try{const u=new URL(String(value));for(const key of ['token','password','key','secret','authorization'])u.searchParams.delete(key);return clip(u.toString(),2048)}catch{return clip(value||'',2048)}}
 function redact(v){return String(v).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi,'$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g,'***$1')}
-function cors(response,request){const r=new Response(response.body,response),origin=request.headers.get('origin');r.headers.set('access-control-allow-origin',origin||'*');if(origin){r.headers.set('access-control-allow-credentials','true');r.headers.append('vary','Origin')}r.headers.set('access-control-allow-methods','GET,POST,PUT,DELETE,OPTIONS');r.headers.set('access-control-allow-headers','content-type,x-app-key,traceparent');return r}
+function cors(response,request){const r=new Response(response.body,response),origin=request.headers.get('origin');r.headers.set('access-control-allow-origin',origin||'*');if(origin){r.headers.set('access-control-allow-credentials','true');r.headers.append('vary','Origin')}r.headers.set('access-control-allow-methods','GET,POST,PUT,DELETE,OPTIONS');r.headers.set('access-control-allow-headers','content-type,x-app-key,x-ai-key,traceparent');return r}
 function parse(value,fallback){try{return typeof value==='string'?JSON.parse(value):value??fallback}catch{return fallback}}
 function strings(v){return Array.isArray(v)?v.map(String).map(s=>s.trim()).filter(Boolean):[]}
 function clip(v,n){return String(v??'').slice(0,n)} function rate(v){return Math.max(0,Math.min(1,Number(v??1)))} function origin(v){try{return new URL(v).origin}catch{return''}} function maskPhone(v=''){return String(v).replace(/^(\d{3})\d{4}(\d{4})$/,'$1****$2')} function random(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/[+/=]/g,'').slice(0,n*2)} async function sha256(v){return[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))].map(x=>x.toString(16).padStart(2,'0')).join('')}
