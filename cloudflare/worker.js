@@ -143,8 +143,10 @@ async function storageWrite(env, sql, values) {
     return await run()
   } catch (error) {
     if (!/maximum DB size|SQLITE_FULL|database or disk is full/i.test(String(error?.message || error))) throw error
-    const replayCleanup = await env.DB.prepare('delete from replays where id in (select id from replays order by created_at asc limit 100)').run()
-    if (!Number(replayCleanup.meta.changes)) await env.DB.prepare(`delete from events where id in (select id from events order by case when type='error' then 1 else 0 end,ts asc limit 1000)`).run()
+    // 库满兜底只清理 events（错误事件优先保留），不再删回放：回放不可再生，
+    // 被批量清走会造成「列表有会话、点开无数据」；events 可随采样率重新积累。
+    const freed = await env.DB.prepare(`delete from events where id in (select id from events order by case when type='error' then 1 else 0 end,ts asc limit 1000)`).run()
+    if (!Number(freed.meta.changes)) throw error
     return run()
   }
 }

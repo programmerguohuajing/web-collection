@@ -1,16 +1,25 @@
 <script setup>
 import { nextTick, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import ReplayPanel from '../../../components/ReplayPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
 import { getReplay, replayPager, replays, refreshAll, setPage, setPageSize, tableLoading } from '../../../dashboard.js'
 const route = useRoute()
+const router = useRouter()
 const panel = ref(null)
 const filterOpen = ref(false)
 
 async function searchReplays() {
   await refreshAll()
   filterOpen.value = false
+}
+
+// 深链 replayId 指向的会话已无回放数据时，清掉 URL 参数避免刷新后再次命中死链接。
+function onReplayNotFound() {
+  if (route.query.replayId == null) return
+  const query = { ...route.query }
+  delete query.replayId
+  router.replace({ path: route.path, query })
 }
 
 watch(() => route.query.replayId, async value => {
@@ -32,6 +41,7 @@ watch(() => route.query.replayId, async value => {
     :page-size="replayPager.pageSize"
     @filter="filterOpen = true"
     @refresh="refreshAll"
+    @replay-not-found="onReplayNotFound"
     @page-change="setPage('replays', $event)"
     @size-change="setPageSize('replays', $event)"
   />

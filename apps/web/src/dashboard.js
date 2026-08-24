@@ -288,13 +288,31 @@ export async function uploadSourceMap(payload) {
 
 export async function getReplay(replayKey) {
   const cached = replayCache.get(replayKey)
-  if (cached?.expiresAt > Date.now()) return cached.promise
-  const promise = api(`/api/replays/${encodeURIComponent(replayKey)}`).catch(error => {
+  if (cached?.expiresAt > Date.now()) {
+    // 并发调用共享同一个 inflight promise（避免同 key 重复请求）；
+    // 空结果在解析后从缓存移除，后续再次点击会重新请求而不是 30s 内都拿到空数组。
+    return cached.promise.then(value => {
+      if (!hasReplayEvents(value)) replayCache.delete(replayKey)
+      return value
+    })
+  }
+  const promise = api(`/api/replays/${encodeURIComponent(replayKey)}`).then(value => {
+    // 空事件（会话已被清理 / 深链无效）不缓存，避免短时间内重试也返回空
+    if (!hasReplayEvents(value)) replayCache.delete(replayKey)
+    return value
+  }, error => {
     replayCache.delete(replayKey)
     throw error
   })
   replayCache.set(replayKey, { promise, expiresAt: Date.now() + 30000 })
   return promise
+}
+
+/** 回放详情是否包含可用事件（数组本身或 {events|data:[...]} 信封） */
+function hasReplayEvents(payload) {
+  if (Array.isArray(payload)) return payload.length > 0
+  return Array.isArray(payload?.events) ? payload.events.length > 0
+    : Array.isArray(payload?.data) ? payload.data.length > 0 : false
 }
 
 export async function loadGovernance({ appPage = 1, appPageSize = 10 } = {}) {
