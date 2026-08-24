@@ -12,7 +12,17 @@ export default defineConfig({
   server: {
     host: true,
     proxy: {
-      '/api': apiProxy
+      '/api': {
+        target: apiProxy,
+        changeOrigin: true,
+        // 与生产主 worker 的 proxyAi 行为一致：剥离浏览器来源头，
+        // 使 ai-worker 的 settings 同源守卫在本地开发也能通过
+        configure(proxy) {
+          proxy.on('proxyReq', proxyReq => {
+            try { proxyReq.removeHeader('origin'); proxyReq.removeHeader('referer') } catch {}
+          })
+        }
+      }
     }
   }
 })
