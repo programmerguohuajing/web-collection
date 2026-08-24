@@ -22,7 +22,7 @@ const props = defineProps({
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 10 }
 })
-const emit = defineEmits(['page-change', 'size-change', 'filter', 'refresh'])
+const emit = defineEmits(['page-change', 'size-change', 'filter', 'refresh', 'replay-not-found'])
 
 const replayEl = ref(null)
 const isPlaying = ref(false)
@@ -226,6 +226,10 @@ async function openReplay(item, autoPlay = false) {
         : Array.isArray(payload?.data) ? payload.data : []
     if (!events.length || !replayEl.value) {
       replayError.value = '未获取到回放事件数据'
+      // 深链 / 旧列表指向的会话已无回放数据：通知外层清理 URL 参数，
+      // 并自动回落到列表中第一条可播的会话，避免停留在死状态。
+      emit('replay-not-found', item.replayId)
+      fallbackToFirstAvailable(item.replayId)
       return
     }
 
@@ -272,6 +276,15 @@ async function openReplay(item, autoPlay = false) {
 
 function play(item) {
   return openReplay(item, true)
+}
+
+/**
+ * 当前会话无回放数据时，自动改播列表中第一条有数据的会话。
+ * @param {string} failedId - 加载失败的 replayId，跳过它避免递归
+ */
+function fallbackToFirstAvailable(failedId) {
+  const next = props.replays.find(row => row?.replayId && String(row.replayId) !== String(failedId))
+  if (next) openReplay(next, false)
 }
 
 function prefetch(item) {
