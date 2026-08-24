@@ -49,3 +49,23 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # AI worker 需要 Vectorize 索引「ai-kb」+ Workers AI 绑定 + 模型供应商 Secrets 才可部署。
+      # 首次部署若这些尚未创建会失败，这里 continue-on-error 避免阻塞主 worker 的关键路径；
+      # 缺失时会以 warning 呈现，补齐后重跑即可。
+      - name: Deploy AI Worker
+        continue-on-error: true
+        run: pnpm exec wrangler deploy --config cloudflare/ai-wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # 主 worker 通过 AI_WORKER_URL 代理 /api/ai/* 到 ai-worker。
+      # 在仓库 Settings → Secrets and variables → Actions → Variables 配置 AI_WORKER_URL，
+      # 值为 ai-worker 的 URL（如 https://web-collection-ai.<subdomain>.workers.dev）。
+      - name: Set AI worker URL on main worker
+        if: vars.AI_WORKER_URL != ''
+        run: echo "${{ vars.AI_WORKER_URL }}" | pnpm exec wrangler secret put AI_WORKER_URL
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

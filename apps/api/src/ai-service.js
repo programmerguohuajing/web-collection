@@ -9,14 +9,14 @@
  * 挂载：apps/api/index.js 中 `app.use(createAiRouter())`，自动挂到 /api/ai/*。
  */
 import { Router } from 'express'
-import { createPgAdapter, hash } from '../../packages/ai/db-adapter.js'
-import { createEmbedder } from '../../packages/ai/embed.js'
-import { createKb } from '../../packages/ai/kb.js'
-import { createModelGateway } from '../../packages/ai/model-gateway.js'
-import { createDiagnoser } from '../../packages/ai/diagnoser.js'
-import { ingestResolvedIssues } from '../../packages/ai/ingest.js'
-import { createRateLimiter } from '../../packages/ai/rate-limit.js'
-import { sedimentFeedback } from '../../packages/ai/feedback.js'
+import { createPgAdapter, hash } from '../../../packages/ai/db-adapter.js'
+import { createEmbedder } from '../../../packages/ai/embed.js'
+import { createKb } from '../../../packages/ai/kb.js'
+import { createModelGateway } from '../../../packages/ai/model-gateway.js'
+import { createDiagnoser } from '../../../packages/ai/diagnoser.js'
+import { ingestResolvedIssues } from '../../../packages/ai/ingest.js'
+import { createRateLimiter } from '../../../packages/ai/rate-limit.js'
+import { sedimentFeedback } from '../../../packages/ai/feedback.js'
 import { all, run } from './db.js'
 import { vectorStore } from './vector-store.js'
 
