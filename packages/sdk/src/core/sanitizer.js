@@ -32,6 +32,17 @@ export const DEFAULT_REDACT_KEYS = [
 /** 默认丢弃的请求 / 响应头（大小写不敏感匹配） */
 export const DEFAULT_DROP_HEADERS = ['authorization', 'cookie', 'set-cookie', 'proxy-authorization']
 
+/**
+ * 内部标识符字段（大小写不敏感）：值为平台自生成的随机 ID，不是用户 PII。
+ * 这些字段跳过「值级」PII 文本脱敏（key 级脱敏仍然生效），否则 16–19 位数字的
+ * 随机段会被银行卡号规则误判为 [REDACTED]，导致 issue/回放深链关联失效。
+ */
+export const IDENTIFIER_KEYS = [
+  'sessionid', 'session_id', 'basesessionid', 'base_session_id',
+  'traceid', 'trace_id', 'spanid', 'span_id', 'deviceid', 'device_id',
+  'eventid', 'event_id', 'requestid', 'request_id'
+]
+
 /** URL query 中默认剥离的敏感参数名（大小写不敏感） */
 export const DEFAULT_SENSITIVE_QUERY_KEYS = [
   'password', 'passwd', 'pwd', 'token', 'secret', 'authorization', 'cookie',
@@ -100,18 +111,24 @@ export function hashIdentifier(value, salt = 'web-collection') {
  * @param {boolean} [redactPii=false]
  * @returns {*}
  */
-export function redactObject(value, redactKeys = DEFAULT_REDACT_KEYS, depth = 0, redactPii = false) {
+export function redactObject(value, redactKeys = DEFAULT_REDACT_KEYS, depth = 0, redactPii = false, identifierKeys = IDENTIFIER_KEYS) {
   if (depth > 4 || value == null) return value
   if (typeof value === 'string') return redactPii ? redactPiiText(value) : value
   if (Array.isArray(value)) return value.slice(0, 100).map(item => redactObject(item, redactKeys, depth + 1, redactPii))
   if (typeof value !== 'object') return value
   const keys = new Set(redactKeys.map(key => String(key).toLowerCase()))
+  const identifiers = new Set(identifierKeys.map(key => String(key).toLowerCase()))
   return Object.fromEntries(
     Object.entries(value)
       .slice(0, 100)
       .map(([key, item]) => [
         key,
-        keys.has(key.toLowerCase()) ? '[REDACTED]' : redactObject(item, redactKeys, depth + 1, redactPii)
+        keys.has(key.toLowerCase())
+          ? '[REDACTED]'
+          // 内部标识符（sessionId 等）不做 PII 文本脱敏，保证深链 / 关联查询可用
+          : identifiers.has(key.toLowerCase()) || typeof item === 'object' && item != null
+            ? redactObject(item, redactKeys, depth + 1, false, identifierKeys)
+            : redactObject(item, redactKeys, depth + 1, redactPii)
       ])
   )
 }
