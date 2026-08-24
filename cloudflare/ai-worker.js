@@ -63,17 +63,26 @@ function sameOrigin(request, url) {
   try { return new URL(origin).origin === url.origin } catch { return false }
 }
 
+// 限流器模块级单例：Workers 全局作用域存活期间复用令牌桶。
+// （此前在 buildDeps 内新建，每请求重置，限流形同虚设）
+let sharedLimiter = null
+function getRateLimiter(env) {
+  if (!sharedLimiter) {
+    sharedLimiter = createRateLimiter({
+      capacity: Number(env.AI_RATE_CAPACITY) > 0 ? Number(env.AI_RATE_CAPACITY) : 60,
+      refillPerSec: Number(env.AI_RATE_REFILL) > 0 ? Number(env.AI_RATE_REFILL) : 10
+    })
+  }
+  return sharedLimiter
+}
+
 function buildDeps(env) {
   const db = createD1Adapter({ DB: env.DB })
   const embedder = env.AI ? createEmbedder({ backend: 'cloudflare', ai: env.AI }) : null
   const kb = createKb({ db, vectorStore: createVectorizeStore(env.AI_KB), embedder })
   const gateway = createModelGateway(env)
   const diagnoser = createDiagnoser({ db, gateway, kb, embedder })
-  const limiter = createRateLimiter({
-    capacity: Number(env.AI_RATE_CAPACITY) > 0 ? Number(env.AI_RATE_CAPACITY) : 60,
-    refillPerSec: Number(env.AI_RATE_REFILL) > 0 ? Number(env.AI_RATE_REFILL) : 10
-  })
-  return { db, kb, gateway, diagnoser, limiter }
+  return { db, kb, gateway, diagnoser, limiter: getRateLimiter(env) }
 }
 
 async function route(request, env, url, path) {
