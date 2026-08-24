@@ -76,17 +76,20 @@ function getRateLimiter(env) {
   return sharedLimiter
 }
 
-function buildDeps(env) {
+async function buildDeps(env) {
+  // DB(ai) > env > 默认：读库异常内部已吞掉（回落纯 env），诊断不中断
+  const { source } = await readAiSettingsRaw(env)
+  const effectiveEnv = { ...env, ...aiSettingsToEnv(source) }
   const db = createD1Adapter({ DB: env.DB })
   const embedder = env.AI ? createEmbedder({ backend: 'cloudflare', ai: env.AI }) : null
   const kb = createKb({ db, vectorStore: createVectorizeStore(env.AI_KB), embedder })
-  const gateway = createModelGateway(env)
+  const gateway = createModelGateway(effectiveEnv)
   const diagnoser = createDiagnoser({ db, gateway, kb, embedder })
   return { db, kb, gateway, diagnoser, limiter: getRateLimiter(env) }
 }
 
 async function route(request, env, url, path) {
-  const { db, kb, diagnoser, limiter } = buildDeps(env)
+  const { db, kb, diagnoser, limiter } = await buildDeps(env)
 
   // 限流（§8 按 key 令牌桶，防滥用/控成本）：key = 开放 API 的 x-ai-key，否则按调用来源
   const rateKey = request.headers.get('x-ai-key') || request.headers.get('x-app-key') || 'anonymous'
