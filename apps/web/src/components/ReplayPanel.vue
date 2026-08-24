@@ -307,9 +307,15 @@ function pauseReplay() {
 
 function seek(value) {
   if (!currentReplayer) return
-  currentReplayer.play(value)
-  if (!isPlaying.value) currentReplayer.pause()
-  progress.value = Number(value) || 0
+  const offset = Math.max(0, Number(value) || 0)
+  if (isPlaying.value) {
+    currentReplayer.play(offset)
+  } else {
+    // 暂停态用 pause(offset) 定位：rrweb 会同步应用该偏移前的事件再暂停；
+    // 若在未起播时直接 play(offset)，timer 未启动会渲染出异常内容。
+    currentReplayer.pause(offset)
+  }
+  progress.value = offset
 }
 
 function setPlaybackRate(rate) {
@@ -517,7 +523,7 @@ defineExpose({ play, currentSessionCode })
               :class="{ active: String(row.replayId) === String(currentReplayId) }"
               @mouseenter="prefetch(row)"
               @focus="prefetch(row)"
-              @click="openReplay(row, false)"
+              @click="openReplay(row, true)"
             >
               <span><strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong><small>{{ row.url || '未记录页面地址' }}</small></span>
               <small>{{ formatDate(row.lastSeen) }}</small>
