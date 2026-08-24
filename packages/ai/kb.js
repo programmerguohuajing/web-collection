@@ -22,7 +22,7 @@ export function createKb({ db, vectorStore, embedder }) {
   async function search(query, { appId, topK = 8, limit = 5 } = {}) {
     if (!vectorStore) return []
     const vec = await embedder.embedText(query)
-    const filter = appId ? `app_id = '${appId}'` : ''
+    const filter = appId ? { app_id: appId } : null
     const matches = await vectorStore.query(Array.isArray(vec) ? vec : vec.data, { topK, filter })
     if (!matches || !matches.length) return []
     const ids = matches.map(m => m.id).filter(Boolean)

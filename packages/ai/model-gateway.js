@@ -9,8 +9,10 @@
 import { maskPII } from './pii.js'
 
 const DEFAULT_ORDER = ['local', 'domestic', 'overseas']
+export const DEFAULT_FALLBACK_ORDER = ['workers-ai']
 export const TIMEOUT_MS = 8000
 export const MAX_TOKENS = 2048
+export const WORKERS_AI_MODEL = env => env.WORKERS_AI_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 
 /** 统一 OpenAI 兼容 chat/completions 调用（local/Ollama 与 domestic/overseas 兼容 hub 均适用） */
 async function callOpenAICompat(fetchFn, baseURL, model, apiKey, messages, { signal, jsonMode = true } = {}) {
@@ -42,13 +44,37 @@ export function createModelGateway(env = {}, { fetchFn = fetch } = {}) {
     },
     overseas: async (messages, signal) => {
       return callOpenAICompat(rawFetch, env.OVERSEAS_BASE_URL || 'https://api.openai.com/v1', env.OVERSEAS_MODEL_NAME || 'gpt-4o-mini', env.OVERSEAS_API_KEY, messages, { signal })
+    },
+    // Cloudflare Workers AI 兜底：ai-worker 自带 AI 绑定，无需 key/隧道，
+    // local/domestic/overseas 全部不可达时仍可产出诊断（质量较低但可用）。
+    'workers-ai': async (messages) => {
+      if (!env.AI?.run) throw new Error('workers-ai provider 未绑定 AI')
+      const result = await env.AI.run(WORKERS_AI_MODEL(env), {
+        messages,
+        max_tokens: MAX_TOKENS,
+        temperature: 0.2
+      })
+      // 兼容多种返回形态：优先 OpenAI 风格 choices，其次 {response} 字符串
+      let content = result?.choices?.[0]?.message?.content
+      if (typeof content !== 'string' && typeof result?.response === 'string') {
+        content = result.response
+      }
+      if (!content && result && typeof result.getReader === 'function') {
+        content = await new Response(result).text()
+      }
+      if (typeof content !== 'string' || !content.trim()) {
+        throw new Error(`workers-ai 响应无 content: ${JSON.stringify(result).slice(0, 200)}`)
+      }
+      return content
     }
   }
 
   function orderOf(preferOverseas) {
     const configured = (env.MODEL_ORDER || DEFAULT_ORDER.join(',')).split(',').map(s => s.trim()).filter(Boolean)
     if (preferOverseas) return ['overseas', ...configured.filter(p => p !== 'overseas')]
-    return configured.length ? configured : DEFAULT_ORDER
+    // 配置的顺序跑完后追加兜底 provider（除非显式配置了 workers-ai 位置或禁用）
+    const fallback = String(env.MODEL_FALLBACK ?? '').toLowerCase() === 'off' ? [] : DEFAULT_FALLBACK_ORDER.filter(p => !configured.includes(p))
+    return [...configured.length ? configured : DEFAULT_ORDER, ...fallback]
   }
 
   async function route(systemPrompt, userPrompt, { preferOverseas = false, jsonMode = true } = {}) {
@@ -88,6 +114,7 @@ function providerModelName(env, name) {
   if (name === 'local') return env.LOCAL_MODEL_NAME || 'deepseek-v3'
   if (name === 'domestic') return env.DOMESTIC_MODEL_NAME || 'deepseek-chat'
   if (name === 'overseas') return env.OVERSEAS_MODEL_NAME || 'gpt-4o-mini'
+  if (name === 'workers-ai') return WORKERS_AI_MODEL(env)
   return name
 }
 
