@@ -175,31 +175,6 @@ pm2 restart web-collection-api --update-env
 pm2 stop web-collection-api
 ```
 
-### GitHub Actions self-hosted Runner deployment (Node + PostgreSQL)
-
-The repo ships **two deployment workflows** for the two backends:
-
-- `.github/workflows/deploy.yml` — deploys the **Cloudflare Worker** (`cloudflare/worker.js` + D1) on every push to `main`.
-- `.github/workflows/deploy-node.yml` — deploys the **Node + PostgreSQL** backend (`apps/api` + pm2) to a Linux self-hosted Runner tagged `web-collection`, on `workflow_dispatch` or when `apps/api` / `packages` / lockfile change.
-
-Both can run side-by-side, enabling **dual deployment** (Cloudflare + Linux/cloud server). The runner host must have Node.js, PM2 and curl pre-installed, and a deployment directory prepared:
-
-```bash
-sudo mkdir -p /opt/web-collection/{shared,releases}
-sudo chown -R "$USER":"$USER" /opt/web-collection
-cp .env /opt/web-collection/shared/.env
-npm install -g pm2
-```
-
-Register the Runner in `Settings > Actions > Runners` of the GitHub repo and add the `web-collection` tag. Optional repo variables:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DEPLOY_ROOT` | `/opt/web-collection` | Stable deployment directory |
-| `HEALTH_URL` | `http://127.0.0.1:8787/health` | Health check URL after release |
-
-The workflow keeps the last 5 releases; if a new release fails to start or health check, it automatically rolls back to the previous one.
-
 ### SourceMap auto-upload
 
 After your application build completes, run:
