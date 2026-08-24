@@ -22,6 +22,8 @@ import { createDiagnoser } from '../packages/ai/diagnoser.js'
 import { ingestResolvedIssues } from '../packages/ai/ingest.js'
 import { createRateLimiter } from '../packages/ai/rate-limit.js'
 import { sedimentFeedback } from '../packages/ai/feedback.js'
+import { normalizeAiSettings, aiSettingsToEnv, maskKey } from '../packages/ai/runtime-config.js'
+import { encryptSecrets, decryptSecrets } from '../packages/alerting.js'
 
 export default {
   async fetch(request, env) {
@@ -31,10 +33,19 @@ export default {
       const path = url.pathname
       if (path === '/health') return cors(json({ ok: true, runtime: 'cloudflare-ai-worker' }), request)
       if (path.startsWith('/api/ai/')) {
-        const adminOnly = path === '/api/ai/kb/ingest' || path === '/api/ai/kb/search' || path === '/api/ai/kb/source' || path === '/api/ai/kb/meta'
-        const requireKey = adminOnly || (env.AI_API_KEY && !sameOrigin(request, url))
-        if (requireKey && request.headers.get('x-ai-key') !== env.AI_API_KEY) {
-          return cors(json({ error: 'unauthorized' }, 401), request)
+        // settings 三端点是管理面：仅同源可访问，x-ai-key 开放 API key 无权读写配置
+        const settingsAdmin = path === '/api/ai/settings' || path === '/api/ai/settings/test' || path === '/api/ai/settings/models'
+        if (settingsAdmin) {
+          const origin = request.headers.get('origin')
+          let crossOrigin = false
+          if (origin) { try { crossOrigin = new URL(origin).origin !== url.origin } catch { crossOrigin = true } }
+          if (crossOrigin) return cors(json({ error: 'forbidden' }, 403), request)
+        } else {
+          const adminOnly = path === '/api/ai/kb/ingest' || path === '/api/ai/kb/search' || path === '/api/ai/kb/source' || path === '/api/ai/kb/meta'
+          const requireKey = adminOnly || (env.AI_API_KEY && !sameOrigin(request, url))
+          if (requireKey && request.headers.get('x-ai-key') !== env.AI_API_KEY) {
+            return cors(json({ error: 'unauthorized' }, 401), request)
+          }
         }
         return cors(await route(request, env, url, path), request)
       }
@@ -103,6 +114,12 @@ async function route(request, env, url, path) {
     await kb.removeBySource(type, id)
     return json({ ok: true })
   }
+  if (path === '/api/ai/settings' && request.method === 'GET') {
+    return json(await readAiSettings(env))
+  }
+  if (path === '/api/ai/settings' && request.method === 'PUT') {
+    return json(await saveAiSettings(env, await request.json()))
+  }
   if (path === '/api/ai/kb/meta' && request.method === 'GET') {
     const rows = (await db.prepare('select source_type,source_id,content_hash,version,updated_at from ai_kb_meta order by updated_at desc limit 200').all()) || []
     return json({ items: rows })
@@ -133,4 +150,143 @@ async function saveFeedback(db, kb, body) {
     sedimented = { error: String(error?.message || error) }
   }
   return { ok: true, id, sedimented }
+}
+
+// ---- AI 设置（D1 持久化，DB > env > 默认）----
+
+function aiMasterKey(env) {
+  // R1：主 worker 的 ALERT_SECRET_MASTER_KEY 原值可能拿不到，ai-worker 支持独立 AI_SECRET_MASTER_KEY；
+  // 若两 worker 同值则回落兼容 ALERT_SECRET_MASTER_KEY
+  return env.AI_SECRET_MASTER_KEY || env.ALERT_SECRET_MASTER_KEY || ''
+}
+
+/** 读库原始配置：{source(明文 ai 对象), keys(已解密), keysError}；任何异常吞掉返回空 */
+async function readAiSettingsRaw(env) {
+  try {
+    const row = await env.DB.prepare('select config_json from settings where id=1').first()
+    const config = row?.config_json ? JSON.parse(row.config_json) : {}
+    let keys = {}
+    let keysError = ''
+    try {
+      keys = await decryptSecrets(config.ai_keys, aiMasterKey(env))
+    } catch (error) {
+      keysError = String(error?.message || error)
+    }
+    return {
+      source: config.ai && typeof config.ai === 'object' ? config.ai : {},
+      keys: keys && typeof keys === 'object' ? keys : {},
+      keysError
+    }
+  } catch (error) {
+    console.error('readAiSettingsRaw failed:', String(error?.message || error))
+    return { source: {}, keys: {}, keysError: '' }
+  }
+}
+
+const SOURCE_FIELDS = [
+  ['modelOrder', 'MODEL_ORDER'],
+  ['timeoutMs', 'AI_TIMEOUT_MS'],
+  ['workersAiModel', 'WORKERS_AI_MODEL']
+]
+
+/** GET：归一化 + 脱敏 + effectiveSource（逐字段标注 db/env/default 来源） */
+async function readAiSettings(env) {
+  const { source, keys } = await readAiSettingsRaw(env)
+  const normalized = normalizeAiSettings(source)
+  const dbEnvKeys = new Set(Object.keys(aiSettingsToEnv(source)))
+  const effectiveSource = {}
+
+  const sourceOf = envKey => dbEnvKeys.has(envKey) ? 'db' : (env[envKey] ? 'env' : 'default')
+  for (const [field, envKey] of SOURCE_FIELDS) effectiveSource[field] = sourceOf(envKey)
+  effectiveSource.modelFallback = normalized.modelFallback === false
+    ? 'db'
+    : String(env.MODEL_FALLBACK ?? '').toLowerCase() === 'off' ? 'env' : 'default'
+
+  const providers = {}
+  for (const name of ['local', 'domestic', 'overseas']) {
+    const p = normalized.providers[name]
+    const prefix = name === 'local' ? 'LOCAL_MODEL' : name.toUpperCase()
+    providers[name] = {
+      baseUrl: p.baseUrl,
+      modelName: p.modelName,
+      apiFormat: p.apiFormat,
+      hasKey: Boolean(keys[name]),
+      keyMask: maskKey(keys[name])
+    }
+    effectiveSource[`providers.${name}.baseUrl`] = dbEnvKeys.has(`${prefix}_BASE_URL`) ? 'db' : (env[`${prefix}_BASE_URL`] ? 'env' : 'default')
+    effectiveSource[`providers.${name}.modelName`] = dbEnvKeys.has(`${prefix}_MODEL_NAME`) ? 'db' : (env[`${prefix}_MODEL_NAME`] ? 'env' : 'default')
+    effectiveSource[`providers.${name}.apiKey`] = keys[name] ? 'db' : (env[`${prefix}_API_KEY`] ? 'env' : 'none')
+    effectiveSource[`providers.${name}.apiFormat`] = dbEnvKeys.has(`${prefix}_API_FORMAT`) ? 'db' : (env[`${prefix}_API_FORMAT`] ? 'env' : 'default')
+  }
+
+  return {
+    modelOrder: normalized.modelOrder,
+    modelFallback: normalized.modelFallback,
+    timeoutMs: normalized.timeoutMs,
+    workersAiModel: normalized.workersAiModel,
+    providers,
+    effectiveSource
+  }
+}
+
+function invalid(message) {
+  throw Object.assign(new Error(message), { status: 400 })
+}
+
+/** PUT：校验 → key 三分支处理 → AES-GCM 加密 → 读-合-写 upsert → 返回脱敏结果 */
+async function saveAiSettings(env, input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('请求体必须是对象')
+
+  // modelOrder 严格校验：出现即必须全为合法值且至少一项
+  if (input.modelOrder !== undefined) {
+    const tokens = String(input.modelOrder).split(',').map(s => s.trim()).filter(Boolean)
+    if (!tokens.length || !tokens.every(t => ['local', 'domestic', 'overseas', 'workers-ai'].includes(t))) {
+      invalid('modelOrder 只能包含 local/domestic/overseas/workers-ai 且至少一项')
+    }
+  }
+  // baseUrl 格式校验（normalize 会截断长度，这里校验协议头）
+  for (const name of ['local', 'domestic', 'overseas']) {
+    const url = input.providers?.[name]?.baseUrl
+    if (typeof url === 'string' && url.trim() && !/^https?:\/\//i.test(url.trim())) {
+      invalid(`${name}.baseUrl 必须 http(s):// 开头`)
+    }
+  }
+
+  const masterKey = aiMasterKey(env)
+  const { source, keys: existingKeys } = await readAiSettingsRaw(env)
+
+  // apiKey 三分支：undefined/null/'' 或 •••• 前缀 → 保留库中现有值；其他非空 → 新 key
+  const mergedKeys = { ...existingKeys }
+  let hasNewKey = false
+  for (const name of ['local', 'domestic', 'overseas']) {
+    const incoming = input.providers?.[name]?.apiKey
+    if (typeof incoming === 'string' && incoming.trim() && !incoming.startsWith('••••')) {
+      mergedKeys[name] = incoming.trim()
+      hasNewKey = true
+    }
+  }
+  if (hasNewKey && !masterKey) {
+    throw Object.assign(new Error('ALERT_SECRET_MASTER_KEY 未配置，无法保存密钥'), { status: 503 })
+  }
+
+  const normalized = normalizeAiSettings(input)
+  try {
+    const row = await env.DB.prepare('select config_json from settings where id=1').first()
+    let config = {}
+    if (row?.config_json) { try { config = JSON.parse(row.config_json) } catch {} }
+    config.ai = normalized
+    config.ai_keys_v = 1
+    if (Object.keys(mergedKeys).length) {
+      config.ai_keys = await encryptSecrets(mergedKeys, masterKey)
+    } else {
+      delete config.ai_keys
+    }
+    const now = Date.now()
+    await env.DB.prepare('insert into settings(id,config_json,updated_at) values(1,?,?) on conflict(id) do update set config_json=excluded.config_json,updated_at=excluded.updated_at')
+      .bind(JSON.stringify(config), now).run()
+  } catch (error) {
+    if (error?.status) throw error
+    throw Object.assign(new Error('保存 AI 设置失败'), { status: 500 })
+  }
+  return readAiSettings(env)
 }
