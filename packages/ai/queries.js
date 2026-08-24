@@ -172,11 +172,21 @@ export async function getErrorEvents(db, { traceId, appId, limit = 20 } = {}) {
 
 /** 相似历史 issue（名称或消息文本模糊匹配，按发生次数排序） */
 export async function getSimilarIssues(db, { name, message, appId, limit = 5 } = {}) {
-  const params = []
-  let where = "status <> 'resolved'"
-  if (appId) { where += ' and app_id=?'; params.push(appId) }
-  if (name) { where += ' and (name=? or name like ?)'; params.push(name, `%${String(name).slice(0, 40)}%`) }
-  if (message) { where += ' or message like ?'; params.push(`%${String(message).slice(0, 60)}%`) }
-  const rows = await db.prepare(`select * from issues where ${where} order by count desc limit ?`).bind(...params, limit).all()
+  // 括号必须包住整组 or 匹配条件，否则 or 会撕裂前面的 and 条件；
+  // name/message 只在非空时拼接 LIKE，避免异常文本导致 D1 "LIKE or GLOB pattern too complex"
+  const fixed = []
+  if (appId) { fixed.push('app_id = ?') }
+  const matchParts = []
+  if (name) { matchParts.push('(name = ? or name like ?)'); }
+  if (message) { matchParts.push('message like ?') }
+  let sql = `select * from issues where status <> 'resolved'`
+  const values = []
+  if (fixed.length) { sql += ' and ' + fixed.join(' and '); values.push(appId) }
+  if (matchParts.length) {
+    sql += ' and (' + matchParts.join(' or ') + ')'
+    if (name) values.push(name, `%${String(name).slice(0, 40)}%`)
+    if (message) values.push(`%${String(message).slice(0, 60)}%`)
+  }
+  const rows = await db.prepare(`${sql} order by count desc limit ?`).bind(...values, limit).all()
   return (rows || []).map(mapIssue)
 }
