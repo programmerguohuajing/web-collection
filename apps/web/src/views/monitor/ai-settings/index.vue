@@ -189,14 +189,18 @@ onMounted(loadAi)
           </el-select>
           <small>当前生效：{{ sourceLabels[effectiveSource.modelOrder] || '-' }}</small>
         </el-form-item>
-        <el-form-item label="超时时间">
-          <el-input-number v-model="timeoutSec" :min="5" :max="120" :step="1" />
-          <span class="field-suffix">秒</span>
+        <el-form-item label="超时时间" class="timeout-item">
+          <div class="inline-row">
+            <el-input-number v-model="timeoutSec" :min="5" :max="120" :step="1" />
+            <span class="field-suffix">秒</span>
+          </div>
           <small>诊断 prompt 较长，建议 ≥15s；&gt;60s 可能触发平台限制（存库为毫秒）</small>
         </el-form-item>
         <el-form-item label="Workers AI 兜底">
-          <el-switch v-model="aiForm.modelFallback" />
-          <small>所有配置通道失败后自动使用 Workers AI（质量较低但保证可用）</small>
+          <div class="switch-row">
+            <el-switch v-model="aiForm.modelFallback" />
+            <small>所有配置通道失败后自动使用 Workers AI（质量较低但保证可用）</small>
+          </div>
         </el-form-item>
         <el-form-item label="兜底模型">
           <el-select v-model="aiForm.workersAiModel" filterable allow-create default-first-option>
@@ -254,6 +258,12 @@ onMounted(loadAi)
 .ai-settings { display: grid; gap: 4px; max-width: 860px; }
 .ai-form .el-form-item small { display: block; margin-top: 6px; color: var(--c-text-muted); line-height: 1.45; }
 .ai-form .el-select, .ai-form .el-input-number { width: 100%; }
+.inline-row { display: flex; align-items: center; gap: 8px; }
+.inline-row .el-input-number { width: 140px; flex: none; }
+.timeout-item :deep(.el-form-item__content) { flex-wrap: nowrap; align-items: center; gap: 12px; }
+.timeout-item small { margin-top: 0 !important; }
+.switch-row { display: flex; align-items: center; gap: 12px; }
+.switch-row small { margin-top: 0 !important; }
 .panel-head h2 { margin: 0; font-size: 16px; }
 .panel-head small { color: var(--c-text-muted); }
 .model-row { display: flex; gap: 8px; width: 100%; }
