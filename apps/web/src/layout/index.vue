@@ -52,6 +52,7 @@ const groups = [
   { label: '配置', items: [
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
     { title: '采集治理', path: '/governance', icon: Operation },
+    { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
     { title: '系统设置', path: '/settings', icon: Setting }
   ] }
 ]
