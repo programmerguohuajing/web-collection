@@ -129,6 +129,12 @@ async function route(request, env, url, path) {
   if (path === '/api/ai/settings' && request.method === 'PUT') {
     return json(await saveAiSettings(env, await request.json()))
   }
+  if (path === '/api/ai/settings/test' && request.method === 'POST') {
+    return json(await testAiSettings(env, await request.json().catch(() => ({}))))
+  }
+  if (path === '/api/ai/settings/models' && request.method === 'POST') {
+    return json(await listProviderModels(env, await request.json().catch(() => ({}))))
+  }
   if (path === '/api/ai/kb/meta' && request.method === 'GET') {
     const rows = (await db.prepare('select source_type,source_id,content_hash,version,updated_at from ai_kb_meta order by updated_at desc limit 200').all()) || []
     return json({ items: rows })
@@ -298,4 +304,114 @@ async function saveAiSettings(env, input) {
     throw Object.assign(new Error('保存 AI 设置失败'), { status: 500 })
   }
   return readAiSettings(env)
+}
+
+/** test/models 专用小桶限流（防 SSRF 滥用/扫端口） */
+function consumeSettingsBucket(env, bucket) {
+  const { ok } = getRateLimiter(env).consume(bucket)
+  return ok
+}
+
+/** POST /settings/test：用「待保存配置」对 order 内每个 provider + workers-ai 并行发最小请求 */
+async function testAiSettings(env, input) {
+  if (!consumeSettingsBucket(env, 'settings-test')) {
+    throw Object.assign(new Error('请求过于频繁，稍后再试'), { status: 429 })
+  }
+  const normalized = normalizeAiSettings(input)
+  const { keys } = await readAiSettingsRaw(env)
+  // 合成待测 env：表单值 > 库中已存 key > worker env
+  const merged = {
+    ...normalized,
+    providers: Object.fromEntries(['local', 'domestic', 'overseas'].map(name => [
+      name,
+      { ...normalized.providers[name], apiKey: input.providers?.[name]?.apiKey?.trim() || keys[name] || '' }
+    ]))
+  }
+  const effectiveEnv = { ...env, ...aiSettingsToEnv(merged), AI: env.AI }
+  const gateway = createModelGateway(effectiveEnv)
+
+  const names = [...normalized.modelOrder.split(',').map(s => s.trim()).filter(Boolean)]
+  if (normalized.modelFallback !== false && !names.includes('workers-ai')) names.push('workers-ai')
+
+  const probes = names.map(async name => {
+    const start = Date.now()
+    try {
+      const provider = gateway.providers[name]
+      if (!provider) return [name, { ok: false, error: '未知 provider' }]
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 10000)
+      try {
+        await provider([{ role: 'user', content: '回复ok' }], ctrl.signal)
+        clearTimeout(timer)
+        return [name, { ok: true, latencyMs: Date.now() - start }]
+      } catch (error) {
+        clearTimeout(timer)
+        const message = error?.name === 'AbortError' ? '超时(10s)' : String(error?.message || error)
+        return [name, { ok: false, error: message.slice(0, 80), latencyMs: Date.now() - start }]
+      }
+    } catch (error) {
+      return [name, { ok: false, error: String(error?.message || error).slice(0, 80), latencyMs: Date.now() - start }]
+    }
+  })
+  const results = Object.fromEntries(await Promise.all(probes))
+
+  return { results }
+}
+
+const MODEL_LIST_FORMATS = ['openai-chat', 'openai-responses', 'anthropic-messages', 'gemini-generatecontent']
+
+/** POST /settings/models：拉取单个 provider 的模型列表（apiKey 空时回落库中密钥） */
+async function listProviderModels(env, input) {
+  if (!consumeSettingsBucket(env, 'settings-models')) {
+    throw Object.assign(new Error('请求过于频繁，稍后再试'), { status: 429 })
+  }
+  const name = String(input.provider || '')
+  if (!['local', 'domestic', 'overseas'].includes(name)) {
+    throw Object.assign(new Error('provider 必须是 local/domestic/overseas（workers-ai 不支持列表）'), { status: 400 })
+  }
+  const prefix = name === 'local' ? 'LOCAL_MODEL' : name.toUpperCase()
+  const baseURL = (typeof input.baseUrl === 'string' && input.baseUrl.trim())
+    || env[`${prefix}_BASE_URL`] || ''
+  if (!baseURL) return { ok: false, error: 'baseUrl 未配置' }
+
+  const apiFormat = MODEL_LIST_FORMATS.includes(input.apiFormat) ? input.apiFormat : 'openai-chat'
+  const { keys } = await readAiSettingsRaw(env)
+  let apiKey = typeof input.apiKey === 'string' && input.apiKey.trim() && !input.apiKey.startsWith('••••')
+    ? input.apiKey.trim()
+    : (keys[name] || env[`${prefix}_API_KEY`] || '')
+
+  const base = baseURL.replace(/\/$/, '')
+  const headers = {}
+  let url
+  let pick = data => data
+
+  if (apiFormat === 'anthropic-messages') {
+    url = `${base}/v1/models`
+    headers['anthropic-version'] = '2023-06-01'
+    if (apiKey) headers['x-api-key'] = apiKey
+    pick = data => (Array.isArray(data?.data) ? data.data.map(m => m?.id).filter(Boolean) : [])
+  } else if (apiFormat === 'gemini-generatecontent') {
+    url = `${base}/v1beta/models${apiKey ? `?key=${encodeURIComponent(apiKey)}` : ''}`
+    pick = data => (Array.isArray(data?.models) ? data.models.map(m => String(m?.name || '').replace(/^models\//, '')).filter(Boolean) : [])
+  } else {
+    url = `${base}/models`
+    if (apiKey) headers.authorization = `Bearer ${apiKey}`
+    pick = data => (Array.isArray(data?.data) ? data.data.map(m => m?.id).filter(Boolean) : [])
+  }
+
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const res = await fetch(url, { method: 'GET', headers, signal: ctrl.signal })
+    if (!res.ok) {
+      return { ok: false, error: `${res.status} ${(await res.text()).slice(0, 80)}`.trim().slice(0, 120) }
+    }
+    const models = pick(await res.json()).sort()
+    return { ok: true, models }
+  } catch (error) {
+    const message = error?.name === 'AbortError' ? '超时(8s)' : String(error?.message || error)
+    return { ok: false, error: message.slice(0, 120) }
+  } finally {
+    clearTimeout(timer)
+  }
 }
