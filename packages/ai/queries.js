@@ -172,21 +172,33 @@ export async function getErrorEvents(db, { traceId, appId, limit = 20 } = {}) {
 
 /** 相似历史 issue（名称或消息文本模糊匹配，按发生次数排序） */
 export async function getSimilarIssues(db, { name, message, appId, limit = 5 } = {}) {
-  // 括号必须包住整组 or 匹配条件，否则 or 会撕裂前面的 and 条件；
-  // name/message 只在非空时拼接 LIKE，避免异常文本导致 D1 "LIKE or GLOB pattern too complex"
+  // 括号必须包住整组 or 匹配条件，否则 or 会撕裂前面的 and 条件。
+  // D1 对 LIKE pattern 有 ~48 字节硬限制（超限抛 "LIKE or GLOB pattern too complex"，
+  // 与特殊字符无关），因此匹配文本截断到 SAFE_LIKE_LEN 并转义通配符。
   const fixed = []
   if (appId) { fixed.push('app_id = ?') }
   const matchParts = []
-  if (name) { matchParts.push('(name = ? or name like ?)'); }
-  if (message) { matchParts.push('message like ?') }
+  if (name) { matchParts.push("(name = ? or name like ? escape '\\')") }
+  if (message) { matchParts.push("message like ? escape '\\'") }
   let sql = `select * from issues where status <> 'resolved'`
   const values = []
   if (fixed.length) { sql += ' and ' + fixed.join(' and '); values.push(appId) }
   if (matchParts.length) {
     sql += ' and (' + matchParts.join(' or ') + ')'
-    if (name) values.push(name, `%${String(name).slice(0, 40)}%`)
-    if (message) values.push(`%${String(message).slice(0, 60)}%`)
+    if (name) {
+      const namePat = likePattern(String(name).slice(0, SAFE_LIKE_LEN))
+      values.push(name, namePat)
+    }
+    if (message) values.push(likePattern(String(message).slice(0, SAFE_LIKE_LEN)))
   }
   const rows = await db.prepare(`${sql} order by count desc limit ?`).bind(...values, limit).all()
   return (rows || []).map(mapIssue)
+}
+
+/** D1 的 SQLITE_MAX_LIKE_PATTERN_LENGTH 很小（实测 >~50 字符即报错），保守取 32 */
+export const SAFE_LIKE_LEN = 32
+
+/** 构造安全 LIKE pattern：截断到 SAFE_LIKE_LEN、转义通配符与转义符本身，前后加 % */
+export function likePattern(text) {
+  return `%${String(text ?? '').slice(0, SAFE_LIKE_LEN).replace(/[\\%_]/g, ch => '\\' + ch)}%`
 }
