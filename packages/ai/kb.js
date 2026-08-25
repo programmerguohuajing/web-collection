@@ -280,12 +280,16 @@ export function createKb({ db, vectorStore, embedder }) {
 
     const contentType = res.headers.get('content-type') || ''
     const isHtml = /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(raw)
-    const text = isHtml ? htmlToText(raw) : raw
+    const text = isHtml ? extractBodyText(raw) : raw
     const docTitle = isHtml ? extractHtmlTitle(raw) : ''
 
-    // 有效性校验：拦截反爬挑战页与空内容，避免把 "Please wait..." 等占位文本当作知识入库
-    if (text.trim().length < 100 || CHALLENGE_RE.test(docTitle) || CHALLENGE_RE.test(text.slice(0, 600))) {
-      throw kbErr(422, '未抓取到有效正文：该页面疑似被站点防护拦截（需浏览器 JS 执行或登录），请改用「上传文件」方式录入')
+    // 有效性校验：拦截反爬挑战页、SPA 骨架页与空内容，避免把按钮/导航等噪音当作知识入库
+    const trimmedLen = text.trim().length
+    const skeletonLike = isHtml && raw.length > 20 * 1024 && trimmedLen < 500
+    if (trimmedLen < 100 || skeletonLike || CHALLENGE_RE.test(docTitle) || CHALLENGE_RE.test(text.slice(0, 600))) {
+      throw kbErr(422, skeletonLike
+        ? '该页面为前端渲染（SPA），静态抓取只能获得页面骨架，请改用「上传文件」方式录入'
+        : '未抓取到有效正文：该页面疑似被站点防护拦截或无可提取正文，请改用「上传文件」方式录入')
     }
     return { text, docTitle }
   }
@@ -319,12 +323,34 @@ export function createKb({ db, vectorStore, embedder }) {
     throw lastErr
   }
 
-  /** 极简 HTML → 纯文本：去 script/style、块级标签换行、解实体、压空白 */
+  /**
+   * 正文提取：优先 <article>/<main> 容器（聚焦正文、排除推荐/评论等外围），
+   * 容器文本过短（<40% 全文）时回退全文。两路均经过 htmlToText 的噪音剔除。
+   */
+  function extractBodyText(raw) {
+    const full = htmlToText(raw)
+    for (const re of [/<article[^>]*>([\s\S]*?)<\/article>/i, /<main[^>]*>([\s\S]*?)<\/main>/i]) {
+      const m = re.exec(String(raw))
+      if (!m) continue
+      try {
+        const part = htmlToText(m[1])
+        if (part.length >= Math.max(200, full.length * 0.4)) return part
+      } catch { break }
+    }
+    return full
+  }
+
+  /**
+   * HTML → 纯文本：去 script/style 与注释；整块剔除导航/页头尾/侧栏/表单控件/
+   * 按钮/SVG 等非正文结构 —— 否则 SPA 骨架或 SSR 外壳会采出一堆「按钮文案」。
+   */
   function htmlToText(html) {
     let s = String(html)
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '')
       .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<(nav|header|footer|aside|form|button|select|option|label|svg|noscript|iframe|template)[\s\S]*?<\/\1\s*>/gi, '\n')
+      .replace(/<(input|img|hr)\b[^>]*>/gi, '\n')
       .replace(/<(br|\/p|\/div|\/h[1-6]|\/li|\/tr)\b[^>]*>/gi, '\n')
       .replace(/<h([1-4])\b[^>]*>/gi, '\n## ')
       .replace(/<[^>]+>/g, ' ')
