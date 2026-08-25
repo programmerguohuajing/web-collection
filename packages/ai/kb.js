@@ -113,25 +113,33 @@ export function createKb({ db, vectorStore, embedder }) {
   }
 
   /**
-   * runbook 摄取：按 Markdown 标题切分入库（source_type='runbook'）。
+   * 知识摄取：按 Markdown 标题切分入库，默认 source_type='runbook'，可传 'doc' 等。
    * 幂等：同 source 先删后写；返回 { ingested }。
    * sourceId 可选：URL 模式传入基于 URL 的固定 id，避免同域不同文章互相覆盖。
    */
-  async function ingestRunbook({ title, text, appId, sourceId }) {
-    const sid = sourceId || `runbook:${hash(String(title || '')).slice(0, 12)}`
-    await removeBySource('runbook', sid)
+  async function ingestRunbook({ title, text, appId, sourceId, sourceType = 'runbook' }) {
+    const st = String(sourceType || 'runbook')
+    const sid = sourceId || `${st}:${hash(String(title || '')).slice(0, 12)}`
+    await removeBySource(st, sid)
     const chunks = splitMarkdown(String(text || ''))
     if (!chunks.length) chunks.push({ title: title || '', text: String(text || '').trim() })
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkTitle = chunks[i].title || title || ''
-      const chunkText = `# ${chunkTitle}\n\n${chunks[i].text}`
-      await upsertChunk({
-        id: `${sid}:${hash(chunkText).slice(0, 12)}:${i}`,
-        sourceType: 'runbook', sourceId: sid, appId: appId || 'global', chunkIdx: i,
-        text: chunkText, metadata: { title: chunkTitle, file: title || '' }
-      })
+    // 分批并行摄取：embedding 是逐 chunk 的网络调用，全串行会让大文档轻松超过前端超时；
+    // 每批 4 条兼顾提速与对 embedding 服务的压力/限流友好
+    const BATCH_SIZE = 4
+    for (let start = 0; start < chunks.length; start += BATCH_SIZE) {
+      const batch = chunks.slice(start, start + BATCH_SIZE)
+      await Promise.all(batch.map((c, j) => {
+        const idx = start + j
+        const chunkTitle = c.title || title || ''
+        const chunkText = `# ${chunkTitle}\n\n${c.text}`
+        return upsertChunk({
+          id: `${sid}:${hash(chunkText).slice(0, 12)}:${idx}`,
+          sourceType: st, sourceId: sid, appId: appId || 'global', chunkIdx: idx,
+          text: chunkText, metadata: { title: chunkTitle, file: title || '' }
+        })
+      }))
     }
-    await upsertMeta({ sourceType: 'runbook', sourceId: sid, contentHash: hash(`${title}|${text}`), version: '1' })
+    await upsertMeta({ sourceType: st, sourceId: sid, contentHash: hash(`${title}|${text}`), version: '1' })
     return { ok: true, sourceId: sid, ingested: chunks.length }
   }
 
@@ -160,7 +168,7 @@ export function createKb({ db, vectorStore, embedder }) {
    * 安全：仅允许 http(s)；拒绝内网/回环地址；30s 超时、1MB 大小上限；瞬时失败自动重试一次。
    * sourceId 固定取 URL 哈希：同域不同文章互不覆盖；同一链接重复抓取为幂等更新。
    */
-  async function ingestRunbookFromUrl({ url, title, appId }) {
+  async function ingestRunbookFromUrl({ url, title, appId, sourceType = 'runbook' }) {
     let parsed
     try { parsed = new URL(String(url || '')) } catch { throw kbErr(400, 'URL 格式无效') }
     if (!['http:', 'https:'].includes(parsed.protocol)) {
@@ -172,8 +180,9 @@ export function createKb({ db, vectorStore, embedder }) {
     // 标题优先级：手填 > 页面 <title> > host+path（hostname 会令同域文章互相覆盖，仅作最后兜底）
     const pathFallback = `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`.replace(/\/+$/, '')
     const finalTitle = String(title || '').trim() || docTitle || pathFallback
-    const sid = `runbook:url:${hash(parsed.href).slice(0, 12)}`
-    return ingestRunbook({ title: finalTitle, text: text.trim(), appId, sourceId: sid })
+    const st = String(sourceType || 'runbook')
+    const sid = `${st}:url:${hash(parsed.href).slice(0, 12)}`
+    return ingestRunbook({ title: finalTitle, text: text.trim(), appId, sourceId: sid, sourceType: st })
   }
 
   function kbErr(status, message) { return Object.assign(new Error(message), { status }) }
