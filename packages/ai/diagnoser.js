@@ -48,8 +48,9 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const { content, model, provider } = await gateway.route(SYSTEM_PROMPT, userPrompt, { preferOverseas })
     const parsed = parseModelOutput(content)
     const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
-    await store('trace', traceId, appId, { traceId }, { ...asResult(parsed.response), model, provider, confidence, degraded: parsed.degraded })
-    return { ...asResult(parsed.response), model, provider, confidence, refId: traceId, degraded: parsed.degraded }
+    const kbHits = mapKbHits(kbResults)
+    await store('trace', traceId, appId, { traceId }, { ...asResult(parsed.response), kbHits, model, provider, confidence, degraded: parsed.degraded })
+    return { ...asResult(parsed.response), kbHits, model, provider, confidence, refId: traceId, degraded: parsed.degraded }
   }
 
   /** error 诊断（按 issue 指纹 / 错误文本） */
@@ -72,8 +73,9 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const { content, model, provider } = await gateway.route(SYSTEM_PROMPT, userPrompt, { preferOverseas })
     const parsed = parseModelOutput(content)
     const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
-    await store('error', String(refId), appId, { issueId, errorText: errorText?.slice(0, 500) }, { ...asResult(parsed.response), model, provider, confidence, degraded: parsed.degraded })
-    const out = { ...asResult(parsed.response), model, provider, confidence, refId: String(refId), degraded: parsed.degraded }
+    const kbHits = mapKbHits(kbResults)
+    await store('error', String(refId), appId, { issueId, errorText: errorText?.slice(0, 500) }, { ...asResult(parsed.response), kbHits, model, provider, confidence, degraded: parsed.degraded })
+    const out = { ...asResult(parsed.response), kbHits, model, provider, confidence, refId: String(refId), degraded: parsed.degraded }
     if (issue) out.issue = issue.fingerprint
     return out
   }
@@ -100,6 +102,16 @@ function sha256(v) {
   const s = String(v)
   for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0 }
   return 'h' + (h >>> 0).toString(36)
+}
+
+function mapKbHits(kbResults) {
+  return (kbResults || []).map(k => ({
+    id: k.id,
+    sourceType: k.source_type || '',
+    sourceId: k.source_id || '',
+    title: k.metadata?.title || k.source_id || k.id,
+    score: Number(k.score ?? 0) || null
+  }))
 }
 
 function avgConfidence(response) {

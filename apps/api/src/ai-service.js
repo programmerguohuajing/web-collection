@@ -142,8 +142,41 @@ export function createAiRouter(opts = {}) {
   }))
 
   router.get('/kb/meta', wrap(async req => {
-    const rows = (await all('select source_type,source_id,content_hash,version,updated_at from ai_kb_meta order by updated_at desc limit 200')) || []
-    return { items: rows }
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.listMeta({
+      page: String(req.query.page || 1),
+      pageSize: String(req.query.pageSize || 50),
+      type: String(req.query.type || ''),
+      appId: String(req.query.appId || '')
+    })
+  }))
+
+  router.get('/kb/stats', wrap(async () => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.stats()
+  }))
+
+  router.get('/kb/chunk/:id', wrap(async req => {
+    const row = await db.prepare('select * from ai_kb_chunks where id=?').bind(String(req.params.id)).first()
+    if (!row) { const err = new Error('chunk 不存在'); err.statusCode = 404; throw err }
+    let metadata = null
+    try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null } catch { metadata = null }
+    return { ...row, metadata }
+  }))
+
+  router.post('/kb/runbook', wrap(async req => {
+    const { title, text, url, appId } = req.body || {}
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    if (url) {
+      return kb.ingestRunbookFromUrl({ url: String(url), title: String(title || '').trim(), appId: String(appId || '') })
+    }
+    if (!String(title || '').trim() || !String(text || '').trim()) {
+      const err = new Error('title 与 text（或 url）必填'); err.statusCode = 400; throw err
+    }
+    return kb.ingestRunbook({ title: String(title).trim(), text: String(text).trim(), appId: String(appId || '') })
   }))
 
   return router
