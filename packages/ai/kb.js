@@ -90,10 +90,14 @@ export function createKb({ db, vectorStore, embedder }) {
     ).bind(...params).first()
     const size = Math.max(1, Math.min(Number(pageSize) || 50, 200))
     const offset = (Math.max(1, Number(page) || 1) - 1) * size
+    // json 提取方言：PG 的 metadata_json 为 jsonb（->> 操作符），D1/SQLite 用 json_extract
+    const titleExpr = db.dialect === 'postgres'
+      ? `max(c.metadata_json ->> 'title') as title`
+      : `max(coalesce(json_extract(c.metadata_json, '$.title'), null)) as title`
     const rows = (await db.prepare(
       `select m.source_type, m.source_id, m.content_hash, m.version, m.updated_at,
               max(c.app_id) as app_id,
-              max(coalesce(json_extract(c.metadata_json, '$.title'), null)) as title,
+              ${titleExpr},
               max(substr(c.text, 1, 120)) as excerpt
          from ${META_TABLE} m left join ${KB_TABLE} c on c.source_type=m.source_type and c.source_id=m.source_id${clause}
         group by m.id, m.source_type, m.source_id, m.content_hash, m.version, m.updated_at

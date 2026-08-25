@@ -318,6 +318,8 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   const code = Number(err?.statusCode)
   const status = Number.isInteger(code) && code >= 400 && code < 600 ? code : 500
+  // 5xx 落日志：否则服务端错误完全不可观测
+  if (status >= 500) console.error(`[api] ${req.method} ${req.originalUrl} failed:`, err?.stack || err?.message || err)
   res.status(status).type(status >= 500 ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8')
     .send(status >= 500 ? 'server error' : JSON.stringify({ error: err?.message || 'request failed' }))
 })

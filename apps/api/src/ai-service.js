@@ -19,6 +19,7 @@ import { createRateLimiter } from '../../../packages/ai/rate-limit.js'
 import { sedimentFeedback } from '../../../packages/ai/feedback.js'
 import { all, run } from './db.js'
 import { vectorStore } from './vector-store.js'
+import { settingsRouter } from './ai-settings-service.js'
 
 let nodeEmbedder = null
 async function getEmbedder() {
@@ -194,6 +195,9 @@ export function createAiRouter(opts = {}) {
     }
     return kb.ingestRunbook({ title: String(title).trim(), text: String(text).trim(), appId: String(appId || ''), sourceType })
   }))
+
+  // settings 管理面（GET/PUT/test/models），与 CF worker 行为对齐
+  router.use(settingsRouter())
 
   return router
 }
