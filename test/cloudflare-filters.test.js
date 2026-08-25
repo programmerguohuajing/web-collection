@@ -31,7 +31,18 @@ assert.equal(alertMessage({ type: 'error', appId: 'web', name: 'TypeError', mess
 assert.equal(issueKey({ appId: 'web', name: 'SseError', stack: 'sdk line', props: { source: 'https://example.com/events' } }), 'web|SseError|https://example.com/events')
 
 const capabilityResponse = await worker.fetch(new Request('https://example.com/api/capabilities'), {})
-assert.deepEqual(await capabilityResponse.json(), { productAnalyticsV2: false })
+assert.deepEqual(await capabilityResponse.json(), {
+  productAnalyticsV2: false,
+  traffic: false,
+  insights: false,
+  funnels: true,
+  dashboards: true,
+  paths: true,
+  live: true,
+  releases: true,
+  eventDefinitions: false,
+  journeys: false
+})
 
 let writes = 0
 let pending
@@ -63,7 +74,8 @@ const recoveryResponse = await worker.fetch(new Request('https://example.com/api
 assert.equal(recoveryResponse.status, 200)
 await recoveryPending
 assert.equal(eventAttempts, 2)
-assert.equal(recoveryQueries.filter(sql => sql.startsWith('delete from replays')).length, 1)
+// 库满兜底不再删回放数据（9213616）：失败重试只重放 events 写入
+assert.equal(recoveryQueries.filter(sql => sql.startsWith('delete from replays')).length, 0)
 
 let eventNamesSql = ''
 let eventNamesValues = []
@@ -103,7 +115,8 @@ const summaryResponse = await worker.fetch(new Request('https://example.com/api/
   }
 })
 assert.equal((await summaryResponse.json()).issueCount, 2)
-assert.equal(issueQueries.length, 2)
+const issueSqls = issueQueries.map(([sql]) => sql).filter(sql => sql.includes('from issues'))
+assert.equal(issueSqls.length, 2)
 assert.ok(issueQueries.every(([sql, values]) => sql.includes('where app_id=?') && values[0] === 'web'))
 
 const traceQueries = []
@@ -153,7 +166,8 @@ let distributedTraceId = ''
 const distributedResponse = await worker.fetch(new Request('https://example.com/api/traces/trace-1/distributed'), {
   DB: {
     prepare(sql) {
-      assert.match(sql, /where trace_id=\? order by ts/)
+      // events 按 ts、spans 按 start_ts 排序，两条都必须带 trace_id 参数化过滤
+      assert.match(sql, /where trace_id=\? order by (start_)?ts/)
       return {
         bind(value) { distributedTraceId = value; return this },
         async all() { return { results: [{ id: 'event-1', trace_id: 'trace-1', span_id: 'span-1', type: 'perf', metric: 'fetch', ts: 1, value: 12, props_json: '{}' }] } }
