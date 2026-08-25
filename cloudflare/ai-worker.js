@@ -54,6 +54,8 @@ export default {
       return cors(json({ error: 'not found' }, 404), request)
     } catch (error) {
       const status = Number(error?.status) || 500
+      // 5xx 落日志：否则 CF 控制台/wrangler tail 看不到根因（如 subrequest 超限、绑定缺失）
+      console.error(`[ai] ${request.method} ${url.pathname} failed (${status}):`, error?.stack || error?.message || error)
       return cors(json({ error: status >= 500 ? 'internal error' : (error?.message || 'error') }, status), request)
     }
   }
@@ -87,11 +89,11 @@ async function buildDeps(env) {
   const kb = createKb({ db, vectorStore: createVectorizeStore(env.AI_KB), embedder })
   const gateway = createModelGateway(effectiveEnv)
   const diagnoser = createDiagnoser({ db, gateway, kb, embedder })
-  return { db, kb, gateway, diagnoser, limiter: getRateLimiter(env) }
+  return { db, kb, gateway, diagnoser, embedder, vectorStore: createVectorizeStore(env.AI_KB), limiter: getRateLimiter(env) }
 }
 
 async function route(request, env, url, path) {
-  const { db, kb, diagnoser, limiter } = await buildDeps(env)
+  const { db, kb, diagnoser, embedder, vectorStore, limiter } = await buildDeps(env)
 
   // 限流（§8 按 key 令牌桶，防滥用/控成本）：key = 开放 API 的 x-ai-key，否则按调用来源
   const rateKey = request.headers.get('x-ai-key') || request.headers.get('x-app-key') || 'anonymous'
@@ -114,7 +116,7 @@ async function route(request, env, url, path) {
   }
   if (path === '/api/ai/kb/ingest' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}))
-    return json(await ingestResolvedIssues({ db, kb, force: !!body.force }))
+    return json(await ingestResolvedIssues({ db, kb, embedder, vectorStore, force: !!body.force }))
   }
   if (path === '/api/ai/kb/search' && request.method === 'GET') {
     const q = url.searchParams.get('q') || ''

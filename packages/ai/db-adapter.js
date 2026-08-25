@@ -20,21 +20,28 @@ export function hash(text) {
 
 /** Cloudflare D1 适配器：包装 env.DB */
 export function createD1Adapter({ DB }) {
-  return {
-    prepare(sql) {
-      const stmt = DB.prepare(sql)
-      return {
-        bind(...values) {
-          const bound = stmt.bind(...values)
-          return {
-            async all() { const r = await bound.all(); return r.results || [] },
-            async first() { return (await bound.first()) ?? null },
-            async run() { const r = await bound.run(); return { changes: Number(r.meta?.changes ?? 0), lastRowId: r.meta?.last_row_id ?? null } }
-          }
+  const prepare = sql => {
+    const stmt = DB.prepare(sql)
+    return {
+      bind(...values) {
+        const bound = stmt.bind(...values)
+        return {
+          async all() { const r = await bound.all(); return r.results || [] },
+          async first() { return (await bound.first()) ?? null },
+          async run() { const r = await bound.run(); return { changes: Number(r.meta?.changes ?? 0), lastRowId: r.meta?.last_row_id ?? null } }
         }
       }
-    },
-    // 向量检索由外部 Vectorize 完成，DB 侧只读 ai_kb_chunks 原文
+    }
+  }
+  return {
+    prepare,
+    // D1 原生批量：多条语句一次往返，且只计 1 个 subrequest（摄取路径的关键优化）
+    async batch(entries) {
+      const list = entries || []
+      if (!list.length) return []
+      const stmts = list.map(e => DB.prepare(String(e.sql)).bind(...(e.values || [])))
+      return DB.batch(stmts) || []
+    }
   }
 }
 
@@ -58,6 +65,14 @@ export function createPgAdapter(query) {
           }
         }
       }
+    },
+    // PG 无 subrequest 限额，batch 语义按顺序执行逐条落库（与 D1 batch 结果形态对齐）
+    async batch(entries) {
+      const results = []
+      for (const e of (entries || [])) {
+        results.push(await query.run(String(e.sql), e.values || []))
+      }
+      return results
     }
   }
 }

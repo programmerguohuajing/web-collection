@@ -55,7 +55,7 @@ async function main() {
 
   if (sourceTypes.includes('issue')) {
     const { ingestResolvedIssues } = await import('../packages/ai/ingest.js')
-    const n = await ingestResolvedIssues({ db, kb, force })
+    const n = await ingestResolvedIssues({ db, kb, embedder, vectorStore: vectorReady ? vectorStore : null, force })
     ingested += n.ingested; skipped += n.skipped
   }
   if (sourceTypes.includes('doc')) {

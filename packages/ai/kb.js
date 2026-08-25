@@ -114,8 +114,11 @@ export function createKb({ db, vectorStore, embedder }) {
 
   /**
    * 知识摄取：按 Markdown 标题切分入库，默认 source_type='runbook'，可传 'doc' 等。
-   * 幂等：同 source 先删后写；返回 { ingested }。
+   * 幂等：同 source 先删后写；返回 { ingested, indexed }。
    * sourceId 可选：URL 模式传入基于 URL 的固定 id，避免同域不同文章互相覆盖。
+   *
+   * 性能（CF Worker subrequest 限额关键）：原文 D1 batch 一次写入，
+   * 向量「单次批量嵌入 + 单次 upsert」——远程调用次数与 chunk 数解耦。
    */
   async function ingestRunbook({ title, text, appId, sourceId, sourceType = 'runbook' }) {
     const st = String(sourceType || 'runbook')
@@ -123,24 +126,57 @@ export function createKb({ db, vectorStore, embedder }) {
     await removeBySource(st, sid)
     const chunks = splitMarkdown(String(text || ''))
     if (!chunks.length) chunks.push({ title: title || '', text: String(text || '').trim() })
-    // 分批并行摄取：embedding 是逐 chunk 的网络调用，全串行会让大文档轻松超过前端超时；
-    // 每批 4 条兼顾提速与对 embedding 服务的压力/限流友好
-    const BATCH_SIZE = 4
-    for (let start = 0; start < chunks.length; start += BATCH_SIZE) {
-      const batch = chunks.slice(start, start + BATCH_SIZE)
-      await Promise.all(batch.map((c, j) => {
-        const idx = start + j
-        const chunkTitle = c.title || title || ''
-        const chunkText = `# ${chunkTitle}\n\n${c.text}`
-        return upsertChunk({
-          id: `${sid}:${hash(chunkText).slice(0, 12)}:${idx}`,
-          sourceType: st, sourceId: sid, appId: appId || 'global', chunkIdx: idx,
-          text: chunkText, metadata: { title: chunkTitle, file: title || '' }
-        })
-      }))
-    }
+
+    const items = chunks.map((c, i) => {
+      const chunkTitle = c.title || title || ''
+      const chunkText = `# ${chunkTitle}\n\n${c.text}`
+      return {
+        id: `${sid}:${hash(chunkText).slice(0, 12)}:${i}`,
+        sourceType: st, sourceId: sid, appId: appId || 'global', chunkIdx: i,
+        text: chunkText, metadata: { title: chunkTitle, file: title || '' }
+      }
+    })
+    await putChunks(items)
+    const indexed = await indexChunkVectors(items)
     await upsertMeta({ sourceType: st, sourceId: sid, contentHash: hash(`${title}|${text}`), version: '1' })
-    return { ok: true, sourceId: sid, ingested: chunks.length }
+    return { ok: true, sourceId: sid, ingested: items.length, indexed }
+  }
+
+  /**
+   * 批量向量写入：单次批量嵌入 + 单次 upsert。
+   * 失败静默降级（返回 0）：原文已落库可正常浏览/删除，仅语义检索暂时不可用。
+   */
+  async function indexChunkVectors(items) {
+    if (!vectorStore || !embedder || !items.length) return 0
+    let vecs
+    try {
+      vecs = await embedder.embedBatch(items.map(it => it.text))
+      if (!Array.isArray(vecs) || vecs.length !== items.length) return 0
+      await vectorStore.upsert(items.map((it, i) => ({
+        id: it.id, values: vecs[i], metadata: { app_id: it.appId || '', source_type: it.sourceType }
+      })))
+      return items.length
+    } catch { return 0 }
+  }
+
+  /**
+   * 批量落库：优先 db.batch（D1 多语句一次往返、subrequest 计 1），
+   * 无 batch 能力的注入实现退化为单条并发写。
+   */
+  async function putChunks(items) {
+    if (!items.length) return
+    const now = Date.now()
+    const sql = `insert into ${KB_TABLE} (id,source_type,source_id,app_id,chunk_idx,text,metadata_json,updated_at)
+         values (?,?,?,?,?,?,?,?)
+         on conflict(id) do update set text=excluded.text,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at`
+    if (typeof db.batch === 'function') {
+      await db.batch(items.map(c => ({
+        sql,
+        values: [c.id, c.sourceType, c.sourceId, c.appId || null, c.chunkIdx, c.text, JSON.stringify(c.metadata || null), now]
+      })))
+      return
+    }
+    await Promise.all(items.map(c => upsertChunk(c)))
   }
 
   /** 简易 Markdown 切分：按 1-4 级标题分块 */
@@ -205,8 +241,10 @@ export function createKb({ db, vectorStore, embedder }) {
   /**
    * 单次抓取：携带浏览器特征头降低被站点 WAF 拦截概率；
    * 响应头与 body 读取共用同一个 30s 超时窗口（避免慢速滴流 body 挂死请求）。
+   * minimalHeaders：不发送任何自定义头，用运行时默认 UA —— 部分站点（如掘金）
+   * 反而会针对"伪装浏览器头但无 JS 指纹"的请求下发挑战页，裸 fetch 能拿到完整 SSR 页面。
    */
-  async function fetchPageText(href) {
+  async function fetchPageText(href, { minimalHeaders = false } = {}) {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), PAGE_FETCH_TIMEOUT_MS)
     let res
@@ -214,7 +252,7 @@ export function createKb({ db, vectorStore, embedder }) {
       res = await fetch(href, {
         signal: ctrl.signal,
         redirect: 'follow',
-        headers: {
+        headers: minimalHeaders ? undefined : {
           'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
           'accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
           'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8'
@@ -259,15 +297,20 @@ export function createKb({ db, vectorStore, embedder }) {
     return m[1].replace(/\s+/g, ' ').trim().slice(0, 120)
   }
 
-  /** 瞬时失败（超时/网络错误/远端 5xx）自动重试一次；URL 参数问题与远端 4xx 不重试 */
+  /**
+   * 瞬时失败（超时/网络错误/远端 5xx）自动重试一次；URL 参数问题与远端 4xx 不重试。
+   * 挑战页（422）先用最小请求头重试一次 —— 部分站点对"伪浏览器头无 JS 指纹"的
+   * 请求下发挑战，裸 fetch 反而能拿到完整 SSR 页面；仍失败再抛给用户。
+   */
   async function fetchPageTextWithRetry(href) {
     let lastErr
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        return await fetchPageText(href)
+        return await fetchPageText(href, { minimalHeaders: attempt === 2 })
       } catch (e) {
         lastErr = e
         const status = e?.status
+        if (status === 422 && attempt === 1) continue // 挑战页 → 换最小头再试
         const retriable = status === 504 || status === 502 && !/^抓取失败：HTTP 4/.test(String(e?.message))
         if (!retriable || attempt === 2) throw e
         await new Promise(r => setTimeout(r, 800))
