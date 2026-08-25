@@ -204,6 +204,8 @@ export function createModelGateway(env = {}, { fetchFn = fetch } = {}) {
         clearTimeout(timer)
         const aborted = e?.name === 'AbortError'
         lastErr = aborted ? new Error(`provider ${name} 超时（${timeoutMs}ms）`) : e
+        // 可观测性：回退时记录失败原因（仅 provider 名与错误消息，不含配置与 key）
+        console.error(`gateway provider ${name} failed: ${String(e?.message || e).slice(0, 200)}`)
         continue // 不可达 → 回退下一个
       }
     }

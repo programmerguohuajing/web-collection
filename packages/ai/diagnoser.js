@@ -46,10 +46,10 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const kbResults = embedder ? await kb.search(query, { appId, topK: 8 }) : []
     const userPrompt = buildUserPrompt({ kind: 'trace', trace, errorEvents, kbResults })
     const { content, model, provider } = await gateway.route(SYSTEM_PROMPT, userPrompt, { preferOverseas })
-    const response = parseJsonOutput(content)
-    const confidence = avgConfidence(response)
-    await store('trace', traceId, appId, { traceId }, { ...asResult(response), model, provider, confidence, degraded: false })
-    return { ...asResult(response), model, provider, confidence, refId: traceId, degraded: false }
+    const parsed = parseModelOutput(content)
+    const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
+    await store('trace', traceId, appId, { traceId }, { ...asResult(parsed.response), model, provider, confidence, degraded: parsed.degraded })
+    return { ...asResult(parsed.response), model, provider, confidence, refId: traceId, degraded: parsed.degraded }
   }
 
   /** error 诊断（按 issue 指纹 / 错误文本） */
@@ -70,10 +70,10 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const kbResults = embedder ? await kb.search(issue?.message || errorText || ''.slice(0, 1000), { appId, topK: 8 }) : []
     const userPrompt = buildUserPrompt({ kind: 'error', issue: issue || { name: guessName(errorText), message: errorText, stack: '' }, similarIssues, kbResults })
     const { content, model, provider } = await gateway.route(SYSTEM_PROMPT, userPrompt, { preferOverseas })
-    const response = parseJsonOutput(content)
-    const confidence = avgConfidence(response)
-    await store('error', String(refId), appId, { issueId, errorText: errorText?.slice(0, 500) }, { ...asResult(response), model, provider, confidence, degraded: false })
-    const out = { ...asResult(response), model, provider, confidence, refId: String(refId), degraded: false }
+    const parsed = parseModelOutput(content)
+    const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
+    await store('error', String(refId), appId, { issueId, errorText: errorText?.slice(0, 500) }, { ...asResult(parsed.response), model, provider, confidence, degraded: parsed.degraded })
+    const out = { ...asResult(parsed.response), model, provider, confidence, refId: String(refId), degraded: parsed.degraded }
     if (issue) out.issue = issue.fingerprint
     return out
   }
@@ -119,3 +119,21 @@ function asResult(response) {
 }
 
 function safeParse(v, fallback) { try { return typeof v === 'string' ? JSON.parse(v) : v ?? fallback } catch { return fallback } }
+
+/** 模型输出解析失败时降级而非抛错（推理模型偶发输出非 JSON），保证诊断链路不中断 */
+function parseModelOutput(content) {
+  try {
+    return { response: parseJsonOutput(content), degraded: false }
+  } catch {
+    return {
+      degraded: true,
+      response: {
+        summary: '模型输出不可解析（已降级展示原始片段）',
+        rawOutput: String(content || '').slice(0, 500),
+        hypotheses: [],
+        suggestions: [],
+        relatedKb: []
+      }
+    }
+  }
+}
