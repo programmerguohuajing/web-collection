@@ -182,15 +182,17 @@ export function createAiRouter(opts = {}) {
 
   router.post('/kb/runbook', wrap(async req => {
     const { title, text, url, appId } = req.body || {}
+    // 手动摄取仅开放 runbook / doc 两类；issue 由重建索引沉淀、feedback 由诊断修正闭环产生
+    const sourceType = ['runbook', 'doc'].includes(String(req.body?.sourceType)) ? String(req.body.sourceType) : 'runbook'
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     if (url) {
-      return kb.ingestRunbookFromUrl({ url: String(url), title: String(title || '').trim(), appId: String(appId || '') })
+      return kb.ingestRunbookFromUrl({ url: String(url), title: String(title || '').trim(), appId: String(appId || ''), sourceType })
     }
     if (!String(title || '').trim() || !String(text || '').trim()) {
       const err = new Error('title 与 text（或 url）必填'); err.statusCode = 400; throw err
     }
-    return kb.ingestRunbook({ title: String(title).trim(), text: String(text).trim(), appId: String(appId || '') })
+    return kb.ingestRunbook({ title: String(title).trim(), text: String(text).trim(), appId: String(appId || ''), sourceType })
   }))
 
   return router

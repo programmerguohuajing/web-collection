@@ -137,16 +137,18 @@ function pct(score) {
 }
 
 // ── 详情抽屉 ────────────────────────────────────────
-const drawer = reactive({ open: false, loading: false, error: '', chunk: null })
+const drawer = reactive({ open: false, loading: false, error: '', chunk: null, source: null })
 
 async function openDetail(item) {
   drawer.open = true
   drawer.loading = true
   drawer.error = ''
   drawer.chunk = null
+  // 记录 source 维度：原文加载失败时（如残留 meta）仍可强制清理该来源
+  const id = item.id || item.chunkId
+  drawer.source = id ? null : { type: item.source_type, id: item.source_id }
   try {
     // 列表项只有 source 维度，先取该来源下最新 chunk；从诊断抽屉跳转带 chunk id 时直接取
-    const id = item.id || item.chunkId
     if (id) {
       drawer.chunk = await api(`/api/ai/kb/chunk/${encodeURIComponent(id)}`, { requestKey: `kb:chunk:${id}` })
     } else {
@@ -162,16 +164,18 @@ async function openDetail(item) {
 
 async function deleteSource() {
   const c = drawer.chunk
-  if (!c?.source_type || !c?.source_id) return
+  const type = c?.source_type || drawer.source?.type
+  const id = c?.source_id || drawer.source?.id
+  if (!type || !id) return
   try {
     await ElMessageBox.confirm(
-      `将删除来源「${c.source_id}」的全部知识 chunk 与向量索引，且不可恢复。确认删除？`,
+      `将删除来源「${id}」的全部知识 chunk 与向量索引，且不可恢复。确认删除？`,
       '删除该来源',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
   try {
-    await api(`/api/ai/kb/source?type=${encodeURIComponent(c.source_type)}&id=${encodeURIComponent(c.source_id)}`, { method: 'DELETE' })
+    await api(`/api/ai/kb/source?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`, { method: 'DELETE' })
     ElMessage.success('已删除该来源（含向量索引）')
     drawer.open = false
     await Promise.all([load(), loadStats()])
@@ -206,9 +210,14 @@ async function rebuildIndex() {
   }
 }
 
-// ── 新建 runbook（手动编写 / 上传文件 / 在线链接）────────────────
-const rbDialog = reactive({ open: false, saving: false, method: 'manual', title: '', text: '', appId: '', url: '', fileName: '' })
+// ── 新建知识（runbook / doc；手动编写 / 上传文件 / 在线链接）────────────────
+const KIND_OPTIONS = [
+  { value: 'runbook', label: 'runbook（排障手册）' },
+  { value: 'doc', label: 'doc（领域文档）' }
+]
+const rbDialog = reactive({ open: false, saving: false, kind: 'runbook', method: 'manual', title: '', text: '', appId: '', url: '', fileName: '' })
 function openRunbook() {
+  rbDialog.kind = 'runbook'
   rbDialog.method = 'manual'
   rbDialog.title = ''
   rbDialog.text = ''
@@ -245,12 +254,15 @@ async function submitRunbook() {
   try {
     const payload = {
       title: rbDialog.title.trim(),
-      appId: rbDialog.appId || undefined
+      appId: rbDialog.appId || undefined,
+      sourceType: rbDialog.kind
     }
     if (rbDialog.method === 'url') payload.url = rbDialog.url.trim()
     else payload.text = rbDialog.text.trim()
     const r = await api('/api/ai/kb/runbook', {
       method: 'POST',
+      // 摄取包含逐 chunk 的 embedding 网络调用，耗时可能远超常规接口，放宽到 120s
+      timeout: 120000,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload)
     })
@@ -411,7 +423,12 @@ onMounted(async () => {
     <!-- 详情抽屉 -->
     <el-drawer v-model="drawer.open" title="知识详情" size="min(480px, 92vw)">
       <div v-if="drawer.loading" class="loading-row"><el-icon class="is-loading"><Refresh /></el-icon> 原文加载中…</div>
-      <el-alert v-else-if="drawer.error" type="warning" title="该知识已不存在或加载失败" :description="drawer.error" show-icon />
+      <el-alert v-else-if="drawer.error" type="warning" title="该知识已不存在或加载失败" show-icon>
+        <div>{{ drawer.error }}</div>
+        <div v-if="drawer.source" class="err-actions">
+          <el-button size="small" text type="danger" @click="deleteSource">清理残留来源</el-button>
+        </div>
+      </el-alert>
       <template v-else-if="drawer.chunk">
         <div class="detail-grid">
           <span class="k">类型</span><span><el-tag size="small" effect="plain">{{ drawer.chunk.source_type }}</el-tag></span>
@@ -428,9 +445,14 @@ onMounted(async () => {
       </template>
     </el-drawer>
 
-    <!-- 新建 runbook -->
-    <el-dialog v-model="rbDialog.open" title="新建 runbook（排障手册）" width="min(560px, 94vw)">
+    <!-- 新建知识（runbook / doc） -->
+    <el-dialog v-model="rbDialog.open" :title="`新建 ${rbDialog.kind === 'doc' ? 'doc（领域文档）' : 'runbook（排障手册）'}`" width="min(560px, 94vw)">
       <el-form label-position="top">
+        <el-form-item label="知识类型">
+          <el-radio-group v-model="rbDialog.kind">
+            <el-radio-button v-for="k in KIND_OPTIONS" :key="k.value" :value="k.value">{{ k.label }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="来源方式">
           <div class="src-method">
             <button type="button" class="src-method-btn" :class="{ active: rbDialog.method === 'manual' }" @click="setMethod('manual')">手动编写</button>
@@ -558,4 +580,5 @@ onMounted(async () => {
 .upload-zone { display: block; width: 100%; border: 1.5px dashed #cdd3df; border-radius: 10px; padding: 22px; text-align: center; color: var(--el-text-color-placeholder); font-size: 13px; cursor: pointer; transition: all .15s ease; line-height: 1.6; }
 .upload-zone:hover { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
 .form-hint { font-size: 12px; color: var(--el-text-color-placeholder); margin: 6px 0 0; line-height: 1.5; }
+.err-actions { margin-top: 8px; }
 </style>

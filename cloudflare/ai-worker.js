@@ -174,13 +174,15 @@ async function route(request, env, url, path) {
   if (path === '/api/ai/kb/runbook' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}))
     const title = String(body?.title || '').trim()
+    // 手动摄取仅开放 runbook / doc 两类；issue 由重建索引沉淀、feedback 由诊断修正闭环产生
+    const sourceType = ['runbook', 'doc'].includes(String(body?.sourceType)) ? String(body.sourceType) : 'runbook'
     // url 模式：服务端抓取在线页面；否则要求 text 正文
     if (body?.url) {
-      return json(await kb.ingestRunbookFromUrl({ url: String(body.url), title, appId: String(body?.appId || '') }))
+      return json(await kb.ingestRunbookFromUrl({ url: String(body.url), title, appId: String(body?.appId || ''), sourceType }))
     }
     const text = String(body?.text || '').trim()
     if (!title || !text) throw Object.assign(new Error('title 与 text（或 url）必填'), { status: 400 })
-    return json(await kb.ingestRunbook({ title, text, appId: String(body?.appId || '') }))
+    return json(await kb.ingestRunbook({ title, text, appId: String(body?.appId || ''), sourceType }))
   }
   return json({ error: 'not found' }, 404)
 }
