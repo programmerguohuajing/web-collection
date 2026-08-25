@@ -447,7 +447,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item v-if="rbDialog.method === 'url'" label="在线链接" required>
           <el-input v-model="rbDialog.url" placeholder="https://wiki.example.com/runbooks/white-screen 或公开文档页" />
-          <p class="form-hint">服务端将抓取页面正文并按标题切分入库；仅支持公开可访问的 http(s) 页面（10s 超时、1MB 上限），私有页面（需登录的 Confluence/Notion）暂不支持。</p>
+          <p class="form-hint">服务端将抓取页面正文并按标题切分入库；仅支持公开可访问的 http(s) 页面（30s 超时、1MB 上限，瞬时失败自动重试一次），私有页面（需登录的 Confluence/Notion）暂不支持。若反复超时，可改用「上传文件」方式。</p>
         </el-form-item>
         <el-form-item v-if="rbDialog.method === 'upload'" label="上传 Markdown / 文本">
           <label class="upload-zone">

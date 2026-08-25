@@ -149,41 +149,92 @@ export function createKb({ db, vectorStore, embedder }) {
 
   /**
    * runbook 在线链接摄取：服务端抓取页面 → HTML 转纯文本 → 复用 ingestRunbook 切分入库。
-   * 安全：仅允许 http(s)；拒绝内网/回环地址；10s 超时、1MB 大小上限。
+   * 安全：仅允许 http(s)；拒绝内网/回环地址；30s 超时、1MB 大小上限；瞬时失败自动重试一次。
    */
   async function ingestRunbookFromUrl({ url, title, appId }) {
     let parsed
-    try { parsed = new URL(String(url || '')) } catch { throw Object.assign(new Error('URL 格式无效'), { status: 400 }) }
+    try { parsed = new URL(String(url || '')) } catch { throw kbErr(400, 'URL 格式无效') }
     if (!['http:', 'https:'].includes(parsed.protocol)) {
-      throw Object.assign(new Error('仅支持 http(s) 链接'), { status: 400 })
+      throw kbErr(400, '仅支持 http(s) 链接')
     }
-    const host = parsed.hostname.toLowerCase()
+    assertPublicHost(parsed.hostname)
+
+    const text = await fetchPageTextWithRetry(parsed.href)
+    const finalTitle = String(title || '').trim() || parsed.hostname
+    return ingestRunbook({ title: finalTitle, text: text.trim(), appId })
+  }
+
+  function kbErr(status, message) { return Object.assign(new Error(message), { status }) }
+
+  /** SSRF 防护：拒绝内网/回环/链路本地地址 */
+  function assertPublicHost(hostname) {
+    const host = String(hostname || '').toLowerCase()
     const blocked = host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local')
       || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
       || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
       || host === '[::1]' || host.startsWith('fd') || host.startsWith('fe80')
-    if (blocked) throw Object.assign(new Error('不允许抓取内网地址'), { status: 400 })
+    if (blocked) throw kbErr(400, '不允许抓取内网地址')
+  }
 
+  const PAGE_FETCH_TIMEOUT_MS = 30000
+
+  /**
+   * 单次抓取：携带浏览器特征头降低被站点 WAF 拦截概率；
+   * 响应头与 body 读取共用同一个 30s 超时窗口（避免慢速滴流 body 挂死请求）。
+   */
+  async function fetchPageText(href) {
     const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 10000)
+    const timer = setTimeout(() => ctrl.abort(), PAGE_FETCH_TIMEOUT_MS)
     let res
     try {
-      res = await fetch(parsed.href, { signal: ctrl.signal, redirect: 'follow', headers: { 'user-agent': 'web-collection-kb/1.0' } })
+      res = await fetch(href, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: {
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+          'accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+          'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8'
+        }
+      })
     } catch (e) {
       clearTimeout(timer)
-      throw Object.assign(new Error(e?.name === 'AbortError' ? '抓取超时(10s)' : `抓取失败：${String(e?.message || e).slice(0, 80)}`), { status: 502 })
+      if (e?.name === 'AbortError') throw kbErr(504, `抓取超时(${PAGE_FETCH_TIMEOUT_MS / 1000}s)：页面响应过慢或被站点拦截`)
+      throw kbErr(502, `抓取失败：${String(e?.message || e).slice(0, 80)}`)
+    }
+    if (!res.ok) { clearTimeout(timer); throw kbErr(502, `抓取失败：HTTP ${res.status}`) }
+
+    const len = Number(res.headers.get('content-length') || 0)
+    if (len > 1024 * 1024) { clearTimeout(timer); throw kbErr(413, '页面超过 1MB 上限') }
+    let raw
+    try {
+      raw = await res.text()
+    } catch (e) {
+      clearTimeout(timer)
+      if (e?.name === 'AbortError') throw kbErr(504, `读取页面内容超时(${PAGE_FETCH_TIMEOUT_MS / 1000}s)`)
+      throw kbErr(502, `读取页面失败：${String(e?.message || e).slice(0, 80)}`)
     }
     clearTimeout(timer)
-    if (!res.ok) throw Object.assign(new Error(`抓取失败：HTTP ${res.status}`), { status: 502 })
-    const len = Number(res.headers.get('content-length') || 0)
-    if (len > 1024 * 1024) throw Object.assign(new Error('页面超过 1MB 上限'), { status: 413 })
-    const raw = await res.text()
-    if (raw.length > 1024 * 1024 * 1.2) throw Object.assign(new Error('页面超过 1MB 上限'), { status: 413 })
-    const contentType = res.headers.get('content-type') || ''
-    const text = /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(raw) ? htmlToText(raw) : raw
+    if (raw.length > 1024 * 1024 * 1.2) throw kbErr(413, '页面超过 1MB 上限')
 
-    const finalTitle = String(title || '').trim() || parsed.hostname
-    return ingestRunbook({ title: finalTitle, text: text.trim(), appId })
+    const contentType = res.headers.get('content-type') || ''
+    return /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(raw) ? htmlToText(raw) : raw
+  }
+
+  /** 瞬时失败（超时/网络错误/远端 5xx）自动重试一次；URL 参数问题与远端 4xx 不重试 */
+  async function fetchPageTextWithRetry(href) {
+    let lastErr
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await fetchPageText(href)
+      } catch (e) {
+        lastErr = e
+        const status = e?.status
+        const retriable = status === 504 || status === 502 && !/^抓取失败：HTTP 4/.test(String(e?.message))
+        if (!retriable || attempt === 2) throw e
+        await new Promise(r => setTimeout(r, 800))
+      }
+    }
+    throw lastErr
   }
 
   /** 极简 HTML → 纯文本：去 script/style、块级标签换行、解实体、压空白 */
