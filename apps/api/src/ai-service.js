@@ -166,6 +166,20 @@ export function createAiRouter(opts = {}) {
     return { ...row, metadata }
   }))
 
+  // 按 source 维度确定性定位原文 chunk（不依赖向量检索）
+  router.get('/kb/locate', wrap(async req => {
+    const type = String(req.query.type || '')
+    const id = String(req.query.id || '')
+    if (!type || !id) { const err = new Error('type 与 id 必填'); err.statusCode = 400; throw err }
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    const row = await kb.getFirstChunkBySource(type, id)
+    if (!row) { const err = new Error('chunk 不存在'); err.statusCode = 404; throw err }
+    let metadata = null
+    try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null } catch { metadata = null }
+    return { ...row, metadata }
+  }))
+
   router.post('/kb/runbook', wrap(async req => {
     const { title, text, url, appId } = req.body || {}
     const vectorReady = await vectorStore.ready()
