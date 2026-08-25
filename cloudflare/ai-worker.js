@@ -304,6 +304,7 @@ async function saveAiSettings(env, input) {
       .bind(JSON.stringify(config), now).run()
   } catch (error) {
     if (error?.status) throw error
+    console.error('saveAiSettings failed:', String(error?.stack || error?.message || error))
     throw Object.assign(new Error('保存 AI 设置失败'), { status: 500 })
   }
   return readAiSettings(env)
