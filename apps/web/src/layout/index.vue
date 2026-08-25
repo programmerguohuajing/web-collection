@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
-  Histogram, House, Menu, Monitor, Operation, Setting, Stopwatch, User, Warning, MagicStick
+  Histogram, House, Menu, Monitor, Operation, Setting, Stopwatch, User, Warning, MagicStick, Collection
 } from '@element-plus/icons-vue'
 import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
@@ -48,6 +48,9 @@ const groups = [
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Aim },
     { title: '发布管理', path: '/releases', icon: Operation }
+  ] },
+  { label: '知识库', items: [
+    { title: '知识库', path: '/knowledge', icon: Collection }
   ] },
   { label: '配置', items: [
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
