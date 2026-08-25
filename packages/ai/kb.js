@@ -190,6 +190,9 @@ export function createKb({ db, vectorStore, embedder }) {
 
   const PAGE_FETCH_TIMEOUT_MS = 30000
 
+  /** 反爬挑战页特征：Cloudflare/Nginx/应用层 WAF 的 JS 挑战、人机校验与拒绝访问占位页 */
+  const CHALLENGE_RE = /just a moment|please wait|checking your browser|verify you are (?:human|browser)|attention required|access denied|enable javascript|ddos protection|captcha/i
+
   /**
    * 单次抓取：携带浏览器特征头降低被站点 WAF 拦截概率；
    * 响应头与 body 读取共用同一个 30s 超时窗口（避免慢速滴流 body 挂死请求）。
@@ -230,8 +233,14 @@ export function createKb({ db, vectorStore, embedder }) {
 
     const contentType = res.headers.get('content-type') || ''
     const isHtml = /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(raw)
-    if (!isHtml) return { text: raw, docTitle: '' }
-    return { text: htmlToText(raw), docTitle: extractHtmlTitle(raw) }
+    const text = isHtml ? htmlToText(raw) : raw
+    const docTitle = isHtml ? extractHtmlTitle(raw) : ''
+
+    // 有效性校验：拦截反爬挑战页与空内容，避免把 "Please wait..." 等占位文本当作知识入库
+    if (text.trim().length < 100 || CHALLENGE_RE.test(docTitle) || CHALLENGE_RE.test(text.slice(0, 600))) {
+      throw kbErr(422, '未抓取到有效正文：该页面疑似被站点防护拦截（需浏览器 JS 执行或登录），请改用「上传文件」方式录入')
+    }
+    return { text, docTitle }
   }
 
   /** 提取 <title> 文本作为 URL 模式的默认标题 */
