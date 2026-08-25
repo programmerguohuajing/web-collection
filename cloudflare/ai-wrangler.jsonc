@@ -26,8 +26,13 @@
     "MODEL_ORDER": "local,domestic,overseas"
   }
 
+  // AI 模型/路由配置入口：控制台「配置 → AI 诊断」页面（/ai-settings），
+  // 持久化到 D1 settings.config_json.ai，运行时 DB 配置优先于本文件 vars 与 secrets。
+  // env/secrets 仅作未配置时的兜底。
+  //
   // Secrets 不在此配置：部署时用 `wrangler secret put` 设置以下键（--config cloudflare/ai-wrangler.jsonc）：
-  //   DOMESTIC_API_KEY / OVERSEAS_API_KEY（模型供应商 key）
+  //   AI_SECRET_MASTER_KEY（AI 设置页 apiKey 的 AES-GCM 加密密钥；未设置时回落 ALERT_SECRET_MASTER_KEY）
+  //   DOMESTIC_API_KEY / OVERSEAS_API_KEY（模型供应商 key，兜底）
   //   LOCAL_MODEL_BASE_URL / LOCAL_MODEL_NAME / LOCAL_MODEL_API_KEY（本地 Ollama，可选）
   //   AI_API_KEY（/api/ai/* 开放 API 鉴权，可选）
 }
