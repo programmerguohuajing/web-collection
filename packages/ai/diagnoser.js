@@ -114,7 +114,8 @@ function asResult(response) {
     summary: response.summary || '',
     hypotheses: response.hypotheses || [],
     suggestions: response.suggestions || [],
-    relatedKb: response.relatedKb || []
+    relatedKb: response.relatedKb || [],
+    ...(response.rawOutput ? { rawOutput: response.rawOutput } : {})
   }
 }
 
