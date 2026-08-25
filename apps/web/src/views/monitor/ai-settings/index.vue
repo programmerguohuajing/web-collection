@@ -222,6 +222,11 @@ onMounted(loadAi)
           <el-input v-model="aiForm.providers[key].baseUrl" :placeholder="API_FORMATS.find(f => f.value === aiForm.providers[key].apiFormat)?.baseHint" clearable />
           <small>当前生效：{{ sourceLabels[effectiveSource[`providers.${key}.baseUrl`]] || '-' }}</small>
         </el-form-item>
+        <el-form-item label="API Key">
+          <el-input v-model="aiForm.providers[key].apiKey" type="password" show-password autocomplete="new-password"
+            :placeholder="(effectiveSource[`providers.${key}.apiKey`] === 'none') ? '未设置' : '留空保持现有 Key 不变'" />
+          <small v-if="effectiveSource[`providers.${key}.apiKey`] !== 'none'">已配置（{{ sourceLabels[effectiveSource[`providers.${key}.apiKey`]] }}），留空则不修改</small>
+        </el-form-item>
         <el-form-item label="模型名称">
           <div class="model-row">
             <el-select v-model="aiForm.providers[key].modelName" filterable allow-create default-first-option placeholder="手输或点右侧获取模型">
@@ -230,11 +235,6 @@ onMounted(loadAi)
             <el-button :icon="Refresh" :loading="modelsLoading[key]" @click="fetchModels(key)">获取模型</el-button>
           </div>
           <small>当前生效：{{ sourceLabels[effectiveSource[`providers.${key}.modelName`]] || '-' }}</small>
-        </el-form-item>
-        <el-form-item label="API Key">
-          <el-input v-model="aiForm.providers[key].apiKey" type="password" show-password autocomplete="new-password"
-            :placeholder="(effectiveSource[`providers.${key}.apiKey`] === 'none') ? '未设置' : '留空保持现有 Key 不变'" />
-          <small v-if="effectiveSource[`providers.${key}.apiKey`] !== 'none'">已配置（{{ sourceLabels[effectiveSource[`providers.${key}.apiKey`]] }}），留空则不修改</small>
         </el-form-item>
       </el-form>
     </el-card>
