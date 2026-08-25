@@ -18,6 +18,8 @@ export const KB_TABLE = 'ai_kb_chunks'
 export const META_TABLE = 'ai_kb_meta'
 export const KB_ELEMS = { table: KB_TABLE }
 
+import { hash } from './db-adapter.js'
+
 export function createKb({ db, vectorStore, embedder }) {
   async function search(query, { appId, topK = 8, limit = 5 } = {}) {
     if (!vectorStore) return []
@@ -56,7 +58,146 @@ export function createKb({ db, vectorStore, embedder }) {
     const rows = await db.prepare(`select id from ${KB_TABLE} where source_type=? and source_id=?`).bind(sourceType, sourceId).all()
     const ids = rows.map(r => r.id)
     await db.prepare(`delete from ${KB_TABLE} where source_type=? and source_id=?`).bind(sourceType, sourceId).run()
+    // 同步清理 meta，避免列表出现「幽灵条目」（chunks 已删但 meta 残留）
+    await db.prepare(`delete from ${META_TABLE} where source_type=? and source_id=?`).bind(sourceType, sourceId).run()
     if (vectorStore && ids.length) await vectorStore.deleteByIds(ids)
+  }
+
+  /** 单条 chunk 详情（原文 + metadata），供 /kb/chunk/:id */
+  async function getChunk(id) {
+    return db.prepare(`select * from ${KB_TABLE} where id=?`).bind(id).first()
+  }
+
+  /**
+   * 全量摄取元数据列表（升级版）：join chunks 带出 title/excerpt/app_id，
+   * 支持分页（page/pageSize）与 type/appId 过滤。供知识库列表页与统计概览。
+   */
+  async function listMeta({ page = 1, pageSize = 50, type = '', appId = '' } = {}) {
+    const where = []
+    const params = []
+    if (type) { where.push('m.source_type=?'); params.push(type) }
+    if (appId) { where.push('c.app_id=?'); params.push(appId) }
+    const clause = where.length ? ` where ${where.join(' and ')}` : ''
+    const totalRow = await db.prepare(
+      `select count(distinct m.id) as n from ${META_TABLE} m left join ${KB_TABLE} c on c.source_type=m.source_type and c.source_id=m.source_id${clause}`
+    ).bind(...params).first()
+    const size = Math.max(1, Math.min(Number(pageSize) || 50, 200))
+    const offset = (Math.max(1, Number(page) || 1) - 1) * size
+    const rows = (await db.prepare(
+      `select m.source_type, m.source_id, m.content_hash, m.version, m.updated_at,
+              max(c.app_id) as app_id,
+              max(coalesce(json_extract(c.metadata_json, '$.title'), null)) as title,
+              max(substr(c.text, 1, 120)) as excerpt
+         from ${META_TABLE} m left join ${KB_TABLE} c on c.source_type=m.source_type and c.source_id=m.source_id${clause}
+        group by m.id, m.source_type, m.source_id, m.content_hash, m.version, m.updated_at
+        order by m.updated_at desc limit ? offset ?`
+    ).bind(...params, size, offset).all()) || []
+    return { items: rows, total: Number(totalRow?.n ?? rows.length), page: Number(page) || 1, pageSize: size }
+  }
+
+  /** 统计概览：总数 + 按 source_type 计数 + 最近更新时间 */
+  async function stats() {
+    const rows = (await db.prepare(`select source_type, count(*) as n from ${META_TABLE} group by source_type`).all()) || []
+    const byType = {}
+    let total = 0
+    for (const r of rows) { byType[r.source_type] = Number(r.n); total += Number(r.n) }
+    const latest = await db.prepare(`select max(updated_at) as latest from ${META_TABLE}`).first()
+    return { total, byType, latestUpdated: Number(latest?.latest ?? 0) || null }
+  }
+
+  /**
+   * runbook 摄取：按 Markdown 标题切分入库（source_type='runbook'）。
+   * 幂等：同 source 先删后写；返回 { ingested }。
+   */
+  async function ingestRunbook({ title, text, appId }) {
+    const sourceId = `runbook:${hash(String(title || '')).slice(0, 12)}`
+    await removeBySource('runbook', sourceId)
+    const chunks = splitMarkdown(String(text || ''))
+    if (!chunks.length) chunks.push({ title: title || '', text: String(text || '').trim() })
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkTitle = chunks[i].title || title || ''
+      const chunkText = `# ${chunkTitle}\n\n${chunks[i].text}`
+      await upsertChunk({
+        id: `${sourceId}:${hash(chunkText).slice(0, 12)}:${i}`,
+        sourceType: 'runbook', sourceId, appId: appId || 'global', chunkIdx: i,
+        text: chunkText, metadata: { title: chunkTitle, file: title || '' }
+      })
+    }
+    await upsertMeta({ sourceType: 'runbook', sourceId, contentHash: hash(`${title}|${text}`), version: '1' })
+    return { ok: true, sourceId, ingested: chunks.length }
+  }
+
+  /** 简易 Markdown 切分：按 1-4 级标题分块 */
+  function splitMarkdown(raw) {
+    const lines = String(raw).split('\n')
+    const chunks = []
+    let current = [], currentTitle = ''
+    const push = () => {
+      if (!current.length) return
+      const t = current.join('\n').trim()
+      if (t) chunks.push({ title: currentTitle, text: t })
+      current = []
+    }
+    for (const line of lines) {
+      const h = /^(#{1,4})\s+(.*)$/.exec(line)
+      if (h) { push(); currentTitle = h[2].trim(); current.push(line); continue }
+      current.push(line)
+    }
+    push()
+    return chunks
+  }
+
+  /**
+   * runbook 在线链接摄取：服务端抓取页面 → HTML 转纯文本 → 复用 ingestRunbook 切分入库。
+   * 安全：仅允许 http(s)；拒绝内网/回环地址；10s 超时、1MB 大小上限。
+   */
+  async function ingestRunbookFromUrl({ url, title, appId }) {
+    let parsed
+    try { parsed = new URL(String(url || '')) } catch { throw Object.assign(new Error('URL 格式无效'), { status: 400 }) }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw Object.assign(new Error('仅支持 http(s) 链接'), { status: 400 })
+    }
+    const host = parsed.hostname.toLowerCase()
+    const blocked = host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local')
+      || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
+      || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+      || host === '[::1]' || host.startsWith('fd') || host.startsWith('fe80')
+    if (blocked) throw Object.assign(new Error('不允许抓取内网地址'), { status: 400 })
+
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 10000)
+    let res
+    try {
+      res = await fetch(parsed.href, { signal: ctrl.signal, redirect: 'follow', headers: { 'user-agent': 'web-collection-kb/1.0' } })
+    } catch (e) {
+      clearTimeout(timer)
+      throw Object.assign(new Error(e?.name === 'AbortError' ? '抓取超时(10s)' : `抓取失败：${String(e?.message || e).slice(0, 80)}`), { status: 502 })
+    }
+    clearTimeout(timer)
+    if (!res.ok) throw Object.assign(new Error(`抓取失败：HTTP ${res.status}`), { status: 502 })
+    const len = Number(res.headers.get('content-length') || 0)
+    if (len > 1024 * 1024) throw Object.assign(new Error('页面超过 1MB 上限'), { status: 413 })
+    const raw = await res.text()
+    if (raw.length > 1024 * 1024 * 1.2) throw Object.assign(new Error('页面超过 1MB 上限'), { status: 413 })
+    const contentType = res.headers.get('content-type') || ''
+    const text = /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(raw) ? htmlToText(raw) : raw
+
+    const finalTitle = String(title || '').trim() || parsed.hostname
+    return ingestRunbook({ title: finalTitle, text: text.trim(), appId })
+  }
+
+  /** 极简 HTML → 纯文本：去 script/style、块级标签换行、解实体、压空白 */
+  function htmlToText(html) {
+    let s = String(html)
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<(br|\/p|\/div|\/h[1-6]|\/li|\/tr)\b[^>]*>/gi, '\n')
+      .replace(/<h([1-4])\b[^>]*>/gi, '\n## ')
+      .replace(/<[^>]+>/g, ' ')
+    s = s.replace(/&nbsp;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+      .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+    return s.split('\n').map(l => l.replace(/[ \t]+/g, ' ').trim()).filter(Boolean).join('\n')
   }
 
   async function getMeta(sourceType, sourceId) {
@@ -72,5 +213,5 @@ export function createKb({ db, vectorStore, embedder }) {
     ).bind(`${sourceType}:${sourceId}`, sourceType, sourceId, contentHash, version || null, now).run()
   }
 
-  return { search, upsertChunk, removeBySource, getMeta, upsertMeta }
+  return { search, upsertChunk, removeBySource, getMeta, upsertMeta, getChunk, listMeta, stats, ingestRunbook, ingestRunbookFromUrl }
 }

@@ -41,8 +41,10 @@ export default {
           if (origin) { try { crossOrigin = new URL(origin).origin !== url.origin } catch { crossOrigin = true } }
           if (crossOrigin) return cors(json({ error: 'forbidden' }, 403), request)
         } else {
-          const adminOnly = path === '/api/ai/kb/ingest' || path === '/api/ai/kb/search' || path === '/api/ai/kb/source' || path === '/api/ai/kb/meta'
-          const requireKey = adminOnly || (env.AI_API_KEY && !sameOrigin(request, url))
+          // §8.3 兜底方案落地：KB 路由不再恒要求 x-ai-key。
+          // 同源（控制台）请求一律放行；仅当配置了 AI_API_KEY 且为跨源开放调用时才校验。
+          // 这样知识库页面不依赖部署期配置主/ai 双 worker 同值 AI_API_KEY。
+          const requireKey = env.AI_API_KEY && !sameOrigin(request, url)
           if (requireKey && request.headers.get('x-ai-key') !== env.AI_API_KEY) {
             return cors(json({ error: 'unauthorized' }, 401), request)
           }
@@ -139,8 +141,35 @@ async function route(request, env, url, path) {
     return json(await listProviderModels(env, await request.json().catch(() => ({}))))
   }
   if (path === '/api/ai/kb/meta' && request.method === 'GET') {
-    const rows = (await db.prepare('select source_type,source_id,content_hash,version,updated_at from ai_kb_meta order by updated_at desc limit 200').all()) || []
-    return json({ items: rows })
+    const list = await kb.listMeta({
+      page: url.searchParams.get('page') || 1,
+      pageSize: url.searchParams.get('pageSize') || 50,
+      type: url.searchParams.get('type') || '',
+      appId: url.searchParams.get('appId') || ''
+    })
+    return json(list)
+  }
+  if (path === '/api/ai/kb/stats' && request.method === 'GET') {
+    return json(await kb.stats())
+  }
+  if ((path.startsWith('/api/ai/kb/chunk/') || path.startsWith('/api/ai/kb/chunk%2F')) && request.method === 'GET') {
+    const id = decodeURIComponent(path.slice('/api/ai/kb/chunk/'.length))
+    const row = await kb.getChunk(id)
+    if (!row) throw Object.assign(new Error('chunk 不存在'), { status: 404 })
+    let metadata = null
+    try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null } catch { metadata = null }
+    return json({ ...row, metadata })
+  }
+  if (path === '/api/ai/kb/runbook' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}))
+    const title = String(body?.title || '').trim()
+    // url 模式：服务端抓取在线页面；否则要求 text 正文
+    if (body?.url) {
+      return json(await kb.ingestRunbookFromUrl({ url: String(body.url), title, appId: String(body?.appId || '') }))
+    }
+    const text = String(body?.text || '').trim()
+    if (!title || !text) throw Object.assign(new Error('title 与 text（或 url）必填'), { status: 400 })
+    return json(await kb.ingestRunbook({ title, text, appId: String(body?.appId || '') }))
   }
   return json({ error: 'not found' }, 404)
 }
