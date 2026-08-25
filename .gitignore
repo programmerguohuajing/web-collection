@@ -22,3 +22,4 @@ apps/web/dist-*/
 
 # wrangler 本地开发 secrets（不入库）
 .dev.vars
+.hermes/
