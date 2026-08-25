@@ -36,14 +36,40 @@ export function createEmbedder(opts = {}) {
     throw lastErr
   }
 
+  /**
+   * 原生批量嵌入：Workers AI 单次调用支持 text[]（≤100 条/次），
+   * 把 N 次远程往返压缩为 ceil(N/100) 次——CF Worker 每请求 subrequest 限额下的关键优化。
+   * 自定义实现（Node 本地 provider）无批量协议时退化为受控并发（每批 8 条）。
+   */
   async function embedBatch(texts, { retries = 2 } = {}) {
-    const out = []
-    for (let i = 0; i < texts.length; i += 100) {
-      const chunk = texts.slice(i, i + 100)
-      const vectors = await Promise.all(chunk.map(t => embedText(t, { retries })))
-      out.push(...vectors)
+    const list = (texts || []).map(t => String(t))
+    if (!list.length) return []
+    if (typeof custom === 'function') {
+      const out = []
+      for (let i = 0; i < list.length; i += 8) {
+        const group = list.slice(i, i + 8)
+        out.push(...await Promise.all(group.map(t => embedText(t, { retries }))))
+      }
+      return out
     }
-    return out
+    if (!ai) throw new Error('embedder: Workers AI binding 缺失（AI 未注入）')
+    let lastErr
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const out = []
+        for (let i = 0; i < list.length; i += 100) {
+          const part = list.slice(i, i + 100)
+          const r = await ai.run(model, { text: part })
+          const data = Array.isArray(r?.data) ? r.data : []
+          for (let j = 0; j < part.length; j++) {
+            const v = data[j] ?? (j === 0 && !data.length ? r?.data ?? r : null)
+            out.push(Array.isArray(v) ? v : [])
+          }
+        }
+        return out
+      } catch (e) { lastErr = e; if (attempt < retries) await sleep(200 * (attempt + 1)) }
+    }
+    throw lastErr
   }
 
   return { embedText, embedBatch, dimension: EMBED_DIM }

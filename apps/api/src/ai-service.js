@@ -122,7 +122,7 @@ export function createAiRouter(opts = {}) {
   router.post('/kb/ingest', wrap(async req => {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
-    return ingestResolvedIssues({ db, kb, force: !!(req.body && req.body.force) })
+    return ingestResolvedIssues({ db, kb, embedder: await getEmbedder(), vectorStore: vectorReady ? vectorStore : null, force: !!(req.body && req.body.force) })
   }))
 
   router.get('/kb/search', wrap(async req => {

@@ -201,7 +201,8 @@ async function rebuildIndex() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ force: false })
     })
-    ElMessage.success(`issue 类索引重建完成：新增 ${r?.ingested ?? 0} 条，跳过 ${r?.skipped ?? 0} 条`)
+    const vecNote = Number(r?.indexed) > 0 || !('indexed' in (r || {})) ? '' : `；向量索引未生成（${r?.indexed === 0 ? '嵌入失败' : '部分完成'}）`
+    ElMessage.success(`issue 类索引重建完成：新增 ${r?.ingested ?? 0} 条，跳过 ${r?.skipped ?? 0} 条${vecNote}`)
     await Promise.all([load(), loadStats()])
   } catch (e) {
     ElMessage.error(e?.message || '重建索引失败')
@@ -266,7 +267,8 @@ async function submitRunbook() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload)
     })
-    ElMessage.success(`runbook 已入库并进入检索（切分 ${r?.ingested ?? 1} 块）`)
+    const vecNote = Number(r?.indexed) > 0 || !('indexed' in (r || {})) ? '' : '；但向量索引未生成，语义检索暂不可用，可稍后重试或重建索引'
+    ElMessage.success(`已入库（切分 ${r?.ingested ?? 1} 块${vecNote}）`)
     rbDialog.open = false
     state.filter = 'runbook'
     await Promise.all([load(), loadStats()])
