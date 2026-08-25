@@ -84,7 +84,8 @@ export function buildDistributedTrace(events = [], backendSpans = []) {
     startTs: Number.isFinite(span.startTs) ? span.startTs : 0,
     duration: span.duration,
     status: span.statusCode,
-    hasError: traceSpanHasError(span)
+    hasError: traceSpanHasError(span),
+    ...frontendHttpMeta(span)
   }))
   const edges = spans
     .filter(span => span.parentSpanId && span.parentSpanId !== span.spanId && ids.has(span.parentSpanId))
@@ -92,6 +93,15 @@ export function buildDistributedTrace(events = [], backendSpans = []) {
   const errorSpans = spans.filter(traceSpanHasError).map(span => span.spanId)
   const roots = nodes.filter(node => !edges.some(edge => edge.target === node.id))
   return { root: roots[0] || null, nodes, edges, criticalPath: traceCriticalPath(roots, spanMap), errorSpans }
+}
+
+/** 前端 fetch/xhr Span 透出请求端点，供调用拓扑按接口拆分节点（与 PG 端实现保持一致） */
+function frontendHttpMeta(span) {
+  const op = String(span.operationName || '').toLowerCase()
+  if (span.serviceName !== 'frontend' || (op !== 'fetch' && op !== 'xhr')) return {}
+  const url = String(span.attributes?.url || '').trim()
+  if (!url) return {}
+  return { httpMethod: String(span.attributes?.method || 'GET').toUpperCase(), httpUrl: url }
 }
 
 /** 合并同 spanId 的 span，避免重复 key 与断裂边（与 PG 端 buildDistributedTrace 一致） */

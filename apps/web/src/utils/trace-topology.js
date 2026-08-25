@@ -27,6 +27,26 @@ function nodeType(node = {}) {
   return 'service'
 }
 
+function normalizeApiPath(url) {
+  // 根相对路径直接取 path（去掉 query），绝对地址取 host+pathname
+  if (url.startsWith('/')) return url.split('?')[0]
+  try {
+    const u = new URL(url)
+    return `${u.host}${u.pathname}`
+  } catch {
+    return url
+  }
+}
+
+/** 前端 fetch/xhr Span 按请求端点独立成 API 节点，避免纯前端 Trace 折叠成单个 frontend 孤立节点 */
+function frontendEndpoint(node = {}) {
+  const url = text(node.httpUrl)
+  if (!url) return null
+  const method = text(node.httpMethod).toUpperCase() || 'GET'
+  const label = `${method} ${normalizeApiPath(url)}`
+  return { id: `api:${label}`, label }
+}
+
 /**
  * Builds a renderable service topology from the distributed-span response.
  * This is a compatibility path for API deployments that do not yet expose
@@ -43,24 +63,27 @@ export function buildTopologyFromDistributed(payload = {}) {
     const spanId = text(node.id || node.spanId) || `span-${index}`
     const service = text(node.service || node.serviceName)
     const operation = text(node.name || node.operationName)
-    const groupName = service && service.toLowerCase() !== 'unknown' ? service : operation || spanId
-    const topologyId = `service:${groupName}`
-    const existing = topologyNodes.get(topologyId)
     const failed = hasError(node)
     const duration = number(node.duration)
 
+    // 前端 fetch/xhr 按端点拆分；其余前端 Span 折叠进 frontend 入口节点；非前端服务按服务名聚合
+    const endpoint = service.toLowerCase() === 'frontend' ? frontendEndpoint(node) : null
+    const groupName = service && service.toLowerCase() !== 'unknown' ? service : operation || spanId
+    const topologyId = endpoint ? endpoint.id : `service:${groupName}`
+    const existing = topologyNodes.get(topologyId)
+
     if (existing) {
       existing.value += 1
-      existing.p95 = Math.max(existing.p95, duration)
+      existing.p95 = Math.max(existing.p95, Math.round(duration))
       if (failed) existing.errors += 1
-      if (service.toLowerCase() === 'frontend' && existing.label !== operation) existing.label = service
+      if (!endpoint && service.toLowerCase() === 'frontend' && existing.label !== operation) existing.label = service
     } else {
       topologyNodes.set(topologyId, {
         id: topologyId,
-        label: service.toLowerCase() === 'frontend' ? operation || service : groupName,
-        type: nodeType(node),
+        label: endpoint ? endpoint.label : (service.toLowerCase() === 'frontend' ? operation || service : groupName),
+        type: endpoint ? 'api' : nodeType(node),
         value: 1,
-        p95: duration,
+        p95: Math.round(duration),
         errors: failed ? 1 : 0
       })
     }
