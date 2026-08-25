@@ -35,7 +35,7 @@ const autoKind = computed(() =>
   (autoTraceId.value ? 'trace' : autoIssueFp.value ? 'error' : ''))
 
 const currentContextLabel = computed(() => {
-  if (autoKind.value === 'trace') return `正在诊断 trace：${short(autoTraceId.value)}`
+  if (autoKind.value === 'trace') return `正在诊断 trace：${autoTraceId.value}`
   if (autoKind.value === 'error') return `正在诊断 issue：${short(autoIssueFp.value)}`
   return '未检测到当前选中的 trace / issue，可切换到手动输入'
 })
@@ -265,7 +265,7 @@ defineExpose({ open })
 <style scoped>
 .ai-drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .ai-drawer-head h3 { display: flex; align-items: center; gap: 6px; margin: 0; }
-.ctx-label { color: var(--el-text-color-secondary); margin: 0 0 12px; font-size: 13px; }
+.ctx-label { color: var(--el-text-color-secondary); margin: 0 0 12px; font-size: 13px; word-break: break-all; }
 .manual-row { display: flex; gap: 8px; }
 .manual-stack { flex-direction: column; align-items: stretch; }
 .result-block { margin-top: 16px; }
