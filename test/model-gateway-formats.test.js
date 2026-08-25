@@ -105,6 +105,28 @@ test('未设 API_FORMAT 时保持 openai-chat 兼容（现有行为不变）', a
   assert.equal(r.content, '{"summary":"x"}')
 })
 
+test('openai-chat：content 为空时回落 reasoning 字段（Ollama 推理模型）', async () => {
+  const fetchFn = captureFetch({ choices: [{ message: { content: '', reasoning: '思考链……最终输出 {"summary":"r1"}' } }] })
+  const gw = createModelGateway({
+    LOCAL_MODEL_BASE_URL: 'http://ollama.example/v1',
+    LOCAL_MODEL_NAME: 'deepseek-r1:8b',
+    MODEL_ORDER: 'local',
+    MODEL_FALLBACK: 'off'
+  }, { fetchFn })
+  const r = await gw.route('s', 'u')
+  assert.ok(r.content.includes('{"summary":"r1"}'), '应提取 reasoning 兜底')
+})
+
+test('openai-chat：content 与 reasoning 均为空则报错', async () => {
+  const fetchFn = captureFetch({ choices: [{ message: { content: '', reasoning: '' } }] })
+  const gw = createModelGateway({
+    LOCAL_MODEL_BASE_URL: 'http://ollama.example/v1',
+    MODEL_ORDER: 'local',
+    MODEL_FALLBACK: 'off'
+  }, { fetchFn })
+  await assert.rejects(() => gw.route('s', 'u'), /无 content/)
+})
+
 test('非法 API_FORMAT 回落 openai-chat', async () => {
   const fetchFn = captureFetch({ choices: [{ message: { content: 'ok' } }] })
   const gw = createModelGateway({
