@@ -29,8 +29,12 @@ async function callOpenAIChat(fetchFn, { baseURL, model, apiKey }, messages, { s
   })
   if (!res.ok) throw new Error(`llm http ${res.status}: ${(await res.text()).slice(0, 200)}`)
   const data = await res.json()
-  const content = data?.choices?.[0]?.message?.content
-  if (typeof content !== 'string') throw new Error('llm 响应无 content')
+  const message = data?.choices?.[0]?.message
+  // 推理模型（deepseek-r1/qwen3 等）经 Ollama OpenAI 兼容层可能把内容放在 reasoning、content 为空
+  const content = typeof message?.content === 'string' && message.content.trim()
+    ? message.content
+    : (typeof message?.reasoning === 'string' ? message.reasoning : '')
+  if (!content.trim()) throw new Error('llm 响应无 content')
   return content
 }
 

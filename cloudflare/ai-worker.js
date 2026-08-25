@@ -343,14 +343,15 @@ async function testAiSettings(env, input) {
       const provider = gateway.providers[name]
       if (!provider) return [name, { ok: false, error: '未知 provider' }]
       const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), 10000)
+      // 推理模型（r1/qwen3）首 token 前思考链较长，10s 常误报超时；放宽到 20s
+      const timer = setTimeout(() => ctrl.abort(), 20000)
       try {
         await provider([{ role: 'user', content: '回复ok' }], ctrl.signal)
         clearTimeout(timer)
         return [name, { ok: true, latencyMs: Date.now() - start }]
       } catch (error) {
         clearTimeout(timer)
-        const message = error?.name === 'AbortError' ? '超时(10s)' : String(error?.message || error)
+        const message = error?.name === 'AbortError' ? '超时(20s)' : String(error?.message || error)
         return [name, { ok: false, error: message.slice(0, 80), latencyMs: Date.now() - start }]
       }
     } catch (error) {
