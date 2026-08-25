@@ -68,6 +68,13 @@ export function createKb({ db, vectorStore, embedder }) {
     return db.prepare(`select * from ${KB_TABLE} where id=?`).bind(id).first()
   }
 
+  /** 按 source 维度取第一条 chunk（确定性定位，不依赖向量检索），供 /kb/locate */
+  async function getFirstChunkBySource(sourceType, sourceId) {
+    return db.prepare(
+      `select * from ${KB_TABLE} where source_type=? and source_id=? order by chunk_idx asc limit 1`
+    ).bind(String(sourceType || ''), String(sourceId || '')).first() || null
+  }
+
   /**
    * 全量摄取元数据列表（升级版）：join chunks 带出 title/excerpt/app_id，
    * 支持分页（page/pageSize）与 type/appId 过滤。供知识库列表页与统计概览。
@@ -108,23 +115,24 @@ export function createKb({ db, vectorStore, embedder }) {
   /**
    * runbook 摄取：按 Markdown 标题切分入库（source_type='runbook'）。
    * 幂等：同 source 先删后写；返回 { ingested }。
+   * sourceId 可选：URL 模式传入基于 URL 的固定 id，避免同域不同文章互相覆盖。
    */
-  async function ingestRunbook({ title, text, appId }) {
-    const sourceId = `runbook:${hash(String(title || '')).slice(0, 12)}`
-    await removeBySource('runbook', sourceId)
+  async function ingestRunbook({ title, text, appId, sourceId }) {
+    const sid = sourceId || `runbook:${hash(String(title || '')).slice(0, 12)}`
+    await removeBySource('runbook', sid)
     const chunks = splitMarkdown(String(text || ''))
     if (!chunks.length) chunks.push({ title: title || '', text: String(text || '').trim() })
     for (let i = 0; i < chunks.length; i++) {
       const chunkTitle = chunks[i].title || title || ''
       const chunkText = `# ${chunkTitle}\n\n${chunks[i].text}`
       await upsertChunk({
-        id: `${sourceId}:${hash(chunkText).slice(0, 12)}:${i}`,
-        sourceType: 'runbook', sourceId, appId: appId || 'global', chunkIdx: i,
+        id: `${sid}:${hash(chunkText).slice(0, 12)}:${i}`,
+        sourceType: 'runbook', sourceId: sid, appId: appId || 'global', chunkIdx: i,
         text: chunkText, metadata: { title: chunkTitle, file: title || '' }
       })
     }
-    await upsertMeta({ sourceType: 'runbook', sourceId, contentHash: hash(`${title}|${text}`), version: '1' })
-    return { ok: true, sourceId, ingested: chunks.length }
+    await upsertMeta({ sourceType: 'runbook', sourceId: sid, contentHash: hash(`${title}|${text}`), version: '1' })
+    return { ok: true, sourceId: sid, ingested: chunks.length }
   }
 
   /** 简易 Markdown 切分：按 1-4 级标题分块 */
@@ -150,6 +158,7 @@ export function createKb({ db, vectorStore, embedder }) {
   /**
    * runbook 在线链接摄取：服务端抓取页面 → HTML 转纯文本 → 复用 ingestRunbook 切分入库。
    * 安全：仅允许 http(s)；拒绝内网/回环地址；30s 超时、1MB 大小上限；瞬时失败自动重试一次。
+   * sourceId 固定取 URL 哈希：同域不同文章互不覆盖；同一链接重复抓取为幂等更新。
    */
   async function ingestRunbookFromUrl({ url, title, appId }) {
     let parsed
@@ -159,9 +168,12 @@ export function createKb({ db, vectorStore, embedder }) {
     }
     assertPublicHost(parsed.hostname)
 
-    const text = await fetchPageTextWithRetry(parsed.href)
-    const finalTitle = String(title || '').trim() || parsed.hostname
-    return ingestRunbook({ title: finalTitle, text: text.trim(), appId })
+    const { text, docTitle } = await fetchPageTextWithRetry(parsed.href)
+    // 标题优先级：手填 > 页面 <title> > host+path（hostname 会令同域文章互相覆盖，仅作最后兜底）
+    const pathFallback = `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`.replace(/\/+$/, '')
+    const finalTitle = String(title || '').trim() || docTitle || pathFallback
+    const sid = `runbook:url:${hash(parsed.href).slice(0, 12)}`
+    return ingestRunbook({ title: finalTitle, text: text.trim(), appId, sourceId: sid })
   }
 
   function kbErr(status, message) { return Object.assign(new Error(message), { status }) }
@@ -217,7 +229,16 @@ export function createKb({ db, vectorStore, embedder }) {
     if (raw.length > 1024 * 1024 * 1.2) throw kbErr(413, '页面超过 1MB 上限')
 
     const contentType = res.headers.get('content-type') || ''
-    return /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(raw) ? htmlToText(raw) : raw
+    const isHtml = /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(raw)
+    if (!isHtml) return { text: raw, docTitle: '' }
+    return { text: htmlToText(raw), docTitle: extractHtmlTitle(raw) }
+  }
+
+  /** 提取 <title> 文本作为 URL 模式的默认标题 */
+  function extractHtmlTitle(html) {
+    const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(String(html))
+    if (!m) return ''
+    return m[1].replace(/\s+/g, ' ').trim().slice(0, 120)
   }
 
   /** 瞬时失败（超时/网络错误/远端 5xx）自动重试一次；URL 参数问题与远端 4xx 不重试 */
@@ -264,5 +285,5 @@ export function createKb({ db, vectorStore, embedder }) {
     ).bind(`${sourceType}:${sourceId}`, sourceType, sourceId, contentHash, version || null, now).run()
   }
 
-  return { search, upsertChunk, removeBySource, getMeta, upsertMeta, getChunk, listMeta, stats, ingestRunbook, ingestRunbookFromUrl }
+  return { search, upsertChunk, removeBySource, getMeta, upsertMeta, getChunk, getFirstChunkBySource, listMeta, stats, ingestRunbook, ingestRunbookFromUrl }
 }

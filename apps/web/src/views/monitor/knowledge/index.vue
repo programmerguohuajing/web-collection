@@ -150,11 +150,8 @@ async function openDetail(item) {
     if (id) {
       drawer.chunk = await api(`/api/ai/kb/chunk/${encodeURIComponent(id)}`, { requestKey: `kb:chunk:${id}` })
     } else {
-      const list = await api(`/api/ai/kb/search?q=${encodeURIComponent(item.title || item.source_id)}&appId=${encodeURIComponent(item.app_id || '')}`, { requestKey: `kb:locate:${item.source_id}` })
-      const hit = (list?.results || []).find(r => r.source_type === item.source_type && r.source_id === item.source_id)
-        || (list?.results || [])[0]
-      if (!hit) throw new Error('未定位到该知识的原文 chunk')
-      drawer.chunk = await api(`/api/ai/kb/chunk/${encodeURIComponent(hit.id)}`, { requestKey: `kb:chunk:${hit.id}` })
+      // 按来源确定性定位（/kb/locate），不依赖向量检索是否就绪或命中
+      drawer.chunk = await api(`/api/ai/kb/locate?type=${encodeURIComponent(item.source_type)}&id=${encodeURIComponent(item.source_id)}`, { requestKey: `kb:locate:${item.source_type}:${item.source_id}` })
     }
   } catch (e) {
     drawer.error = e?.message || '原文加载失败'

@@ -160,6 +160,17 @@ async function route(request, env, url, path) {
     try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null } catch { metadata = null }
     return json({ ...row, metadata })
   }
+  // 按 source 维度确定性定位原文 chunk（不依赖向量检索）
+  if (path === '/api/ai/kb/locate' && request.method === 'GET') {
+    const type = url.searchParams.get('type') || ''
+    const id = url.searchParams.get('id') || ''
+    if (!type || !id) throw Object.assign(new Error('type 与 id 必填'), { status: 400 })
+    const row = await kb.getFirstChunkBySource(type, id)
+    if (!row) throw Object.assign(new Error('chunk 不存在'), { status: 404 })
+    let metadata = null
+    try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null } catch { metadata = null }
+    return json({ ...row, metadata })
+  }
   if (path === '/api/ai/kb/runbook' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}))
     const title = String(body?.title || '').trim()
