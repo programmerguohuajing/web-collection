@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { MagicStick, RefreshRight } from '@element-plus/icons-vue'
 import { api } from '../dashboard.js'
@@ -113,6 +113,14 @@ function rediagnose() {
   if (result.value?.refId) diagnose({ traceId: result.value.refId })
 }
 
+/** 溯源跳转：优先 chunk id，兜底 source 维度 */
+const router = useRouter()
+function openKnowledge(k) {
+  if (!k) return
+  if (k.id) router.push({ path: '/knowledge', query: { id: k.id } })
+  else if (k.sourceId && k.sourceType) router.push({ path: '/knowledge', query: { source: k.sourceId, type: k.sourceType } })
+}
+
 function open() { visible.value = true }
 defineExpose({ open })
 </script>
@@ -212,9 +220,14 @@ defineExpose({ open })
         </ol>
       </section>
 
-      <section v-if="result.relatedKb?.length" class="result-block">
+      <section v-if="result.kbHits?.length || result.relatedKb?.length" class="result-block">
         <h4>相关知识</h4>
-        <div v-for="(k, i) in result.relatedKb" :key="i" class="kb-row">
+        <!-- kbHits 来自真实检索结果（含 chunk id），可点击跳转知识库溯源；relatedKb 仅作旧数据兜底 -->
+        <div v-for="(k, i) in (result.kbHits?.length ? result.kbHits : [])" :key="`hit-${i}`" class="kb-row clickable" @click="openKnowledge(k)">
+          <span class="kb-title">{{ k.title }}</span>
+          <el-tag size="small" type="warning" effect="plain">{{ pct(k.score) }}</el-tag>
+        </div>
+        <div v-for="(k, i) in (!result.kbHits?.length ? result.relatedKb : [])" :key="`rel-${i}`" class="kb-row">
           <span>{{ k.title }}</span>
           <el-tag size="small" type="warning" effect="plain">{{ pct(k.score) }}</el-tag>
         </div>
@@ -278,7 +291,10 @@ defineExpose({ open })
 .suggestions { margin: 0; padding-left: 20px; }
 .suggestions li { margin-bottom: 6px; font-size: 13px; }
 .suggestions code { background: var(--el-fill-color); padding: 0 4px; border-radius: 3px; font-size: 12px; }
-.kb-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 4px 0; }
+.kb-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
+.kb-row.clickable { cursor: pointer; border-radius: 6px; }
+.kb-row.clickable:hover { color: var(--el-color-primary); }
+.kb-row .kb-title { flex: 1; min-width: 0; word-break: break-word; }
 .feedback-row { display: flex; gap: 8px; margin-bottom: 8px; }
 .correction { margin-bottom: 8px; }
 .meta { margin-top: 16px; font-size: 12px; color: var(--el-text-color-placeholder); display: flex; gap: 12px; }

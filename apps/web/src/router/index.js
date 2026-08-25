@@ -22,6 +22,7 @@ export const router = createRouter({
         { path: 'governance', component: () => import('../views/monitor/governance/index.vue'), meta: { title: '采集治理' } },
         { path: 'settings', component: () => import('../views/monitor/settings/index.vue'), meta: { title: '系统设置' } },
         { path: 'ai-settings', component: () => import('../views/monitor/ai-settings/index.vue'), meta: { title: 'AI 诊断' } },
+        { path: 'knowledge', component: () => import('../views/monitor/knowledge/index.vue'), meta: { title: '知识库' } },
       { path: 'alerts', component: () => import('../pages/AlertsPage.vue'), meta: { title: '告警中心' } },
       { path: 'live', component: () => import('../pages/LivePage.vue'), meta: { title: '实时监控' } },
       { path: 'sessions', component: () => import('../pages/SessionsPage.vue'), meta: { title: '用户会话' } },
