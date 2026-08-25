@@ -25,6 +25,17 @@ test('distributed trace keeps legacy events and links children regardless of row
   assert.deepEqual(result.criticalPath, ['root', 'child', 'backend'])
 })
 
+test('distributed trace exposes http endpoint for frontend fetch spans and omits it otherwise', () => {
+  const result = buildDistributedTrace([
+    { id: 'e1', trace_id: 'trace-2', span_id: 'fetch-span', type: 'perf', metric: 'fetch', ts: 10, value: 80, props_json: { url: '/api/orders?page=1', method: 'GET' } },
+    { id: 'e2', trace_id: 'trace-2', span_id: 'metric-span', type: 'perf', metric: 'lcp', ts: 20, value: 1200, props_json: {} }
+  ], [])
+
+  const fetchNode = result.nodes.find(node => node.id === 'fetch-span')
+  assert.deepEqual({ httpMethod: fetchNode.httpMethod, httpUrl: fetchNode.httpUrl }, { httpMethod: 'GET', httpUrl: '/api/orders?page=1' })
+  assert.equal('httpUrl' in result.nodes.find(node => node.id === 'metric-span'), false)
+})
+
 test('funnel counts ordered conversion, dropoff, errors and replay correlation', () => {
   const base = { release_name: '1.0', browser: 'Chrome', device: 'Desktop' }
   const rows = [

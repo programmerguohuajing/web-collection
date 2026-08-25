@@ -1012,7 +1012,8 @@ export function buildDistributedTrace(events = [], backendSpans = []) {
     startTs: Number.isFinite(span.startTs) ? span.startTs : 0,
     duration: span.duration,
     status: span.statusCode,
-    hasError: spanHasError(span)
+    hasError: spanHasError(span),
+    ...frontendHttpMeta(span)
   }))
   const edges = spans
     .filter(span => span.parentSpanId && span.parentSpanId !== span.spanId && allSpanIds.has(span.parentSpanId))
@@ -1031,6 +1032,15 @@ function structuredObject(value) {
   } catch {
     return {}
   }
+}
+
+/** 前端 fetch/xhr Span 透出请求端点，供调用拓扑按接口拆分节点（与 queries.js 实现保持一致） */
+function frontendHttpMeta(span) {
+  const op = String(span.operationName || '').toLowerCase()
+  if (span.serviceName !== 'frontend' || (op !== 'fetch' && op !== 'xhr')) return {}
+  const url = String(span.attributes?.url || '').trim()
+  if (!url) return {}
+  return { httpMethod: String(span.attributes?.method || 'GET').toUpperCase(), httpUrl: url }
 }
 
 function cleanId(value) {
