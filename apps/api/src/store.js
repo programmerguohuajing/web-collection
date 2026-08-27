@@ -202,7 +202,15 @@ async function upsertIssue(event) {
   const id = fingerprint(event)
   const previousRow = await getIssueRow(id)
   const previous = previousRow ? mapIssue(previousRow) : null
-  const original = await resolveSourceMap(event)
+  const sourceMap = await resolveSourceMap(event)
+  // 把 sourceMap 还原结果合并到 original_json（前端直接读 source/line/column/name）
+  // 同时把 traceId 写进 props（兼容老 issues 表里 props_json=null 的历史行）
+  // 保留历史 original：新事件没解析出 sourceMap 时不覆盖（历史行可能有 stack 解析结果）
+  const original = sourceMap
+    ? { traceId: event.traceId || null, ...sourceMap }
+    : (previous?.original || null)
+  // props 同理：新事件没传 traceId 时沿用历史的（但用户/版本信息总是用最新）
+  const props = { ...(event.props || {}), ...(event.traceId ? { traceId: event.traceId } : (previous?.props?.traceId ? { traceId: previous.props.traceId } : {})) }
   const user = { id: event.userId || event.deviceId || event.sessionId || '', name: event.userName || '', phone: event.userPhone || '' }
   const oldUsers = (previous?.users || []).map(item => typeof item === 'string' ? { id: item, name: '', phone: '' } : item)
   const users = [...oldUsers.filter(item => item.id !== user.id), user].filter(item => item.id || item.name || item.phone).slice(-100)
@@ -215,7 +223,7 @@ async function upsertIssue(event) {
     message: event.message,
     stack: trimStack(event.stack),
     url: event.url,
-    props: event.props,
+    props,
     breadcrumbs: event.breadcrumbs,
     original,
     users,

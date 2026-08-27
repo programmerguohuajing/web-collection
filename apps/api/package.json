@@ -11,6 +11,8 @@
     "restart:pm2": "pm2 restart web-collection-api --update-env",
     "stop:pm2": "pm2 stop web-collection-api",
     "db:init": "node src/scripts/init-db.js",
+    "backfill:issue-source-map": "node scripts/backfill-issue-source-map.mjs",
+    "backfill:issue-source-map:d1": "node scripts/backfill-issue-source-map-d1.mjs",
     "test": "node --test --test-concurrency=1 ../../test/*.test.js"
   },
   "dependencies": {
