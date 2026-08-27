@@ -445,6 +445,58 @@ export async function ensureSchema() {
     version varchar(64),
     updated_at bigint
   )`)
+
+  // ==================== PRD 集合：洞察/治理层 ====================
+  // PRD 02 事件字典：人工登记含义（统计本身走 events 聚合，此处只存登记元数据）
+  await run(`create table if not exists event_dictionary (
+    name varchar(160) primary key,
+    description text,
+    owner varchar(64),
+    tags_json jsonb,
+    registered_at bigint,
+    updated_at bigint
+  )`)
+  // PRD 05 漏斗增强列（复用既有 funnel_definitions，勿新建 funnels 表）
+  await run(`alter table funnel_definitions add column if not exists created_by varchar(64)`)
+  await run(`alter table funnel_definitions add column if not exists dimension varchar(32)`)
+  // PRD 04 远程配置：配置快照 append-only（最新 config_version 即最大 audit id）
+  await run(`create table if not exists collect_configs (
+    id bigserial primary key,
+    scope_json jsonb not null,
+    config_json jsonb not null,
+    config_version integer not null,
+    created_by varchar(64) not null,
+    created_at bigint not null
+  )`)
+  await run(`create index if not exists idx_collect_configs_scope on collect_configs(created_at desc)`)
+  await run(`create table if not exists collect_config_audit (
+    id bigserial primary key,
+    action varchar(16) not null,
+    scope_json jsonb,
+    config_snapshot jsonb not null,
+    diff_json jsonb,
+    operator varchar(64) not null,
+    created_at bigint not null
+  )`)
+  // PRD 07 数据访问等级：成员（账号体系立项前的最小实现）与敏感操作审计
+  await run(`create table if not exists members (
+    id varchar(32) primary key,
+    name varchar(64) not null,
+    role varchar(64),
+    access_level varchar(2) not null default 'L2',
+    last_active_at bigint,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists data_access_audit (
+    id bigserial primary key,
+    member_id varchar(32),
+    action varchar(32) not null,
+    target varchar(128),
+    detail_json jsonb,
+    created_at bigint not null
+  )`)
+  await run(`create index if not exists idx_data_access_audit_time on data_access_audit(created_at desc)`)
 }
 
 /**

@@ -32,7 +32,7 @@ export const LEGACY_KEY_MAP = { productAnalyticsV2: 'insights' }
 
 /**
  * Node API 当前真实支持的能力。
- * Node 已实现事件分析（analytics_insights），但标准流量/事件定义/用户旅程尚未开发。
+ * PRD 集合落地后：journeys（01 用户链路）与 eventDefinitions（02 事件字典）均已实现。
  */
 export const NODE_CAPABILITIES = {
   traffic: false,
@@ -42,15 +42,14 @@ export const NODE_CAPABILITIES = {
   paths: true,
   live: true,
   releases: true,
-  eventDefinitions: false,
-  journeys: false
+  eventDefinitions: true,
+  journeys: true
 }
 
 /**
  * Cloudflare Worker 当前真实支持的能力。
  * Worker 无事件分析端点（/api/analytics/insights），故 insights 为 false；
- * 其余分析能力（paths/live/releases/funnels/dashboards）Worker 已实现，保持 true。
- * 注意：仅 insights 一项差异，不是“整体未实现”。
+ * 其余分析能力 Worker 已实现；PRD 集合的 journeys/eventDefinitions 双端同步实现。
  */
 export const WORKER_CAPABILITIES = {
   traffic: false,
@@ -60,8 +59,8 @@ export const WORKER_CAPABILITIES = {
   paths: true,
   live: true,
   releases: true,
-  eventDefinitions: false,
-  journeys: false
+  eventDefinitions: true,
+  journeys: true
 }
 
 /**

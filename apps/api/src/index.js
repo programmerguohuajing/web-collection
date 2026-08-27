@@ -14,7 +14,16 @@ import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIs
 import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings, updateAlertStatus } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
 import { deleteDashboard, deleteFunnel, deleteInsight, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
-import { createMaskingMiddleware } from './privacy.js'
+import { getJourneyTimeline, searchJourneySessions } from './services/journey-service.js'
+import { getDictionaryDetail, listDictionary, registerEvent } from './services/dictionary-service.js'
+import { compareReleases, getReleaseQuality } from './services/quality-service.js'
+import { collectConfigStats, listCollectConfigHistory, previewCollectConfig, rollbackCollectConfig, saveCollectConfig } from './services/collect-config-service.js'
+import { getEngagementDetail, listEngagement } from './services/engagement-service.js'
+import { currentAccessLevel, listDataAccessAudit, listMembers, saveMember, saveMemberLevel } from './services/access-service.js'
+import { resolveCollectConfig } from '../../../packages/collect-config.js'
+import { applyAccessLevel } from '../../../packages/access-level.js'
+import { createMaskingMiddleware, MASK_SKIP_PREFIXES } from './privacy.js'
+import { badRequest } from './utils/http-error.js'
 import { buildCapabilities, NODE_CAPABILITIES } from '../../../packages/deployment-capabilities.js'
 import { createAiRouter } from './ai-service.js'
 
@@ -52,6 +61,23 @@ app.use(corsMiddleware)
 // 授权查看者（请求头 x-eys-raw-access 匹配环境变量 EYS_RAW_ACCESS_TOKEN）可看原文；
 // 写入 / 配置 / 静态类路由不掩码，避免破坏采集、治理配置与资源分发。
 app.use(createMaskingMiddleware())
+
+// PRD 07 数据访问等级：按全局等级（环境变量 DATA_ACCESS_LEVEL，默认 L2 fail-close）
+// 裁剪响应中的 ip / userId / userPhone。明细读取类接口（journey/dictionary/quality/
+// engagement/events 等）不感知等级、业务零改动，由本中间件统一裁剪；
+// 配置与管理类路由跳过。等级本身经 /api/me/access-level 显式暴露给前端。
+const ACCESS_SKIP_PREFIXES = [
+  ...MASK_SKIP_PREFIXES,
+  '/api/me', '/api/members', '/api/audit', '/api/collect-config'
+]
+app.use((req, res, next) => {
+  const path = req.path
+  if (!path.startsWith('/api/') || ACCESS_SKIP_PREFIXES.some(prefix => path.startsWith(prefix))) return next()
+  const originalJson = res.json.bind(res)
+  const level = currentAccessLevel()
+  res.json = (body) => originalJson(applyAccessLevel(body, level))
+  next()
+})
 
 // 健康检查，给部署平台和监控系统使用。
 app.get('/health', (req, res) => {
@@ -284,6 +310,91 @@ app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFun
 app.post('/api/funnels', async (req, res, next) => { try { res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
 app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await deleteFunnel(req.params.id)) } catch (err) { next(err) } })
 app.get('/api/funnels/:id/run', async (req, res, next) => { try { res.json(await runFunnel(req.params.id, filters(req.query))) } catch (err) { next(err) } })
+
+// ==================== PRD 集合：洞察/治理层 ====================
+// PRD 01 用户链路
+app.get('/api/journey/sessions', async (req, res, next) => {
+  try { res.json(await searchJourneySessions({ ...filters(req.query), type: req.query.type, value: req.query.value })) } catch (err) { next(err) }
+})
+app.get('/api/journey/timeline', async (req, res, next) => {
+  try {
+    res.json(await getJourneyTimeline(req.query.sessionId, {
+      appId: req.query.appId,
+      startTime: finiteTimestamp(req.query.startTime ?? req.query.start),
+      endTime: finiteTimestamp(req.query.endTime ?? req.query.end),
+      limit: Number(req.query.limit) || undefined
+    }))
+  } catch (err) { next(err) }
+})
+// PRD 02 事件字典
+app.get('/api/events/dictionary', async (req, res, next) => {
+  try { res.json(await listDictionary({ source: req.query.source, health: req.query.health, platform: req.query.platform, q: req.query.q, appId: req.query.appId, page: req.query.page, pageSize: req.query.pageSize })) } catch (err) { next(err) }
+})
+// 字典列表（注意：path=空串也命中 :name，需显式拒绝以返回 4xx）
+app.get('/api/events/dictionary/names', async (req, res, next) => {
+  // 漏斗编辑器下拉数据源：事件名 + 健康状态
+  try {
+    const data = await listDictionary({ q: req.query.q, pageSize: 100 })
+    res.json(data.items.map(item => ({ name: item.name, health: item.health, count7d: item.count7d, verdict: item.verdict })))
+  } catch (err) { next(err) }
+})
+app.get('/api/events/dictionary/:name', async (req, res, next) => {
+  if (!req.params.name) return next(badRequest('事件名不能为空', 'MISSING_EVENT_NAME'))
+  try { res.json(await getDictionaryDetail(req.params.name, { appId: req.query.appId })) } catch (err) { next(err) }
+})
+app.put('/api/events/dictionary/:name', async (req, res, next) => {
+  try { res.json(await registerEvent(req.params.name, req.body || {})) } catch (err) { next(err) }
+})
+// PRD 03 版本质量
+app.get('/api/releases/quality', async (req, res, next) => {
+  try { res.json(await getReleaseQuality({ appId: req.query.appId, dim: req.query.dim, startTime: finiteTimestamp(req.query.start), endTime: finiteTimestamp(req.query.end) })) } catch (err) { next(err) }
+})
+app.get('/api/releases/quality/compare', async (req, res, next) => {
+  try { res.json(await compareReleases({ appId: req.query.appId, a: req.query.a, b: req.query.b })) } catch (err) { next(err) }
+})
+// PRD 04 远程配置——管理端（同源）
+app.get('/api/collect-config', async (req, res, next) => {
+  try { res.json(await previewCollectConfig({ appId: req.query.appId, platform: req.query.platform, sdkVersion: req.query.sdkVersion })) } catch (err) { next(err) }
+})
+app.put('/api/collect-config', async (req, res, next) => {
+  try { res.json(await saveCollectConfig(req.body || {})) } catch (err) { next(err) }
+})
+app.get('/api/collect-config/history', async (req, res, next) => {
+  try { res.json(await listCollectConfigHistory()) } catch (err) { next(err) }
+})
+app.post('/api/collect-config/rollback', async (req, res, next) => {
+  try { res.json(await rollbackCollectConfig(Number(req.body?.historyId), req.body || {})) } catch (err) { next(err) }
+})
+app.get('/api/collect-config/stats', async (req, res, next) => {
+  try { res.json(await collectConfigStats()) } catch (err) { next(err) }
+})
+// PRD 05 漏斗报告（PRD 形状，内部复用 runFunnel 计算引擎）
+app.get('/api/funnels/:id/report', async (req, res, next) => {
+  try { res.json(buildFunnelReport(await runFunnel(req.params.id, filters(req.query)))) } catch (err) { next(err) }
+})
+// PRD 06 页面参与度
+app.get('/api/analytics/engagement', async (req, res, next) => {
+  try { res.json(await listEngagement({ ...filters(req.query), q: req.query.q })) } catch (err) { next(err) }
+})
+app.get('/api/analytics/engagement/detail', async (req, res, next) => {
+  try {
+    res.json(await getEngagementDetail({
+      path: req.query.path, appId: req.query.appId || filters(req.query).appId,
+      startTime: finiteTimestamp(req.query.start), endTime: finiteTimestamp(req.query.end),
+      compareStart: finiteTimestamp(req.query.compareStart), compareEnd: finiteTimestamp(req.query.compareEnd)
+    }))
+  } catch (err) { next(err) }
+})
+// PRD 07 数据访问等级
+app.get('/api/me/access-level', async (req, res) => {
+  res.json({ level: currentAccessLevel(), label: ({ L1: '只读统计', L2: '业务分析', L3: '运维诊断', L4: '完整数据' })[currentAccessLevel()] })
+})
+app.get('/api/members', async (req, res, next) => { try { res.json(await listMembers()) } catch (err) { next(err) } })
+app.post('/api/members', async (req, res, next) => { try { res.json(await saveMember(req.body || {})) } catch (err) { next(err) } })
+app.put('/api/members/:id/level', async (req, res, next) => {
+  try { res.json(await saveMemberLevel(req.params.id, req.body || {})) } catch (err) { next(err) }
+})
+app.get('/api/audit/data-access', async (req, res, next) => { try { res.json(await listDataAccessAudit()) } catch (err) { next(err) } })
 app.get('/api/dashboards', async (req, res, next) => { try { res.json(await listDashboards()) } catch (err) { next(err) } })
 app.post('/api/dashboards', async (req, res, next) => { try { res.json(await saveDashboard(req.body || {})) } catch (err) { next(err) } })
 app.delete('/api/dashboards/:id', async (req, res, next) => { try { res.json(await deleteDashboard(req.params.id)) } catch (err) { next(err) } })
@@ -297,6 +408,46 @@ app.get('/api/export/:kind.csv', async (req, res, next) => {
     res.type('text/csv; charset=utf-8').set('content-disposition', `attachment; filename="web-collection-${req.params.kind}.csv"`).send('\ufeff' + toCsv(rows))
   } catch (err) { next(err) }
 })
+
+// PRD 04 远程配置——SDK 端（公开、只读）：ETag 304 免传输，IP 令牌桶限流。
+// 失败安全由 SDK 保证：拉取失败沿用上次配置；从未拉到则内置默认全开。
+const sdkConfigHits = new Map()
+app.get('/sdk-config', async (req, res, next) => {
+  try {
+    if (!sdkConfigRateLimit(req.ip)) return res.status(429).type('text/plain; charset=utf-8').send('too many requests')
+    const resolved = await previewCollectConfig({
+      appId: String(req.query.app_id || '').slice(0, 64),
+      platform: String(req.query.platform || '').slice(0, 32),
+      sdkVersion: String(req.query.sdk_version || '').slice(0, 32)
+    })
+    const payload = {
+      config_version: resolved.configVersion,
+      ttl_ms: 300000,
+      master_switch: resolved.config.master_switch,
+      sampling: resolved.config.sampling,
+      blocked_events: resolved.config.blocked_events,
+      plugins: resolved.config.plugins,
+      rate_limits: resolved.config.rate_limits
+    }
+    const etag = `"cfg-${resolved.configVersion}"`
+    if (req.get('if-none-match') === etag && resolved.configVersion > 0) return res.status(304).end()
+    res.set('etag', etag).set('cache-control', 'public, max-age=60').json(payload)
+  } catch (err) { next(err) }
+})
+
+/** IP 令牌桶：每 IP 每 10 秒最多 30 次（SDK 5 分钟轮询下远够用，防恶意刷） */
+function sdkConfigRateLimit(ip) {
+  const key = ip || 'unknown'
+  const now = Date.now()
+  const bucket = sdkConfigHits.get(key) || { tokens: 30, updatedAt: now }
+  bucket.tokens = Math.min(30, bucket.tokens + (now - bucket.updatedAt) / 10000 * 30)
+  bucket.updatedAt = now
+  if (bucket.tokens < 1) { sdkConfigHits.set(key, bucket); return false }
+  bucket.tokens -= 1
+  sdkConfigHits.set(key, bucket)
+  if (sdkConfigHits.size > 10000) sdkConfigHits.clear()
+  return true
+}
 
 app.get('/sdk/:file', (req, res) => {
   serveFile(sdkDir, req.params.file, res, false)
@@ -512,6 +663,54 @@ function os(ua) {
   if (/iPhone|iPad/i.test(ua)) return 'iOS'
   if (/Linux/i.test(ua)) return 'Linux'
   return 'Unknown'
+}
+
+/** PRD 05：把 runFunnel 引擎输出整形为报告契约（meta/steps/trend/segments/lossInsight） */
+function buildFunnelReport(result) {
+  const definition = result?.definition || {}
+  const steps = result?.steps || []
+  const lostSessions = result?.lostSessions || []
+  const users = steps[0]?.count ?? 0
+  const converted = steps.at(-1)?.count ?? 0
+  const withErrorCount = lostSessions.filter(item => Number(item.errors) > 0).length
+  return {
+    meta: {
+      id: definition.id,
+      name: definition.name,
+      windowMs: result?.windowMs ?? definition.window_ms ?? null,
+      users,
+      converted,
+      overallRate: users > 0 ? Number((converted / users).toFixed(4)) : 0
+    },
+    steps: steps.map((step, index) => ({
+      idx: index + 1,
+      event: step.step,
+      filters: step.filters || [],
+      users: step.count,
+      rate: index === 0 ? 1 : Number((step.rate / 100).toFixed(4)),
+      lost: step.lost
+    })),
+    trend: (result?.trend || []).map(row => ({
+      day: row.date,
+      rate: row.entered > 0 ? Number((row.converted / row.entered).toFixed(4)) : 0
+    })),
+    segments: (result?.dimensions || []).map(dimension => ({
+      field: dimension.field,
+      items: (dimension.items || []).map(item => ({
+        name: item.name,
+        overallRate: item.entered > 0 ? Number((item.converted / item.entered).toFixed(4)) : 0,
+        entered: item.entered,
+        converted: item.converted
+      }))
+    })),
+    lossInsight: {
+      lostUsers: lostSessions.length,
+      withErrorRate: lostSessions.length ? Number((withErrorCount / lostSessions.length).toFixed(3)) : null,
+      topError: lostSessions.find(item => Number(item.errors) > 0)?.lastEvent || null,
+      sampleSessionIds: lostSessions.slice(0, 20).map(item => item.sessionId)
+    },
+    lostSessions: lostSessions.slice(0, 20)
+  }
 }
 
 async function exportRows(kind, query) {
