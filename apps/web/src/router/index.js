@@ -27,7 +27,11 @@ export const router = createRouter({
       { path: 'live', component: () => import('../pages/LivePage.vue'), meta: { title: '实时监控' } },
       { path: 'sessions', component: () => import('../pages/SessionsPage.vue'), meta: { title: '用户会话' } },
       { path: 'releases', component: () => import('../pages/ReleasesPage.vue'), meta: { title: '发布管理' } },
-      { path: 'paths', component: () => import('../pages/PathsPage.vue'), meta: { title: '用户路径' } }
+      { path: 'paths', component: () => import('../pages/PathsPage.vue'), meta: { title: '用户路径' } },
+      { path: 'journey', component: () => import('../views/insight/journey/index.vue'), meta: { title: '用户链路' } },
+      { path: 'funnels', component: () => import('../views/insight/funnels/index.vue'), meta: { title: '漏斗分析' } },
+      { path: 'dictionary', component: () => import('../views/governance/dictionary/index.vue'), meta: { title: '事件字典' } },
+      { path: 'access-levels', component: () => import('../views/settings/access-levels/index.vue'), meta: { title: '成员与数据等级' } }
       ]
     }
   ]
