@@ -159,8 +159,16 @@ async function upsertIssue(env, event) {
   const fingerprint = await sha256(issueKey(event))
   const previous = await env.DB.prepare('select * from issues where fingerprint=?').bind(fingerprint).first()
   const status = previous?.status === 'resolved' && previous.release_name !== event.release ? 'regression' : previous?.status || 'open'
-  const original = await resolveSourceMap(env, event)
-  await env.DB.prepare(`insert into issues (fingerprint,status,app_id,release_name,name,message,stack,url,props_json,breadcrumbs_json,original_json,count,first_seen,last_seen,resolved_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(fingerprint) do update set status=excluded.status,release_name=excluded.release_name,message=excluded.message,stack=excluded.stack,url=excluded.url,props_json=excluded.props_json,breadcrumbs_json=excluded.breadcrumbs_json,original_json=excluded.original_json,count=issues.count+1,last_seen=excluded.last_seen`).bind(fingerprint,status,event.appId,event.release,event.name,event.message,event.stack,event.url,JSON.stringify(event.props||null),JSON.stringify(event.breadcrumbs||null),JSON.stringify(original),1,previous?.first_seen||event.ts,event.ts,previous?.resolved_at||null).run()
+  const sourceMap = await resolveSourceMap(env, event)
+  // 与 PG 后端（store.js）保持一致：sourceMap 还原结果合并进 original_json 并写入 traceId；
+  // 新事件未解析出 sourceMap 时沿用历史 original（避免覆盖已存在的 stack 反解结果）。
+  const original = sourceMap
+    ? { traceId: event.traceId || null, ...sourceMap }
+    : parse(previous?.original_json, null)
+  // props 同步合并 traceId（历史行无 traceId 时沿用上一次的，保证聚合表三处 traceId 一致）
+  const previousProps = parse(previous?.props_json, null) || {}
+  const props = { ...(event.props || {}), ...(event.traceId ? { traceId: event.traceId } : (previousProps.traceId ? { traceId: previousProps.traceId } : {})) }
+  await env.DB.prepare(`insert into issues (fingerprint,status,app_id,release_name,name,message,stack,url,props_json,breadcrumbs_json,original_json,count,first_seen,last_seen,resolved_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(fingerprint) do update set status=excluded.status,release_name=excluded.release_name,message=excluded.message,stack=excluded.stack,url=excluded.url,props_json=excluded.props_json,breadcrumbs_json=excluded.breadcrumbs_json,original_json=excluded.original_json,count=issues.count+1,last_seen=excluded.last_seen`).bind(fingerprint,status,event.appId,event.release,event.name,event.message,event.stack,event.url,JSON.stringify(props),JSON.stringify(event.breadcrumbs||null),JSON.stringify(original),1,previous?.first_seen||event.ts,event.ts,previous?.resolved_at||null).run()
   return { fingerprint, status, count: Number(previous?.count || 0) + 1 }
 }
 

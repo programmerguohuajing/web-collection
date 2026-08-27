@@ -152,12 +152,17 @@ async function submitFunnel() {
 }
 
 const TEMPLATES = [
-  { name: '注册转化', icon: '⚿', color: 'var(--cat-pv)', steps: ['pv', 'click', 'submit_phone', 'signup_success'] },
-  { name: '下单转化', icon: '🛒', color: 'var(--cat-perf)', steps: ['view_product', 'add_cart', 'submit_order', 'pay_success'] },
-  { name: '表单完成', icon: '📝', color: 'var(--c-warning)', steps: ['form_enter', 'form_fill', 'form_submit'] }
+  // 纯色块 + 圆角数字 badge：色块背景就是模板的「类型色」+ 白底数字，
+  // 弱 emoji 渲染环境下图标语义依然清晰，且可放大后仍居中
+  { name: '注册转化', color: 'var(--cat-pv)', badge: '01', desc: 'pv → click → submit_phone → signup_success' },
+  { name: '下单转化', color: 'var(--cat-perf)', badge: '02', desc: 'view_product → add_cart → submit_order → pay_success' },
+  { name: '表单完成', color: 'var(--c-warning)', badge: '03', desc: 'form_enter → form_fill → form_submit' }
 ]
+function templateSteps(template) {
+  return template.desc.split(' → ').map(name => ({ eventName: name, constraint: '' }))
+}
 function useTemplate(template) {
-  Object.assign(editorForm, { id: null, name: template.name, windowMs: 1800000, dimension: '', steps: template.steps.map(name => ({ eventName: name, constraint: '' })) })
+  Object.assign(editorForm, { id: null, name: template.name, windowMs: 1800000, dimension: '', steps: templateSteps(template) })
   editorOpen.value = true
   loadEventNames()
 }
@@ -195,9 +200,9 @@ onMounted(loadFunnels)
     <!-- 预置模板 -->
     <div class="tpl-grid">
       <div v-for="template in TEMPLATES" :key="template.name" class="tpl-card" @click="useTemplate(template)">
-        <div class="tpl-top"><span class="tpl-ico" :style="{ background: template.color }">{{ template.icon }}</span><span class="tpl-tag">模板</span></div>
+        <div class="tpl-top"><span class="tpl-ico" :style="{ background: template.color }">{{ template.badge }}</span><span class="tpl-tag">模板</span></div>
         <h3>{{ template.name }}</h3>
-        <p>{{ template.steps.join(' → ') }}</p>
+        <p>{{ template.desc }}</p>
       </div>
     </div>
 
@@ -321,7 +326,7 @@ onMounted(loadFunnels)
 .tpl-card { padding: 16px; border: 1px solid var(--c-border); border-radius: 12px; background: var(--c-surface); cursor: pointer; transition: all 140ms ease; }
 .tpl-card:hover { box-shadow: var(--sh-md); transform: translateY(-2px); border-color: #cfd3f7; }
 .tpl-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.tpl-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; font-size: 15px; }
+.tpl-ico { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 800; letter-spacing: 0.5px; }
 .tpl-tag { padding: 2px 7px; border-radius: 6px; background: var(--c-primary-soft); color: var(--c-primary); font-size: 10px; font-weight: 700; }
 .tpl-card h3 { margin: 0 0 4px; font-size: 14px; }
 .tpl-card p { margin: 0; color: var(--c-text-muted); font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere; }

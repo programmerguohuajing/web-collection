@@ -19,8 +19,6 @@ const applications = ref([])
 const menuOpen = ref(false)
 const aiDrawerOpen = ref(false)
 const aiDrawerRef = ref(null)
-// PRD 07：顶栏数据访问等级徽标（无账号体系阶段为全局环境变量等级；拉取失败静默隐藏）
-const accessLevel = ref(null)
 
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
@@ -43,24 +41,24 @@ const groups = [
     { title: '链路追踪', path: '/traces', icon: Connection }
   ] },
   { label: '洞察', items: [
-    { title: '用户链路', path: '/journey', icon: Aim, badge: 'P0' },
-    { title: '行为分析', path: '/behavior', icon: Histogram, badge: '参与度' },
+    { title: '用户链路', path: '/journey', icon: Aim },
+    { title: '行为分析', path: '/behavior', icon: Histogram },
     { title: '产品分析', path: '/analytics', icon: DataAnalysis },
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Aim },
-    { title: '漏斗分析', path: '/funnels', icon: TrendCharts, badge: 'P1' },
-    { title: '发布管理', path: '/releases', icon: Operation, badge: '版本质量' }
+    { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
+    { title: '发布管理', path: '/releases', icon: Operation }
   ] },
   { label: '治理', items: [
-    { title: '事件字典', path: '/dictionary', icon: Collection, badge: 'P0' },
-    { title: '采集治理', path: '/governance', icon: Operation, badge: '远程配置' },
+    { title: '事件字典', path: '/dictionary', icon: Collection },
+    { title: '采集治理', path: '/governance', icon: Operation },
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
     { title: '知识库', path: '/knowledge', icon: Collection }
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },
-    { title: '成员与数据等级', path: '/access-levels', icon: Lock, badge: 'P2' }
+    { title: '成员与数据等级', path: '/access-levels', icon: Lock }
   ] }
 ]
 
@@ -88,10 +86,6 @@ async function applyQuickRange(value) {
 onMounted(async () => {
   // ADR-006：深链 ?traceId= 写入全局诊断上下文（applyRoutePrefill 已把深链写入 filters.traceId）
   if (route.query.traceId) diagnosisStore.setTrace(route.query.traceId)
-  // PRD 07：等级徽标失败安全——接口不可用时直接不展示，不阻塞主流程
-  api('/api/me/access-level', { requestKey: 'layout:access-level' })
-    .then(data => { accessLevel.value = data?.level || null })
-    .catch(() => {})
   try {
     const [applicationData] = await Promise.all([
       api('/api/applications', { requestKey: 'layout:applications' }),
@@ -131,7 +125,6 @@ onMounted(async () => {
             <div v-if="group.label" class="menu-group">{{ group.label }}</div>
             <button v-for="item in group.items" :key="item.path" type="button" class="nav-item" :class="{ active: route.path === item.path }" @click="navigate(item.path)">
               <el-icon><component :is="item.icon" /></el-icon><span>{{ item.title }}</span>
-              <span v-if="item.badge" class="ni-tag">{{ item.badge }}</span>
             </button>
           </template>
         </nav>
@@ -149,7 +142,6 @@ onMounted(async () => {
             <div v-if="group.label" class="menu-group">{{ group.label }}</div>
             <button v-for="item in group.items" :key="item.path" type="button" class="nav-item" :class="{ active: route.path === item.path }" @click="router.push(item.path)">
               <el-icon><component :is="item.icon" /></el-icon><span>{{ item.title }}</span>
-              <span v-if="item.badge" class="ni-tag">{{ item.badge }}</span>
             </button>
           </template>
         </nav>
@@ -180,7 +172,6 @@ onMounted(async () => {
           </el-select>
         </div>
         <div class="navbar-actions">
-          <span v-if="accessLevel" class="lvl-badge" :class="accessLevel" title="当前数据访问等级（PRD 07）">{{ accessLevel }} · {{ { L1: '只读统计', L2: '业务分析', L3: '运维诊断', L4: '完整数据' }[accessLevel] || '' }}</span>
           <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>

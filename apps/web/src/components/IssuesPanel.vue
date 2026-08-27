@@ -33,8 +33,18 @@ function issueNameLabel(issue) {
   })[String(name || '').toLowerCase()] || name || '其他'
 }
 
-function sourceLabel(original) {
-  return original ? `${original.source}:${original.line}:${original.column}` : '-'
+function sourceLabel(original, stack) {
+  // 优先使用 SourceMap 反解结果（original.source/line/column）；
+  // 无 SourceMap 时从 stack 字符串正则解析第一帧（与 EventTable.formatErrorLocation 一致）
+  if (original && original.source && original.line) return `${original.source}:${original.line}:${original.column || 0}`
+  const match = [...String(stack || '').matchAll(/((?:https?:\/\/|\/)[^():\s]+):(\d+):(\d+)/g)]
+    .find(item => !/web-collection-sdk(?:\.[\w-]+)?\.js/i.test(item[1]))
+  return match ? `${match[1]}:${match[2]}:${match[3]}` : '-'
+}
+
+function issueTraceId(issue) {
+  // 优先从 props → original → 事件顶层（聚合表三处都可能保留）取 traceId
+  return issue?.props?.traceId || issue?.original?.traceId || issue?.traceId || null
 }
 </script>
 
@@ -67,11 +77,14 @@ function sourceLabel(original) {
       </el-table-column>
       <el-table-column label="源码位置" min-width="220">
         <template #default="{ row }">
-          <OverflowTip :text="sourceLabel(row.original)" />
+          <OverflowTip :text="sourceLabel(row.original, row.stack)" />
         </template>
       </el-table-column>
       <el-table-column label="Trace" min-width="180">
-        <template #default="{ row }"><router-link v-if="row.props?.traceId" :to="`/traces?traceId=${row.props.traceId}`">{{ row.props.traceId }}</router-link><span v-else>-</span></template>
+        <template #default="{ row }">
+          <router-link v-if="issueTraceId(row)" :to="`/traces?traceId=${encodeURIComponent(issueTraceId(row))}`">{{ issueTraceId(row) }}</router-link>
+          <span v-else>-</span>
+        </template>
       </el-table-column>
       <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">
