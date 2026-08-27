@@ -3,6 +3,9 @@ import { alertContext, channelMatches, decryptSecrets, encryptSecrets, normalize
 import { buildCapabilities, WORKER_CAPABILITIES } from '../packages/deployment-capabilities.js'
 import { maybeAutoDiagnose } from '../packages/ai/alert-diagnosis.js'
 import { buildDistributedTrace } from '../packages/ai/queries.js'
+import { DEFAULT_COLLECT_CONFIG, diffConfigs, resolveCollectConfig, sanitizeCollectConfigInput } from '../packages/collect-config.js'
+import { applyAccessLevel, normalizeLevel } from '../packages/access-level.js'
+import { keyFieldsOf } from '../packages/event-keyfields.js'
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
@@ -13,6 +16,7 @@ export default {
     try {
       let response
       if (url.pathname === '/health') response = json({ ok: true, runtime: 'cloudflare-workers' })
+      else if (url.pathname === '/sdk-config') response = await sdkConfig(request, env, url)
       else if (url.pathname === '/api/collect' && request.method === 'POST') response = await collect(request, env, ctx)
       else if (url.pathname === '/api/collect.gif') response = await collectGif(url, env)
       else if (url.pathname.startsWith('/api/ai/')) response = await proxyAi(request, env, url)
@@ -237,6 +241,35 @@ async function adminApi(request, env, url) {
   if (/^\/api\/dashboards\/\d+$/.test(path) && request.method === 'DELETE') { await env.DB.prepare('delete from dashboards where id=?').bind(Number(path.split('/').at(-1))).run(); return json({ok:true}) }
   if (path === '/api/maintenance/cleanup' && request.method === 'POST') return json(await cleanup(env))
   if (/^\/api\/export\/(events|issues|replays)\.csv$/.test(path)) return exportCsv(env, RegExp.$1, url)
+  // ==================== PRD 集合：洞察/治理层 ====================
+  // PRD 01 用户链路（注意顺序：names 先于 :name 通配）
+  if (path === '/api/journey/sessions') return journeySessions(env, url)
+  if (path === '/api/journey/timeline') return journeyTimeline(env, url)
+  if (path === '/api/events/dictionary') return dictionaryList(env, url)
+  if (path === '/api/events/dictionary/names') return dictionaryNames(env, url)
+  const dictName = /^\/api\/events\/dictionary\/([^/]+)$/.exec(path)
+  if (dictName && request.method === 'PUT') return dictionaryRegister(env, decodeURIComponent(dictName[1]), await request.json())
+  if (dictName) return dictionaryDetail(env, decodeURIComponent(dictName[1]), url)
+  // PRD 03 版本质量
+  if (path === '/api/releases/quality') return releaseQuality(env, url)
+  if (path === '/api/releases/quality/compare') return releaseQualityCompare(env, url)
+  // PRD 04 远程配置——管理端
+  if (path === '/api/collect-config' && request.method === 'GET') return collectConfigPreview(env, url)
+  if (path === '/api/collect-config' && request.method === 'PUT') return collectConfigSave(env, await request.json())
+  if (path === '/api/collect-config/history') return json((await env.DB.prepare('select id,action,scope_json,config_snapshot,diff_json,operator,created_at from collect_config_audit order by created_at desc limit 100').all()).results.map(row => ({ id: Number(row.id), action: row.action, scope: parse(row.scope_json, null), configSnapshot: parse(row.config_snapshot, null), diff: parse(row.diff_json, {})?.text || '', operator: row.operator, createdAt: Number(row.created_at) })))
+  if (path === '/api/collect-config/rollback' && request.method === 'POST') return collectConfigRollback(env, await request.json())
+  if (path === '/api/collect-config/stats') return collectConfigStats(env)
+  // PRD 05 漏斗报告（PRD 形状，复用 runFunnel 引擎输出整形）
+  if (/\/funnels\/\d+\/report$/.test(path)) return funnelReport(env, Number(path.split('/').at(-2)), url)
+  // PRD 06 页面参与度
+  if (path === '/api/analytics/engagement') return engagementList(env, url)
+  if (path === '/api/analytics/engagement/detail') return engagementDetail(env, url)
+  // PRD 07 数据访问等级
+  if (path === '/api/me/access-level') return json({ level: globalLevel(env), label: ({ L1: '只读统计', L2: '业务分析', L3: '运维诊断', L4: '完整数据' })[globalLevel(env)] })
+  if (path === '/api/members' && request.method === 'GET') return json((await env.DB.prepare('select * from members order by updated_at desc limit 200').all().catch(() => ({ results: [] }))).results.map(row => ({ id: row.id, name: row.name, role: row.role || '', level: normalizeLevel(row.access_level), lastActiveAt: row.last_active_at ? Number(row.last_active_at) : null, updatedAt: Number(row.updated_at || 0) })))
+  if (path === '/api/members' && request.method === 'POST') return memberSave(env, await request.json())
+  if (/^\/api\/members\/[^/]+\/level$/.test(path) && request.method === 'PUT') return memberLevel(env, decodeURIComponent(path.split('/').at(-2)), await request.json())
+  if (path === '/api/audit/data-access') return json((await env.DB.prepare('select * from data_access_audit order by created_at desc limit 200').all().catch(() => ({ results: [] }))).results.map(row => ({ id: Number(row.id), memberId: row.member_id, action: row.action, target: row.target, detail: parse(row.detail_json, null), createdAt: Number(row.created_at) })))
   return new Response('not found', { status: 404 })
 }
 
@@ -560,3 +593,384 @@ function parse(value,fallback){try{return typeof value==='string'?JSON.parse(val
 function strings(v){return Array.isArray(v)?v.map(String).map(s=>s.trim()).filter(Boolean):[]}
 function clip(v,n){return String(v??'').slice(0,n)} function rate(v){return Math.max(0,Math.min(1,Number(v??1)))} function origin(v){try{return new URL(v).origin}catch{return''}} function maskPhone(v=''){return String(v).replace(/^(\d{3})\d{4}(\d{4})$/,'$1****$2')} function random(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/[+/=]/g,'').slice(0,n*2)} async function sha256(v){return[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))].map(x=>x.toString(16).padStart(2,'0')).join('')}
 const defaultSettings={retention:{eventsDays:30,logsDays:14,replaysDays:7,resolvedIssuesDays:90,sourcemapsDays:180,alertsDays:90},alerts:{enabled:true,cooldownMinutes:10,errorCount:1,error:true,logError:true,regression:true,lcp:4000,inp:500,cls:.25,longtask:200}}
+
+// ==================== PRD 集合：洞察/治理层 ====================
+function globalLevel(env){return normalizeLevel(env.DATA_ACCESS_LEVEL)}
+function lvl(env,data){return applyAccessLevel(data,globalLevel(env))}
+
+// PRD 04：SDK 端公开下发（ETag 304 + 每 IP 令牌桶限流）
+const sdkConfigBuckets=new Map()
+async function sdkConfig(request,env,url){
+  const ip=request.headers.get('cf-connecting-ip')||'unknown',now=Date.now(),bucket=sdkConfigBuckets.get(ip)||{tokens:30,updatedAt:now}
+  bucket.tokens=Math.min(30,bucket.tokens+(now-bucket.updatedAt)/10000*30);bucket.updatedAt=now;sdkConfigBuckets.set(ip,bucket)
+  if(bucket.tokens<1){if(sdkConfigBuckets.size>10000)sdkConfigBuckets.clear();return new Response('too many requests',{status:429})}
+  bucket.tokens-=1
+  const rows=(await env.DB.prepare('select scope_json,config_json,config_version from collect_configs order by created_at desc,id desc limit 200').all().catch(()=>({results:[]}))).results
+  const resolved=resolveCollectConfig(rows,{appId:clip(url.searchParams.get('app_id')||'',64),platform:clip(url.searchParams.get('platform')||'',32),sdkVersion:clip(url.searchParams.get('sdk_version')||'',32)})
+  const config=resolved?.config||DEFAULT_COLLECT_CONFIG,payload={config_version:resolved?.configVersion||0,ttl_ms:300000,master_switch:config.master_switch,sampling:config.sampling,blocked_events:config.blocked_events,plugins:config.plugins,rate_limits:config.rate_limits}
+  const etag=`"cfg-${payload.config_version}"`
+  if(request.headers.get('if-none-match')===etag&&payload.config_version>0)return new Response(null,{status:304})
+  return json(payload,200,{etag,'cache-control':'public, max-age=60'})
+}
+function collectConfigPreview(env,url){
+  return env.DB.prepare('select scope_json,config_json,config_version from collect_configs order by created_at desc,id desc limit 200').all().then(({results})=>{
+    const resolved=resolveCollectConfig(results,{appId:url.searchParams.get('appId')||'',platform:url.searchParams.get('platform')||'',sdkVersion:url.searchParams.get('sdkVersion')||''})
+    return resolved?json({...resolved,matched:true}):json({scope:{},config:DEFAULT_COLLECT_CONFIG,configVersion:0,matched:false})
+  })
+}
+async function collectConfigSave(env,input){
+  const scope={},now=Date.now(),raw=input.scope||{}
+  if(raw.appId)scope.appId=clip(raw.appId,64)
+  if(raw.platform)scope.platform=clip(raw.platform,32)
+  if(raw.sdkVersionMax)scope.sdkVersionMax=clip(raw.sdkVersionMax,32)
+  const config=sanitizeCollectConfigInput(input.config||{}),operator=clip(input.operator||'admin',64)
+  const prevRows=(await env.DB.prepare('select scope_json,config_json,config_version from collect_configs order by created_at desc,id desc limit 200').all()).results
+  const before=resolveCollectConfig(prevRows,{appId:scope.appId||'',platform:scope.platform||'',sdkVersion:scope.sdkVersionMax||''})
+  const auditResult=await env.DB.prepare('insert into collect_config_audit(action,scope_json,config_snapshot,diff_json,operator,created_at) values(?,?,?,?,?,?)').bind(before?'update':'create',JSON.stringify(scope),JSON.stringify(config),JSON.stringify({text:diffConfigs(before?.config||DEFAULT_COLLECT_CONFIG,config)}),operator,now).run()
+  const configVersion=Number(auditResult.meta.last_row_id)
+  await env.DB.prepare('insert into collect_configs(scope_json,config_json,config_version,created_by,created_at) values(?,?,?,?,?)').bind(JSON.stringify(scope),JSON.stringify(config),configVersion,operator,now).run()
+  return json({ok:true,configVersion})
+}
+async function collectConfigRollback(env,input){
+  const row=await env.DB.prepare('select * from collect_config_audit where id=?').bind(Number(input.historyId)).first()
+  if(!row)return json({error:'历史记录不存在'},404)
+  const now=Date.now(),audit=await env.DB.prepare('insert into collect_config_audit(action,scope_json,config_snapshot,diff_json,operator,created_at) values(\'rollback\',?,?,?,?,?)').bind(row.scope_json,row.config_snapshot,JSON.stringify({text:`回滚到历史 #${row.id}`}),clip(input.operator||'admin',64),now).run()
+  const configVersion=Number(audit.meta.last_row_id)
+  await env.DB.prepare('insert into collect_configs(scope_json,config_json,config_version,created_by,created_at) values(?,?,?,?,?)').bind(row.scope_json,row.config_snapshot,configVersion,clip(input.operator||'admin',64),now).run()
+  return json({ok:true,configVersion})
+}
+function collectConfigStats(env){
+  return Promise.all([
+    env.DB.prepare(`select coalesce(json_extract(props_json,'$.configVersion'),json_extract(props_json,'$.config_version'),json_extract(context_json,'$.configVersion'),json_extract(context_json,'$.config_version'),'未上报') version,count(distinct session_id) sessions from events where ts>=? and ifnull(session_id,'')<>'' group by version order by sessions desc limit 20`).bind(Date.now()-86400000).all().catch(()=>({results:[]})),
+    env.DB.prepare('select max(id) latest from collect_config_audit').first().catch(()=>null),
+    env.DB.prepare(`select count(*) count from (select distinct scope_json from collect_configs where scope_json is not null and scope_json<>'{}')`).first().catch(()=>null)
+  ]).then(([dist,latest,custom])=>json({currentVersion:Number(latest?.latest||0),customScopeCount:Number(custom?.count||0),distribution:(dist.results||[]).map(row=>({version:row.version,sessions:Number(row.sessions)}))}))
+}
+
+// PRD 01 用户链路（spans 无 session_id，API 类别主要来自 perf/fetch|xhr 事件；后端 span 经 trace_id 补充）
+function journeySessions(env,url){
+  const fieldMap={user:'user_id',device:'device_id',session:'session_id',trace:'trace_id'},column=fieldMap[url.searchParams.get('type')]||'session_id'
+  const value=url.searchParams.get('value');if(!value)return json({error:'标识值不能为空'},400)
+  const parts=[`e.${column}=?`],values=[value]
+  if(url.searchParams.get('appId')){parts.push('e.app_id=?');values.push(url.searchParams.get('appId'))}
+  if(url.searchParams.get('startTime')){parts.push('e.ts>=?');values.push(Number(url.searchParams.get('startTime')))}
+  if(url.searchParams.get('endTime')){parts.push('e.ts<=?');values.push(Number(url.searchParams.get('endTime')))}
+  const where=`where ${parts.join(' and ')} and ifnull(e.session_id,'')<>''`
+  const page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||30)))
+  return Promise.all([
+    env.DB.prepare(`select e.session_id,max(e.user_id) user_id,max(e.user_name) user_name,max(e.device_id) device_id,min(e.ts) started_at,max(e.ts) last_at,count(*) event_count,sum(case when e.type='error' then 1 else 0 end) error_count,max(e.app_id) app_id,max(e.sdk_version) sdk_version,max(e.device) device,max(e.browser) browser from events e ${where} group by e.session_id order by last_at desc limit ? offset ?`).bind(...values,size,(page-1)*size).all(),
+    env.DB.prepare(`select count(*) count from (select 1 from events e ${where} group by e.session_id)`).bind(...values).first(),
+    env.DB.prepare(`select distinct base_session_id base from replay_events where base_session_id is not null limit 2000`).all().catch(()=>({results:[]}))
+  ]).then(([rows,total,replays])=>{
+    const replaySet=new Set((replays.results||[]).map(r=>r.base))
+    return json(lvl(env,{total:Number(total?.count||0),sessions:(rows.results||[]).map(r=>({sessionId:r.session_id,userId:r.user_id||'',userName:r.user_name||'',anonymousId:r.device_id||'',eventCount:Number(r.event_count||0),errorCount:Number(r.error_count||0),startedAt:r.started_at,lastAt:r.last_at,appId:r.app_id||'',sdkVersion:r.sdk_version||'',device:r.device||'',browser:r.browser||'',hasReplay:replaySet.has(r.session_id)}))}))
+  })
+}
+async function journeyTimeline(env,url){
+  const sessionId=url.searchParams.get('sessionId')
+  if(!sessionId)return json({error:'会话 ID 不能为空'},400)
+  const segments=(await env.DB.prepare('select session_id sid from replay_events where base_session_id=? limit 20').bind(sessionId).all().catch(()=>({results:[]}))).results.map(r=>r.sid)
+  const ids=[sessionId,...segments.filter(sid=>sid!==sessionId)]
+  const parts=[`session_id in (${ids.map(()=>'?').join(',')})`],values=[...ids]
+  if(url.searchParams.get('appId')){parts.push('app_id=?');values.push(url.searchParams.get('appId'))}
+  if(url.searchParams.get('startTime')){parts.push('ts>=?');values.push(Number(url.searchParams.get('startTime')))}
+  if(url.searchParams.get('endTime')){parts.push('ts<=?');values.push(Number(url.searchParams.get('endTime')))}
+  const where=`where ${parts.join(' and ')}`
+  const limit=Math.min(500,Math.max(50,Number(url.searchParams.get('limit')||500)))
+  const [eventRows,summaryRow]=await Promise.all([
+    env.DB.prepare(`select * from events ${where} order by ts asc limit ?`).bind(...values,limit+1).all(),
+    env.DB.prepare(`select min(ts) started_at,max(ts) last_at,count(*) event_count,sum(case when type='error' then 1 else 0 end) error_count,max(user_id) user_id,max(user_name) user_name,max(device_id) device_id,max(app_id) app_id,max(sdk_version) sdk_version,max(release_name) release_name,max(device) device,max(os) os,max(browser) browser,max(user_agent) user_agent from events ${where}`).bind(...values).first()
+  ])
+  const rows=eventRows.results||[],truncated=rows.length>limit;if(truncated)rows.length=limit
+  const traceIds=[...new Set(rows.map(r=>r.trace_id).filter(Boolean))].slice(0,20)
+  let spanRows=[]
+  if(traceIds.length)spanRows=(await env.DB.prepare(`select id,trace_id,operation_name,kind,start_ts,duration,status_code,service_name from spans where trace_id in (${traceIds.map(()=>'?').join(',')}) order by start_ts asc limit ?`).bind(...traceIds,limit).all().catch(()=>({results:[]}))).results
+  const startedAt=summaryRow?.started_at??0,lastAt=summaryRow?.last_at??0
+  const identityChain=[];summaryRow?.device_id&&identityChain.push(`${summaryRow.device_id}(匿名)`)
+  ;(summaryRow?.user_name||summaryRow?.user_id)&&identityChain.push(`${summaryRow.user_name||summaryRow.user_id}(登录)`)
+  const mapSpan=r=>({id:`span-${r.id}`,ts:Number(r.start_ts),category:'api',name:r.operation_name||'span',summary:`${r.service_name||'backend'} · ${Math.round(Number(r.duration||0))}ms`,level:String(r.status_code||'').toUpperCase()==='ERROR'||Number(r.status_code)>=400?'error':'info',batchId:null,source:'span',detail:{traceId:r.trace_id,kind:r.kind,service:r.service_name,duration:Number(r.duration||0)},refs:{traceId:r.trace_id}})
+  return json(lvl(env,{
+    session:{sessionId:ids[0],relatedSessionIds:ids.slice(1),identityChain,startedAt,lastAt,durationMs:Math.max(0,lastAt-startedAt),eventCount:Number(summaryRow?.event_count||0),errorCount:Number(summaryRow?.error_count||0),appId:summaryRow?.app_id||'',sdkVersion:summaryRow?.sdk_version||'',release:summaryRow?.release_name||'',device:summaryRow?.device||'',os:summaryRow?.os||'',browser:summaryRow?.browser||''},
+    events:[...rows.map(r=>lvlEventToTimeline(r)),...spanRows.map(mapSpan)].sort((a,b)=>a.ts-b.ts),
+    truncated
+  }))
+}
+function lvlEventToTimeline(r){
+  const props=parse(r.props_json,null),context=parse(r.context_json,null)
+  let category='behavior';if(r.type==='behavior'&&r.name==='pv')category='pv';else if(r.type==='track')category='behavior';else if(r.type==='error')category='error';else if(r.type==='log')category='log';else if(r.type==='perf')category=['fetch','xhr'].includes(r.metric)?'api':'perf'
+  let name=r.name||r.metric||r.type,summary=''
+  if(category==='pv'){name='页面浏览';summary=`${r.path||r.url||'/'}${r.title?` · ${r.title}`:''}`}
+  else if(category==='api'){const method=String(props?.method||'GET').toUpperCase();let shortUrl=String(props?.url||r.url||'');try{const u=new URL(shortUrl);shortUrl=u.pathname+u.search}catch{}name=`${method} ${shortUrl}`;const bits=[];props?.status&&bits.push(`${props.status}`);Number(props?.duration)>0&&bits.push(`耗时 ${Math.round(Number(props.duration))}ms`);summary=bits.join(' · ')}
+  else if(category==='error'){summary=String(r.message||'').slice(0,60)}
+  else if(category==='log'){summary=String(r.message||'').slice(0,60)}
+  else if(name==='page_leave'){summary=`停留 ${Math.round(Number(props?.stayTime||0)/1000)}s`}
+  return {id:`evt-${r.id}`,ts:Number(r.ts),category,name,summary,level:r.type==='error'?'error':Number(props?.status)>=400?'warn':'info',batchId:r.batch_id||null,source:'event',detail:{id:r.id,type:r.type,appId:r.app_id,release:r.release_name,sdkVersion:r.sdk_version,sessionId:r.session_id,deviceId:r.device_id,userId:r.user_id,path:r.path,url:r.url,message:r.message,stack:r.stack,metric:r.metric,value:r.value,traceId:r.trace_id,occurredAt:r.occurred_at==null?null:Number(r.occurred_at),receivedAt:r.received_at==null?null:Number(r.received_at),props,context},refs:{traceId:r.trace_id}}
+}
+
+// PRD 02 事件字典（D1 版本：完整率为有界采样统计）
+function dictionaryList(env,url){
+  const since7=Date.now()-7*86400000,since24=Date.now()-86400000
+  const parts=['ts>=?',`ifnull(name,'')<>''`,`type in ('behavior','track','error','perf')`],values=[since7]
+  if(url.searchParams.get('q')){parts.push('name like ?');values.push(`%${url.searchParams.get('q')}%`)}
+  const where=`where ${parts.join(' and ')}`
+  return Promise.all([
+    env.DB.prepare(`select name,type,count(*) count7d,sum(case when ts>=? then 1 else 0 end) count24h,min(ts) first_seen_7d,max(ts) last_seen_at from events ${where} group by name,type order by count7d desc limit 500`).bind(since24,...values).all(),
+    env.DB.prepare(`select distinct name from events where ts<? and name in (select name from events ${where}) limit 1000`).bind(since7,...values).all().catch(()=>({results:[]})),
+    env.DB.prepare(`select * from event_dictionary limit 1000`).all().catch(()=>({results:[]})),
+    env.DB.prepare(`select name,url,referrer,path,props_json,context_json from events ${where.replace('ts>=?','ts>=?')} order by ts desc limit 5000`).bind(...values).all().catch(()=>({results:[]}))
+  ]).then(([rows,historic,registered,sampleRows])=>{
+    const historicSet=new Set((historic.results||[]).map(r=>r.name)),regMap=new Map((registered.results||[]).map(r=>[r.name,r]))
+    const completeness=d1Completeness(sampleRows.results||[])
+    const items=(rows.results||[]).map(r=>{
+      const count7d=Number(r.count7d||0),count24h=Number(r.count24h||0),comp=completeness.get(r.name)||null
+      const health=judgeHealth(count7d,count24h,Number(r.last_seen_at||0),historicSet.has(r.name),comp?.worst?.rate)
+      const registeredRow=regMap.get(r.name)
+      return {name:r.name,type:r.type,source:['pv','page_leave','click'].includes(r.name)?'auto':['behavior','perf'].includes(r.type)?'auto':'manual',platform:'',count7d,count24h,lastSeenAt:Number(r.last_seen_at||0),fieldCompleteness:comp,health:health.status,verdict:health.verdict,registered:!!registeredRow,owner:registeredRow?.owner||''}
+    })
+    const filtered=url.searchParams.get('health')?items.filter(item=>item.health===url.searchParams.get('health')):items
+    const page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||50)))
+    return json({total:filtered.length,unregisteredCount:filtered.filter(item=>!item.registered&&item.count7d>0).length,items:filtered.slice((page-1)*size,page*size)})
+  })
+}
+function d1Completeness(rows){
+  const byName=new Map()
+  for(const row of rows){
+    const list=byName.get(row.name)||[]
+    if(list.length<200)list.push(row),byName.set(row.name,list)
+  }
+  const out=new Map()
+  for(const [name,list] of byName){
+    // 完整率只按该事件类别的关键字段（packages/event-keyfields.js）计算，
+    // 与 Node 端口径一致；未配置关键字段的事件不参与 🟠 判定。
+    const keyFields=keyFieldsOf(name)
+    if(!keyFields.length)continue
+    const counts=new Map(),total=list.length
+    for(const row of list){
+      const props=parse(row.props_json,{}),context=parse(row.context_json,{})
+      for(const key of keyFields){
+        const v=(props&&key in props)?props[key]:(context&&key in context)?context[key]:(row[key])
+        const present=v!==undefined&&v!==null&&v!==''
+        counts.set(key,(counts.get(key)||0)+(present?1:0))
+      }
+    }
+    const rates=[...counts.entries()].map(([field,c])=>({field,rate:Number((c/total).toFixed(3))})).sort((a,b)=>a.rate-b.rate)
+    if(rates.length)out.set(name,{overall:Number((rates.reduce((s,i)=>s+i.rate,0)/rates.length).toFixed(3)),worst:rates[0],fields:rates.slice(0,10),sampleSize:total})
+  }
+  return out
+}
+function judgeHealth(count7d,count24h,lastSeenAt,hasHistory,worstRate){
+  if(count7d===0&&hasHistory)return{status:'stalled',verdict:`${Math.max(0,Math.floor((Date.now()-lastSeenAt)/86400000))} 天无上报`}
+  if(worstRate!=null&&worstRate<0.95)return{status:'incomplete',verdict:`关键字段完整率 ${(worstRate*100).toFixed(0)}% < 95%`}
+  if(count7d>0){const dailyAvg=(count7d-count24h)/6
+    if(dailyAvg>0&&Math.abs(count24h-dailyAvg)/dailyAvg>0.5){const delta=Math.round((count24h-dailyAvg)/dailyAvg*100);return{status:'fluctuating',verdict:`近24h较前6日日均 ${delta>0?'+':''}${delta}%，偏离基线`}}}
+  if(count7d===0)return{status:'stalled',verdict:'从未上报'}
+  return{status:'healthy',verdict:`近24h上报 ${count24h.toLocaleString()}，正常`}
+}
+function dictionaryNames(env,url){
+  return dictionaryListRaw(env,url).then(items=>json(items.map(item=>({name:item.name,health:item.health,count7d:item.count7d,verdict:item.verdict}))))
+}
+function dictionaryListRaw(env,url){return dictionaryListInner(env,new URLSearchParams({...Object.fromEntries(url.searchParams),pageSize:'100'}))}
+async function dictionaryListInner(env,params){
+  const fakeUrl=new URL(`http://x/?${params.toString()}`)
+  const response=await dictionaryList(env,fakeUrl),data=await response.json()
+  return data.items||[]
+}
+async function dictionaryDetail(env,name,url){
+  const eventName=String(name||'').slice(0,160),since30=Date.now()-30*86400000
+  const appId=url.searchParams.get('appId')||''
+  const [trend,firstRow,samples,registered]=await Promise.all([
+    env.DB.prepare(`select cast(ts/86400000 as integer) day_key,count(*) count from events where name=? ${appId?'and app_id=?':''} and ts>=? group by day_key order by day_key asc`).bind(...(appId?[eventName,appId]:[eventName]),since30).all().catch(()=>({results:[]})),
+    env.DB.prepare(`select min(ts) first_seen from events where name=? ${appId?'and app_id=?':''}`).bind(...(appId?[eventName,appId]:[eventName])).first().catch(()=>null),
+    env.DB.prepare(`select * from events where name=? ${appId?'and app_id=?':''} order by ts desc limit 3`).bind(...(appId?[eventName,appId]:[eventName])).all().catch(()=>({results:[]})),
+    env.DB.prepare('select * from event_dictionary where name=?').bind(eventName).first().catch(()=>null)
+  ])
+  const trendMap=new Map((trend.results||[]).map(r=>[Number(r.day_key),Number(r.count)])),startDay=Math.floor(since30/86400000),trendOut=[]
+  for(let i=0;i<30;i++){const key=startDay+i;trendOut.push({day:new Date(key*86400000).toISOString().slice(0,10),count:trendMap.get(key)||0})}
+  return json(lvl(env,{name:eventName,registered:!!registered,description:registered?.description||'',owner:registered?.owner||'',tags:parse(registered?.tags_json,[])||[],firstSeenAt:Number(firstRow?.first_seen||0),trend:trendOut,errors:[],samples:(samples.results||[]).map(r=>({ts:Number(r.ts),name:r.name,path:r.path,props:parse(r.props_json,null),context:parse(r.context_json,null)}))}))
+}
+async function dictionaryRegister(env,name,input){
+  const eventName=String(name||'').slice(0,160)
+  if(!eventName)return json({error:'事件名不能为空'},400)
+  await env.DB.prepare(`insert into event_dictionary(name,description,owner,tags_json,registered_at,updated_at) values(?,?,?,?,?,?)
+    on conflict(name) do update set description=excluded.description,owner=excluded.owner,tags_json=excluded.tags_json,updated_at=excluded.updated_at`)
+    .bind(eventName,String(input.description||'').trim()||null,String(input.owner||'').slice(0,64)||null,JSON.stringify(Array.isArray(input.tags)?input.tags.slice(0,10):[]),Date.now(),Date.now()).run()
+  return json({ok:true,name:eventName})
+}
+
+// PRD 03 版本质量（P75 用窗口函数近似，与 summary 同法）
+function releaseQuality(env,url){
+  const dim=url.searchParams.get('dim')==='sdk'?'sdk_version':'release_name'
+  const appId=url.searchParams.get('appId')
+  if(!appId)return json({error:'appId 不能为空'},400)
+  const start=Number(url.searchParams.get('start'))||Date.now()-7*86400000,end=Number(url.searchParams.get('end'))||Date.now()
+  return Promise.all([
+    env.DB.prepare(`select ${dim} version,count(distinct coalesce(nullif(user_id,''),device_id)) users,count(distinct case when ifnull(session_id,'')<>'' then session_id end) sessions,
+      sum(case when type='error' then 1 else 0 end) errors,count(distinct case when type='error' then session_id end) abnormal_sessions,
+      min(ts) first_seen_at,max(ts) last_seen_at,avg(case when received_at is not null and received_at>=ts and received_at-ts<3600000 then received_at-ts end) latency_avg
+      from events where app_id=? and ts>=? and ts<=? and ifnull(${dim},'')<>'' group by ${dim} order by users desc`).bind(appId,start,end).all(),
+    p75ByDim(env,appId,dim,start,end,'lcp'),p75ByDim(env,appId,dim,start,end,'inp'),
+    env.DB.prepare(`select ${dim} v,value from (select ${dim} v2,value,count(*) over (partition by ${dim}) n,row_number() over (partition by ${dim} order by value) rn from events where app_id=? and ts>=? and ts<=? and received_at is not null and received_at>=ts and received_at-ts<3600000 and ifnull(${dim},'')<>'') where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(appId,start,end).all().catch(()=>({results:[]}))
+  ]).then(([rows,lcpRows,inpRows,latencyRows])=>{
+    const lcpMap=p75Interpolate(lcpRows.results||[],'v2'),inpMap=p75Interpolate(inpRows.results||[],'v2'),latencyMap=p75Interpolate(latencyRows.results||[],'v')
+    const now=Date.now()
+    const items=(rows.results||[]).map(r=>{
+      const sessions=Number(r.sessions||0),users_=Number(r.users||0),errors=Number(r.errors||0)
+      return {version:r.version,users:users_,sessions,errors,errorsPerKSession:sessions>0?Number((errors*1000/sessions).toFixed(2)):null,
+        abnormalSessionRate:sessions>0?Number((Number(r.abnormal_sessions||0)/sessions).toFixed(4)):null,
+        reportLatencyP75:latencyMap.get(r.version)!=null?Math.round(latencyMap.get(r.version)):null,
+        perf:{lcpP75:lcpMap.get(r.version)!=null?Math.round(lcpMap.get(r.version)):null,inpP75:inpMap.get(r.version)!=null?Math.round(inpMap.get(r.version)):null},
+        firstSeenAt:Number(r.first_seen_at||0),lastSeenAt:Number(r.last_seen_at||0)}
+    })
+    const pool=items.filter(item=>item.sessions>=10&&item.errorsPerKSession!=null)
+    const totalPool=pool.reduce((sum,item)=>sum+item.sessions,0),grand=items.reduce((sum,item)=>sum+item.sessions,0)
+    const baselineValue=totalPool>0?pool.reduce((sum,item)=>sum+item.errorsPerKSession*item.sessions,0)/totalPool:null
+    for(const item of items){
+      item.status=item.sessions<10?'insufficient':judgeStatusW(item,{baselineValue,grand,now})
+      item.statusLabel=({rollback:'建议回滚',watch:'观察',converge:'建议收敛',healthy:'健康',insufficient:'数据不足'})[item.status]
+    }
+    return json(lvl(env,{baseline:{errorsPerKSession:baselineValue!=null?Number(baselineValue.toFixed(2)):null},
+      summary:{versions:items.length,watching:items.filter(i=>i.status==='watch'||i.status==='rollback').length,rollback:items.filter(i=>i.status==='rollback').length,converge:items.filter(i=>i.status==='converge').length},items}))
+  })
+}
+function judgeStatusW(item,{baselineValue,grand,now}){
+  const inObservation=now-item.firstSeenAt<48*3600000
+  if(inObservation&&baselineValue!=null&&item.errorsPerKSession!=null&&item.errorsPerKSession>baselineValue*2)return'rollback'
+  if(item.lastSeenAt<now-14*86400000&&grand>0&&item.sessions/grand<0.05)return'converge'
+  if(inObservation)return'watch'
+  if(baselineValue!=null&&item.errorsPerKSession!=null&&item.errorsPerKSession>baselineValue*1.2)return'watch'
+  return'healthy'
+}
+function p75ByDim(env,appId,dim,start,end,metric){
+  return env.DB.prepare(`select ${dim} v,value from (select ${dim} v2,value,count(*) over (partition by ${dim}) n,row_number() over (partition by ${dim} order by value) rn from events where app_id=? and ts>=? and ts<=? and type='perf' and metric=? and ifnull(${dim},'')<>'') where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(appId,start,end,metric).all().catch(()=>({results:[]}))
+}
+function p75Interpolate(rows,keyName){
+  const grouped=new Map()
+  for(const row of rows){const list=grouped.get(row[keyName])||[];list.push(Number(row.value));grouped.set(row[keyName],list)}
+  const out=new Map()
+  for(const [key,values] of grouped){const sorted=values.sort((a,b)=>a-b),index=(sorted.length-1)*.75,lo=Math.floor(index),hi=Math.ceil(index);out.set(key,lo===hi?sorted[lo]:sorted[lo]+(sorted[hi]-sorted[lo])*(index-lo))}
+  return out
+}
+function releaseQualityCompare(env,url){
+  const appId=url.searchParams.get('appId'),a=url.searchParams.get('a'),b=url.searchParams.get('b'),since14=Date.now()-14*86400000
+  if(!appId||!a||!b)return json({error:'appId 与 A/B 版本不能为空'},400)
+  return Promise.all([
+    env.DB.prepare(`select name,count(*) count from events where app_id=? and release_name=? and type='error' group by name order by count desc limit 50`).bind(appId,a).all().catch(()=>({results:[]})),
+    env.DB.prepare(`select name,count(*) count from events where app_id=? and release_name=? and type='error' group by name order by count desc limit 50`).bind(appId,b).all().catch(()=>({results:[]})),
+    p75ByDimRelease(env,appId,[a,b],since14,['lcp','inp','fcp']),
+    env.DB.prepare(`select release_name,dim_day day_key,count(distinct coalesce(nullif(user_id,''),device_id)) users from (select release_name,cast(ts/86400000 as integer) dim_day,user_id,device_id,ts from events where app_id=? and release_name in (?,?) and ts>=?) group by release_name,dim_day,coalesce(nullif(user_id,''),device_id)`).bind(appId,a,b,since14).all().catch(()=>({results:[]}))
+  ]).then(([errA,errB,perfRows,trendRows])=>{
+    const mapA=Object.fromEntries((errA.results||[]).map(r=>[r.name,Number(r.count)])),mapB=Object.fromEntries((errB.results||[]).map(r=>[r.name,Number(r.count)]))
+    const names=[...new Set([...Object.keys(mapA),...Object.keys(mapB)])]
+    const perfAgg=new Map()
+    for(const row of perfRows.results||[]){const k=`${row.release}|${row.metric}`,list=perfAgg.get(k)||[];list.push(Number(row.value));perfAgg.set(k,list)}
+    const perfOf=release=>Object.fromEntries(['lcp','inp','fcp'].map(metric=>{const vals=perfAgg.get(`${release}|${metric}`)||[];return[metric,vals.length?Math.round(p75of(vals)):null]}))
+    const trendAggA=new Map(),trendAggB=new Map()
+    for(const row of trendRows.results||[]){
+      const target=row.release_name===a?trendAggA:trendAggB
+      target.set(Number(row.day_key),(target.get(Number(row.day_key))||0)+Number(row.users))
+    }
+    const days=[...new Set([...trendAggA.keys(),...trendAggB.keys()])].sort((x,y)=>x-y)
+    return json(lvl(env,{errors:names.map(name=>({name,aCount:mapA[name]||0,bCount:mapB[name]||0,delta:(mapA[name]||0)>0&&(mapB[name]||0)===0?'new':(mapA[name]||0)===0&&(mapB[name]||0)>0?'gone':'flat'})).sort((x,y)=>y.aCount-x.aCount).slice(0,10),
+      perf:{a:perfOf(a),b:perfOf(b)},
+      trend:days.map(day=>({day:new Date(day*86400000).toISOString().slice(0,10),a:trendAggA.get(day)||0,b:trendAggB.get(day)||0}))}))
+  })
+}
+function p75ByDimRelease(env,appId,releases,since14,metrics){
+  return env.DB.prepare(`select release_name,metric,value from (select release_name,metric,value,count(*) over (partition by release_name,metric) n,row_number() over (partition by release_name,metric order by value) rn from events where app_id=? and release_name in (${releases.map(()=>'?').join(',')}) and ts>=? and type='perf' and metric in (${metrics.map(()=>'?').join(',')})) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(appId,...releases,since14,...metrics).all().catch(()=>({results:[]}))
+}
+function p75of(values){const sorted=[...values].sort((x,y)=>x-y),index=(sorted.length-1)*.75,lo=Math.floor(index),hi=Math.ceil(index);return lo===hi?sorted[lo]:sorted[lo]+(sorted[hi]-sorted[lo])*(index-lo)}
+
+// PRD 05 漏斗报告整形（复用 runFunnel 输出）
+async function funnelReport(env,id,url){
+  const responseText=await runFunnel(env,id,url),result=typeof responseText.json==='function'?await responseText.clone().json():responseText
+  const steps=result.steps||[],lost=result.lostSessions||[],users=steps[0]?.count??0,converted=steps.at(-1)?.count??0
+  const withError=lost.filter(item=>Number(item.errors)>0).length
+  return json({meta:{id,name:result.definition?.name,windowMs:result.windowMs??null,users,converted,overallRate:users>0?Number((converted/users).toFixed(4)):0},
+    steps:steps.map((step,index)=>({idx:index+1,event:step.step,users:step.count,rate:index===0?1:Number((step.rate/100).toFixed(4)),lost:step.lost})),
+    trend:(result.trend||[]).map(row=>({day:new Date(new Date(row.date).getTime()).toISOString().slice(0,10),rate:row.entered>0?Number((row.converted/row.entered).toFixed(4)):0})),
+    segments:(result.dimensions||[]).map(dimension=>({field:dimension.field,items:(dimension.items||[]).map(item=>({name:item.name,overallRate:item.entered>0?Number((item.converted/item.entered).toFixed(4)):0,entered:item.entered,converted:item.converted}))})),
+    lossInsight:{lostUsers:lost.length,withErrorRate:lost.length?Number((withError/lost.length).toFixed(3)):null,topError:lost.find(item=>Number(item.errors)>0)?.lastEvent||null,sampleSessionIds:lost.slice(0,20).map(item=>item.sessionId)},
+    lostSessions:lost.slice(0,20)})
+}
+
+// PRD 06 页面参与度（D1 版本：拉取 page_leave 行后在 JS 聚合）
+function fetchLeaveRows(env,appId,start,end){
+  const parts=["type='behavior'","name='page_leave'",'ts>=?','ts<=?'],values=[start,end]
+  if(appId){parts.push('app_id=?');values.push(appId)}
+  return env.DB.prepare(`select id,session_id,path,url,user_id,device_id,props_json,context_json from events where ${parts.join(' and ')} order by ts desc limit 20000`).bind(...values).all().catch(()=>({results:[]}))
+}
+function engageOf(row){
+  const context=parse(row.context_json,{}),props=parse(row.props_json,{})
+  return {dwellMs:numOrNull(context.dwell_ms??context.dwellMs??(props.stayTime!=null?Number(props.stayTime):null)),scrollMax:clamp01(numOrNull(context.scroll_max??context.scrollMax)),shared:!!(context.shared??props.shared),interacted:!!(context.interacted??props.interacted)}
+}
+function numOrNull(value){const number=Number(value);return Number.isFinite(number)?number:null}
+function clamp01(value){return value==null?null:Math.max(0,Math.min(1,value))}
+function aggEngage(rows){
+  const sessions=new Set(rows.filter(r=>r.session_id).map(r=>r.session_id)),dwells=[],scrolls=[]
+  let bounce=0,shares=0
+  for(const row of rows){
+    const eng=engageOf(row)
+    if(eng.dwellMs!=null&&eng.dwellMs>0&&eng.dwellMs<7200000)dwells.push(eng.dwellMs)
+    if(eng.scrollMax!=null)scrolls.push(eng.scrollMax)
+    if(eng.dwellMs!=null&&eng.dwellMs<3000&&!eng.interacted)bounce++
+    if(eng.shared)shares++
+  }
+  const avg=list=>list.length?list.reduce((s,v)=>s+v,0)/list.length:null
+  return {sampleSize:dwells.length,avgDwellMs:dwells.length?Math.round(avg(dwells)):null,p90DwellMs:dwells.length?Math.round(dwells.slice().sort((a,b)=>a-b)[Math.min(dwells.length-1,Math.max(0,Math.ceil(0.9*dwells.length)-1))]):null,
+    avgScroll:scrolls.length?Number(avg(scrolls).toFixed(3)):null,reach75Rate:scrolls.length?Number((scrolls.filter(v=>v>=0.75).length/scrolls.length).toFixed(4)):null,
+    bounceRate:rows.length?Number((bounce/rows.length).toFixed(4)):null,shareSessionRate:sessions.size?Number((shares/sessions.size).toFixed(4)):null}
+}
+function engagementList(env,url){
+  const start=Number(url.searchParams.get('startTime'))||Date.now()-7*86400000,end=Number(url.searchParams.get('endTime'))||Date.now(),appId=url.searchParams.get('appId')||''
+  return Promise.all([fetchLeaveRows(env,appId,start,end),
+    env.DB.prepare(`select path,count(*) pv,count(distinct coalesce(nullif(user_id,''),nullif(device_id,''),session_id)) uv from events where type='behavior' and name='pv' and ts>=? and ts<=? ${appId?'and app_id=?':''} group by path`).bind(...(appId?[start,end,appId]:[start,end])).all().catch(()=>({results:[]}))
+  ]).then(([leaves,pvs])=>{
+    const pvMap=new Map((pvs.results||[]).map(r=>[r.path,{pv:Number(r.pv),uv:Number(r.uv)}]))
+    const grouped=new Map()
+    for(const row of leaves.results||[]){const key=row.path||'/';(grouped.get(key)||grouped.set(key,[]).get(key)).push(row)}
+    let items=[...grouped.entries()].map(([path,rows])=>{const m=aggEngage(rows),traffic=pvMap.get(path)||{pv:rows.length,uv:m.sampleSize};return {path,pv:traffic.pv,uv:traffic.uv,...m,sampleNote:m.sampleSize<30?'样本量不足，仅供参考':''}})
+    if(url.searchParams.get('q'))items=items.filter(item=>item.path.includes(url.searchParams.get('q')))
+    items.sort((a,b)=>b.pv-a.pv)
+    const page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||20)))
+    return json({total:items.length,items:items.slice((page-1)*size,page*size)})
+  })
+}
+async function engagementDetail(env,url){
+  const path=url.searchParams.get('path')
+  if(!path)return json({error:'path 不能为空'},400)
+  const start=Number(url.searchParams.get('start'))||Date.now()-7*86400000,end=Number(url.searchParams.get('end'))||Date.now()
+  const rows=(await fetchLeaveRows(env,url.searchParams.get('appId')||'',start,end)).results.filter(r=>(r.path||'/')===path)
+  const dwells=rows.map(r=>engageOf(r).dwellMs).filter(v=>v!=null&&v>0&&v<7200000)
+  const buckets=[[0,3000],[3000,10000],[10000,30000],[30000,120000],[120000,Infinity]]
+  const distribution=buckets.map(([min,max])=>({label:max===Infinity?'2m+':min===0?'0-3s':max===10000?'3-10s':max===30000?'10-30s':'30s-2m',count:dwells.filter(v=>v>=min&&v<max).length}))
+  for(const bucket of distribution)bucket.rate=Number((bucket.count/(dwells.length||1)).toFixed(4))
+  const scrolls=rows.map(r=>engageOf(r).scrollMax).filter(v=>v!=null)
+  const scrollFunnel=[0.25,0.5,0.75,1].map(threshold=>({threshold,rate:scrolls.length?Number((scrolls.filter(v=>v>=threshold).length/scrolls.length).toFixed(4)):null}))
+  let compare=null
+  if(url.searchParams.get('compareStart')&&url.searchParams.get('compareEnd')){
+    compare={a:aggEngage(((await fetchLeaveRows(env,url.searchParams.get('appId')||'',Number(url.searchParams.get('compareStart')),Number(url.searchParams.get('compareEnd')))).results).filter(r=>(r.path||'/')===path)),b:aggEngage(rows)}
+  }
+  return json(lvl(env,{path,sampleSize:rows.length,sufficientSample:rows.length>=30,distribution,scrollFunnel,summary:aggEngage(rows),compare}))
+}
+
+// PRD 07 成员管理
+async function memberSave(env,input){
+  const name=String(input.name||'').trim().slice(0,64)
+  if(!name)return json({error:'成员名称不能为空'},400)
+  const level=normalizeLevel(input.level),id=clip(input.id||`m_${name.replace(/\s+/g,'_').slice(0,24)}`,32),now=Date.now()
+  await env.DB.prepare(`insert into members(id,name,role,access_level,created_at,updated_at) values(?,?,?,?,?,?)
+    on conflict(id) do update set name=excluded.name,role=excluded.role,access_level=excluded.access_level,updated_at=excluded.updated_at`)
+    .bind(id,name,clip(input.role||'',64),level,now,now).run()
+  await writeAuditDb(env,id,'level_change',`${name}:${level}`)
+  return json({ok:true,id})
+}
+async function memberLevel(env,id,input){
+  const level=normalizeLevel(input?.level),member=await env.DB.prepare('select * from members where id=?').bind(String(id).slice(0,32)).first()
+  if(!member)return json({error:'成员不存在'},404)
+  await env.DB.prepare('update members set access_level=?,updated_at=? where id=?').bind(level,Date.now(),member.id).run()
+  await writeAuditDb(env,member.id,'level_change',`${member.name}: ${member.access_level} → ${level}`)
+  return json({ok:true,level})
+}
+async function writeAuditDb(env,memberId,action,target){
+  try{await env.DB.prepare('insert into data_access_audit(member_id,action,target,detail_json,created_at) values(?,?,?,?,?)').bind(String(memberId).slice(0,32),action,String(target||'').slice(0,128),'{}',Date.now()).run()}catch{}
+}

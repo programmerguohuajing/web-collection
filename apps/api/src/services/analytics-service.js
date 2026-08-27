@@ -1,6 +1,7 @@
 import { all, run } from '../db.js'
 import { mapEvent } from '../mappers/event-mapper.js'
 import { parseJson } from '../utils/json.js'
+import { badRequest, notFound } from '../utils/http-error.js'
 
 const MAX_TRACE_ROWS = 5000
 const MAX_PATH_ROWS = 50000
@@ -376,7 +377,7 @@ export async function getReleaseDetailComparison(appId, fromRelease, toRelease) 
 
 export async function listEventProperties(filters = {}) {
   const eventName = cleanText(filters.eventName || filters.name, 160)
-  if (!eventName) throw new Error('事件名称不能为空')
+  if (!eventName) throw badRequest('事件名称不能为空', "BAD_REQUEST")
   const { where, params } = whereFor({ ...filters, name: eventName }, ["type in ('behavior','track')"])
   return all(`select key name, count(*)::integer count
     from events cross join lateral jsonb_object_keys(case when jsonb_typeof(props_json) = 'object' then props_json else '{}'::jsonb end) key
@@ -420,12 +421,12 @@ export async function listInsights() {
 export async function saveInsight(input = {}, id = null) {
   const name = cleanText(input.name, 128)
   const kind = input.kind === 'path' ? 'path' : input.kind === 'eventTrend' ? 'eventTrend' : ''
-  if (!name || !kind) throw new Error('分析名称和类型不能为空')
+  if (!name || !kind) throw badRequest('分析名称和类型不能为空', "BAD_REQUEST")
   const definition = kind === 'path' ? normalizePathQuery(input.definition) : normalizeInsightQuery(input.definition)
   const now = Date.now()
   if (id) {
     const rows = await all('update analytics_insights set name=?,kind=?,definition_json=?::jsonb,updated_at=? where id=? returning id', [name, kind, JSON.stringify(definition), now, id])
-    if (!rows.length) throw new Error('分析不存在')
+    if (!rows.length) throw notFound('分析不存在', 'NOT_FOUND')
     return { id: Number(id) }
   }
   const rows = await all('insert into analytics_insights(name,kind,definition_json,created_at,updated_at) values(?,?,?::jsonb,?,?) returning id', [name, kind, JSON.stringify(definition), now, now])
@@ -461,14 +462,16 @@ export async function listFunnelEventNames(filters = {}) {
 export async function saveFunnel(input) {
   const name = String(input.name || '').trim().slice(0, 128)
   const steps = normalizeFunnelSteps(input.steps)
-  if (!name || steps.length < 2) throw new Error('漏斗名称和至少两个步骤不能为空')
+  if (!name || steps.length < 2) throw badRequest('漏斗名称和至少两个步骤不能为空', 'INVALID_FUNNEL')
   const windowMs = finiteWindow(input.windowMs)
+  const createdBy = String(input.createdBy || '').trim().slice(0, 64) || null
+  const dimension = cleanText(input.dimension, 32) || null
   const now = Date.now()
   if (input.id) {
-    await run('update funnel_definitions set name=?, app_id=?, steps_json=?::jsonb, window_ms=?, updated_at=? where id=?', [name, input.appId || null, JSON.stringify(steps), windowMs, now, input.id])
+    await run('update funnel_definitions set name=?, app_id=?, steps_json=?::jsonb, window_ms=?, dimension=?, updated_at=? where id=?', [name, input.appId || null, JSON.stringify(steps), windowMs, dimension, now, input.id])
     return { id: Number(input.id) }
   }
-  const rows = await all('insert into funnel_definitions (name, app_id, steps_json, window_ms, created_at, updated_at) values (?, ?, ?::jsonb, ?, ?, ?) returning id', [name, input.appId || null, JSON.stringify(steps), windowMs, now, now])
+  const rows = await all('insert into funnel_definitions (name, app_id, steps_json, window_ms, created_by, dimension, created_at, updated_at) values (?, ?, ?::jsonb, ?, ?, ?, ?, ?) returning id', [name, input.appId || null, JSON.stringify(steps), windowMs, createdBy, dimension, now, now])
   return { id: Number(rows[0].id) }
 }
 
@@ -480,7 +483,7 @@ export async function deleteFunnel(id) {
 export async function runFunnel(id, filters = {}) {
   const defs = await all('select * from funnel_definitions where id=?', [id])
   const def = defs[0]
-  if (!def) throw new Error('漏斗不存在')
+  if (!def) throw notFound('漏斗不存在', 'NOT_FOUND')
   const steps = normalizeFunnelSteps(def.steps_json)
   const names = [...new Set(steps.map(step => step.eventName))]
   const { where, params } = whereFor({ ...filters, appId: filters.appId || def.app_id })
@@ -536,7 +539,7 @@ export async function listDashboards() { return all('select * from dashboard_def
 export async function deleteDashboard(id) { await run('delete from dashboard_definitions where id=?', [id]); return { ok: true } }
 export async function saveDashboard(input) {
   const name = String(input.name || '').trim().slice(0, 128)
-  if (!name) throw new Error('仪表盘名称不能为空')
+  if (!name) throw badRequest('仪表盘名称不能为空', "BAD_REQUEST")
   const widgets = normalizeDashboardWidgets(input.widgets)
   const now = Date.now()
   if (input.id) {
@@ -606,13 +609,13 @@ function funnelTrend(sessions, steps, windowMs) {
 
 export function normalizeInsightQuery(input = {}) {
   const eventName = cleanText(input.eventName, 160)
-  if (!eventName) throw new Error('事件名称不能为空')
+  if (!eventName) throw badRequest('事件名称不能为空', "BAD_REQUEST")
   const startTime = finiteTime(input.startTime)
   const endTime = finiteTime(input.endTime)
-  if (startTime && endTime && startTime > endTime) throw new Error('开始时间不能晚于结束时间')
-  if (input.eventType && !['behavior', 'track'].includes(input.eventType)) throw new Error('事件类型无效')
-  if (input.measure && !['events', 'users', 'sessions'].includes(input.measure)) throw new Error('分析指标无效')
-  if (input.interval && !['hour', 'day', 'week'].includes(input.interval)) throw new Error('时间粒度无效')
+  if (startTime && endTime && startTime > endTime) throw badRequest('开始时间不能晚于结束时间', "BAD_REQUEST")
+  if (input.eventType && !['behavior', 'track'].includes(input.eventType)) throw badRequest('事件类型无效', "BAD_REQUEST")
+  if (input.measure && !['events', 'users', 'sessions'].includes(input.measure)) throw badRequest('分析指标无效', "BAD_REQUEST")
+  if (input.interval && !['hour', 'day', 'week'].includes(input.interval)) throw badRequest('时间粒度无效', "BAD_REQUEST")
   const interval = ['hour', 'day', 'week'].includes(input.interval) ? input.interval : autoInterval(startTime, endTime)
   return {
     eventName,
@@ -631,7 +634,7 @@ export function normalizeInsightQuery(input = {}) {
 export function normalizePathQuery(input = {}) {
   const startTime = finiteTime(input.startTime)
   const endTime = finiteTime(input.endTime)
-  if (startTime && endTime && startTime > endTime) throw new Error('开始时间不能晚于结束时间')
+  if (startTime && endTime && startTime > endTime) throw badRequest('开始时间不能晚于结束时间', "BAD_REQUEST")
   return {
     appId: cleanText(input.appId, 64),
     release: cleanText(input.release, 64),
@@ -711,17 +714,17 @@ function normalizeAnalyticsFilters(value) {
   if (!Array.isArray(value)) return []
   return value.slice(0, 8).map(item => {
     const field = normalizeField(item?.field)
-    if (item?.operator && !filterOperators.has(item.operator)) throw new Error('分析过滤操作符无效')
+    if (item?.operator && !filterOperators.has(item.operator)) throw badRequest('分析过滤操作符无效', "BAD_REQUEST")
     const operator = filterOperators.has(item?.operator) ? item.operator : 'eq'
-    if (!field) throw new Error('分析过滤字段无效')
+    if (!field) throw badRequest('分析过滤字段无效', "BAD_REQUEST")
     if (operator === 'in') {
       const values = Array.isArray(item.value) ? item.value.map(value => cleanText(value, 512)).filter(Boolean).slice(0, 50) : []
-      if (!values.length) throw new Error('集合过滤值不能为空')
+      if (!values.length) throw badRequest('集合过滤值不能为空', "BAD_REQUEST")
       return { field, operator, value: values }
     }
     if (operator === 'exists') return { field, operator }
     const filterValue = cleanText(item?.value, 512)
-    if (!filterValue) throw new Error('过滤值不能为空')
+    if (!filterValue) throw badRequest('过滤值不能为空', "BAD_REQUEST")
     return { field, operator, value: filterValue }
   })
 }
@@ -762,7 +765,7 @@ function normalizeField(value, optional = false) {
   if (analyticsFields[value]) return value
   const match = String(value).match(/^props\.([A-Za-z0-9_.-]{1,80})$/)
   if (match) return `props.${match[1]}`
-  if (optional) throw new Error('分析拆分维度无效')
+  if (optional) throw badRequest('分析拆分维度无效', "BAD_REQUEST")
   return ''
 }
 
