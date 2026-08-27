@@ -6,6 +6,8 @@ import HeatmapPanel from '../../../components/HeatmapPanel.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
 import RankPanel from '../../../components/RankPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
+// PRD 06 · 页面参与度（行为分析内嵌 Tab）
+import EngagementPanel from '../../../components/prd/EngagementPanel.vue'
 
 const activeTab = ref('overview')
 const behaviorKpis = computed(() => [
@@ -27,6 +29,7 @@ const behaviorKpis = computed(() => [
           <el-radio-button value="overview">概览排行</el-radio-button>
           <el-radio-button value="heatmap">行为热力图</el-radio-button>
           <el-radio-button value="detail">行为明细</el-radio-button>
+          <el-radio-button value="engagement">页面参与度</el-radio-button>
         </el-radio-group>
       </div>
     </template>
@@ -44,6 +47,11 @@ const behaviorKpis = computed(() => [
     <!-- 明细表 -->
     <div v-show="activeTab === 'detail'">
       <EventTable title="行为与埋点明细" :rows="behaviorEvents" :loading="tableLoading.behavior" :total="behaviorPager.total" :page="behaviorPager.page" :page-size="behaviorPager.pageSize" stream @page-change="setPage('behavior', $event)" @size-change="setPageSize('behavior', $event)" />
+    </div>
+
+    <!-- 页面参与度（PRD 06） -->
+    <div v-show="activeTab === 'engagement'">
+      <EngagementPanel />
     </div>
   </el-card>
 </template>

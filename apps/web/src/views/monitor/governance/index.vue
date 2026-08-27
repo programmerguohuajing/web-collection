@@ -2,6 +2,10 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteApplication, deleteRelease, loadGovernance, loadReleases, normalizePageResponse, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease, toList } from '../../../dashboard.js'
+// PRD 04 · 远程采集配置（采集治理内嵌 Tab）
+import RemoteConfigPanel from '../../../components/prd/RemoteConfigPanel.vue'
+
+const activeTab = ref('apps')
 
 const applications = ref([])
 const applicationOptions = ref([])
@@ -183,8 +187,10 @@ onMounted(load)
 
 <template>
   <div>
-    <el-card shadow="never" class="section panel">
-      <template #header><div class="panel-head"><b>应用与采样</b><el-button type="primary" @click="editApp()">新增应用</el-button></div></template>
+    <el-tabs v-model="activeTab">
+      <el-tab-pane label="应用与策略" name="apps">
+        <el-card shadow="never" class="section panel">
+          <template #header><div class="panel-head"><b>应用与采样</b><el-button type="primary" @click="editApp()">新增应用</el-button></div></template>
       <el-alert v-if="governanceError" class="table-error" type="error" :title="governanceError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
       <el-table :data="applications" border v-loading="governanceLoading" empty-text="暂无应用数据">
         <el-table-column prop="app_id" label="App ID" min-width="150" />
@@ -223,7 +229,12 @@ onMounted(load)
         <el-button type="primary" @click="submitSettings">保存策略</el-button>
         <el-button @click="cleanup">立即清理</el-button>
       </el-space>
-    </el-card>
+        </el-card>
+      </el-tab-pane>
+      <el-tab-pane label="远程配置" name="remote-config">
+        <RemoteConfigPanel />
+      </el-tab-pane>
+    </el-tabs>
   </div>
 
   <el-dialog v-model="appDialog" title="应用配置" width="520px">
