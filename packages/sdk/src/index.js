@@ -57,6 +57,8 @@ import { createTracer, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcesso
 import { createDeterministicSampler } from './sampling/index.js'
 // Reliable Transport v2：可替换、可测试的发送通道与持久化队列（SDK-207 / SDK-219）。
 import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock } from './transport/index.js'
+// PRD 04 · 远程采集配置：/sdk-config 拉取（ETag 304 + 失败安全沿用上次）。
+import { setupRemoteConfig } from './config/remote-config.js'
 
 /**
  * 由事件采集端点推导出 Span 接收端点。
@@ -172,6 +174,9 @@ export function createEys(options = {}) {
     console: true,
     consoleLevels: ['log', 'info', 'warn', 'error'],
     collectKey: '',
+    // PRD 04 · 远程采集配置：true 从 {endpoint 同源}/sdk-config 拉取；字符串为自定义地址；false 关闭。
+    // 失效安全：拉取失败/超时 3s → 沿用上次；从未拉到 → 内置默认全开，绝不因配置故障停采。
+    remoteConfig: true,
     tracing: true,
     traceOrigins: [],
     // distributedTracing 开启链路追踪的层级 span 功能
@@ -292,6 +297,49 @@ export function createEys(options = {}) {
   // 最近一次采样决策（供 getSamplingDecision 自查，不含敏感数据）。
   let lastSamplingDecision = null
 
+  // PRD 04 · 远程采集配置运行时状态（失效安全：未拉到配置时全链路默认放行）。
+  let remoteCtl = { getConfig: () => null, getConfigVersion: () => 0, destroy: () => {} }
+  const remoteRateWindows = new Map()
+
+  /** 应用远程配置：覆盖采样参数，并把 config_version 写入全局 context（随所有事件上报）。 */
+  function applyRemoteConfig(config) {
+    if (!config) return
+    globalContext.configVersion = Number(config.config_version) || 0
+    const rates = config.sampling || {}
+    if (Number.isFinite(rates.behavior)) sampler.sampleRate = rates.behavior
+    if (Number.isFinite(rates.error)) sampler.errorSampleRate = rates.error < 1 ? rates.error : null
+    if (Number.isFinite(rates.performance)) {
+      sampler.categorySampleRates = { ...sampler.categorySampleRates, performance: rates.performance }
+    }
+    if (Number.isFinite(rates.replay)) cfg.replaySampleRate = rates.replay
+  }
+
+  /** L2 插件开关映射：事件形状 → 配置插件键；未知类型不受开关控制。 */
+  function pluginKeyOf(item) {
+    if (item.type === 'replay') return 'replay'
+    if (item.type === 'trace') return 'trace'
+    if (item.type === 'behavior') return item.name === 'exposure' ? 'exposure' : 'behavior'
+    if (item.type === 'track') return 'behavior'
+    if (item.type === 'perf') return 'performance'
+    return ''
+  }
+
+  /** 上限保护：单设备单类事件 ≤N/10min 滑动窗口（内存态，跨刷新不累计——口径与 PRD 一致）。 */
+  function withinRemoteRateLimit(key, limit) {
+    if (!Number.isFinite(Number(limit)) || Number(limit) <= 0) return true
+    const cap = Math.floor(Number(limit))
+    const now = Date.now()
+    const stamps = (remoteRateWindows.get(key) || []).filter(ts => now - ts < 600000)
+    if (stamps.length >= cap) {
+      remoteRateWindows.set(key, stamps)
+      return false
+    }
+    stamps.push(now)
+    remoteRateWindows.set(key, stamps)
+    if (remoteRateWindows.size > 50) remoteRateWindows.clear()
+    return true
+  }
+
   // sessionId 标识当前页面访问会话。
   const sessionId = getId('eys_sid')
   const deviceId = getId('eys_did', true)
@@ -299,7 +347,7 @@ export function createEys(options = {}) {
   const recent = []
   const breadcrumbs = []
   const globalContext = {}
-  const stats = { enqueued: 0, dropped: 0, droppedByConsent: 0, droppedBySample: 0, sent: 0, failed: 0 }
+  const stats = { enqueued: 0, dropped: 0, droppedByConsent: 0, droppedBySample: 0, droppedByRemote: 0, sent: 0, failed: 0 }
   const originalFetch = window.fetch?.bind(window)
   /**
    * Reliable Transport v2：内存热队列 + IndexedDB 冷队列 + Fetch/Beacon 通道。
@@ -463,6 +511,7 @@ export function createEys(options = {}) {
   let stopClipboard = () => {}
   let stopStorage = () => {}
   let stopPermissions = () => {}
+  let stopRemoteConfig = () => {}
   let captureStarted = false
   let performanceStarted = false
   // P2-5 · 启动排队：Web SDK 同步就绪（无异步初始化），但保留缓冲机制以结构统一并保护潜在异步初始化。
@@ -612,6 +661,19 @@ export function createEys(options = {}) {
     if (cfg.clipboardMonitoring) stopClipboard = safe('clipboard', () => setupClipboardMonitor({ push }))
     if (cfg.storageEstimateMonitoring) stopStorage = safe('storage', () => setupStorageMonitor({ context: globalContext, enabled: true }))
     if (cfg.permissionsMonitoring) stopPermissions = safe('permissions', () => setupPermissionsMonitor({ context: globalContext, enabled: true }))
+    // 15) 远程采集配置（PRD 04）：启动拉取 + 按 ttl 轮询；onConfig 覆盖采样并记录 config_version
+    stopRemoteConfig = safe('remoteConfig', () => {
+      const ctl = setupRemoteConfig({
+        endpoint: cfg.endpoint,
+        appId: cfg.appId,
+        release: cfg.release,
+        environment: cfg.environment,
+        remoteConfig: cfg.remoteConfig,
+        onConfig: applyRemoteConfig
+      })
+      remoteCtl = ctl
+      return () => ctl.destroy()
+    })
   }
 
   /**
@@ -815,6 +877,22 @@ export function createEys(options = {}) {
     const item = withBase(event)
     // 回放事件不参与采样丢弃：回放有独立的缓冲区与采样策略（路线图 Phase 7 / SDK-209）。
     if (item.type !== 'replay') {
+      // PRD 04 · 远程配置门控：L3 总开关 / L1 拉黑 / L2 插件开关 / 上限保护。
+      // 错误事件始终保留止血通道，不受门控影响。
+      const rc = remoteCtl.getConfig()
+      if (rc && item.type !== 'error') {
+        const category = eventCategory(item) || item.type
+        const gated =
+          rc.master_switch === 'off' ||
+          (Array.isArray(rc.blocked_events) && item.name && rc.blocked_events.includes(item.name)) ||
+          pluginKeyOf(item) && rc.plugins?.[pluginKeyOf(item)] === false ||
+          !withinRemoteRateLimit(category, rc.rate_limits?.per_event_per_user_10min)
+        if (gated) {
+          stats.dropped++
+          stats.droppedByRemote++
+          return
+        }
+      }
       const category = eventCategory(item)
       const priority = item.type === 'error'
       // 错误事件标记其链路优先保留，保证「错误→trace」关联不被采样切断（错误会话按策略保留）。
@@ -1142,6 +1220,7 @@ export function createEys(options = {}) {
     clearTimeout(throttleTimer)
     throttleTimer = null
     finalizePerformance()
+    stopRemoteConfig()
     stopCapture()
     await stopReplayRecording()
     stopCurrentReplay() // 兜底停录：捕获 destroy 竞态期间才完成的 startReplay
