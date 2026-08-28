@@ -9,9 +9,12 @@
  *   node scripts/backfill-issue-source-map-d1.mjs            # 真正写入（远程 D1）
  *   DRY_RUN=1 node scripts/backfill-issue-source-map-d1.mjs  # 只统计，不写入
  *   node scripts/backfill-issue-source-map-d1.mjs --dry-run  # 同上
+ *
+ * 说明：所有 SQL 均写入临时文件后用 `wrangler d1 execute --file` 执行，
+ * 避免 Windows(cmd) 下 --command 因引号/空格被拆参的问题（跨平台稳健）。
  */
 import { spawnSync } from 'node:child_process'
-import { writeFileSync, mkdtempSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,13 +25,21 @@ const DRY_RUN = process.env.DRY_RUN === '1' || process.argv.includes('--dry-run'
 function wranglerD1(args) {
   const res = spawnSync('wrangler', ['d1', 'execute', DB, '--remote', ...args], {
     encoding: 'utf8',
-    maxBuffer: 1024 * 1024 * 50
+    maxBuffer: 1024 * 1024 * 50,
+    shell: true
   })
   if (res.status !== 0) {
     console.error('wrangler 调用失败：\n', res.stderr || res.stdout || '(无输出)')
     process.exit(1)
   }
   return res.stdout || ''
+}
+
+/** 将 SQL 写入临时文件并返回路径（自动清理由调用方负责 dir） */
+function writeSql(sql, dir) {
+  const file = join(dir, `stmt-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`)
+  writeFileSync(file, sql)
+  return file
 }
 
 /** 容错解析 wrangler --json 输出（兼容不同版本结构） */
@@ -69,31 +80,36 @@ function parseOriginal(stack) {
 function sqlStr(s) { return `'${String(s).replace(/'/g, "''")}'` }
 
 function main() {
-  const selectSql = "select fingerprint, stack from issues where original_json is null or original_json = 'null' or original_json = ''"
-  console.log('读取线上 D1 issues（original_json 为空的行）...')
-  const rows = extractRows(wranglerD1(['--json', '--command', selectSql]))
-  console.log(`待回填 issues 行数: ${rows.length}`)
+  const dir = mkdtempSync(join(tmpdir(), 'd1-backfill-'))
+  try {
+    const selectSql = "select fingerprint, stack from issues where original_json is null or original_json = 'null' or original_json = ''"
+    const readFile = writeSql(selectSql, dir)
+    console.log('读取线上 D1 issues（original_json 为空的行）...')
+    const rows = extractRows(wranglerD1(['--json', '--file', readFile]))
+    console.log(`待回填 issues 行数: ${rows.length}`)
 
-  const updates = []
-  for (const row of rows) {
-    const original = parseOriginal(row.stack)
-    if (!original) continue
-    const json = JSON.stringify(original).replace(/'/g, "''")
-    updates.push(`update issues set original_json = '${json}' where fingerprint = ${sqlStr(row.fingerprint)};`)
+    const updates = []
+    for (const row of rows) {
+      const original = parseOriginal(row.stack)
+      if (!original) continue
+      const json = JSON.stringify(original).replace(/'/g, "''")
+      updates.push(`update issues set original_json = '${json}' where fingerprint = ${sqlStr(row.fingerprint)};`)
+    }
+
+    if (DRY_RUN) {
+      console.log(`[dry-run] 预计写入 original_json 行数: ${updates.length}`)
+      if (updates.length) console.log('示例:', updates[0])
+      return
+    }
+
+    if (!updates.length) { console.log('无需回填。'); return }
+    const writeFile = writeSql(updates.join('\n'), dir)
+    console.log(`执行 ${updates.length} 条 UPDATE（远程 D1 ${DB}）...`)
+    const out = wranglerD1(['--file', writeFile])
+    console.log('回填完成。wrangler 输出：\n', out.slice(0, 2000))
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
   }
-
-  if (DRY_RUN) {
-    console.log(`[dry-run] 预计写入 original_json 行数: ${updates.length}`)
-    if (updates.length) console.log('示例:', updates[0])
-    return
-  }
-
-  if (!updates.length) { console.log('无需回填。'); return }
-  const file = join(mkdtempSync(join(tmpdir(), 'd1-backfill-')), 'updates.sql')
-  writeFileSync(file, updates.join('\n'))
-  console.log(`执行 ${updates.length} 条 UPDATE（远程 D1 ${DB}）...`)
-  const out = wranglerD1(['--file', file])
-  console.log('回填完成。wrangler 输出：\n', out.slice(0, 2000))
 }
 
 main()
