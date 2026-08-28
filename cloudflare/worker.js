@@ -634,7 +634,17 @@ async function sdkConfig(request,env,url){
   if(bucket.tokens<1){if(sdkConfigBuckets.size>10000)sdkConfigBuckets.clear();return new Response('too many requests',{status:429})}
   bucket.tokens-=1
   const rows=(await env.DB.prepare('select scope_json,config_json,config_version from collect_configs order by created_at desc,id desc limit 200').all().catch(()=>({results:[]}))).results
-  const resolved=resolveCollectConfig(rows,{appId:clip(url.searchParams.get('app_id')||'',64),platform:clip(url.searchParams.get('platform')||'',32),sdkVersion:clip(url.searchParams.get('sdk_version')||'',32)})
+  // 版本维度：新 SDK（>= 拆分版本之后）分别携带 sdk_version（SDK 版本）与 release（应用版本）；
+  // 旧 SDK 只发 sdk_version 且其中装的是应用版本 → 以「是否存在 release 参数」判定新旧：
+  // 新 SDK → release 用自身参数；旧 SDK → 回退取 sdk_version，维持旧语义，避免存量配置灰度错乱。
+  const hasRelease=url.searchParams.has('release')
+  const legacyVersion=clip(url.searchParams.get('sdk_version')||'',32)
+  const resolved=resolveCollectConfig(rows,{
+    appId:clip(url.searchParams.get('app_id')||'',64),
+    platform:clip(url.searchParams.get('platform')||'',32),
+    sdkVersion:hasRelease?legacyVersion:'',
+    release:hasRelease?clip(url.searchParams.get('release')||'',32):legacyVersion
+  })
   const config=resolved?.config||DEFAULT_COLLECT_CONFIG,payload={config_version:resolved?.configVersion||0,ttl_ms:300000,master_switch:config.master_switch,sampling:config.sampling,blocked_events:config.blocked_events,plugins:config.plugins,rate_limits:config.rate_limits}
   const etag=`"cfg-${payload.config_version}"`
   if(request.headers.get('if-none-match')===etag&&payload.config_version>0)return new Response(null,{status:304})
@@ -642,7 +652,8 @@ async function sdkConfig(request,env,url){
 }
 function collectConfigPreview(env,url){
   return env.DB.prepare('select scope_json,config_json,config_version from collect_configs order by created_at desc,id desc limit 200').all().then(({results})=>{
-    const resolved=resolveCollectConfig(results,{appId:url.searchParams.get('appId')||'',platform:url.searchParams.get('platform')||'',sdkVersion:url.searchParams.get('sdkVersion')||''})
+    // 管理端预览按显式入参模拟：sdkVersion=SDK 版本、appVersion=应用 release 版本，二者独立匹配。
+    const resolved=resolveCollectConfig(results,{appId:url.searchParams.get('appId')||'',platform:url.searchParams.get('platform')||'',sdkVersion:url.searchParams.get('sdkVersion')||'',release:url.searchParams.get('appVersion')||''})
     return resolved?json({...resolved,matched:true}):json({scope:{},config:DEFAULT_COLLECT_CONFIG,configVersion:0,matched:false})
   })
 }
@@ -651,9 +662,10 @@ async function collectConfigSave(env,input){
   if(raw.appId)scope.appId=clip(raw.appId,64)
   if(raw.platform)scope.platform=clip(raw.platform,32)
   if(raw.sdkVersionMax)scope.sdkVersionMax=clip(raw.sdkVersionMax,32)
+  if(raw.appVersionMax)scope.appVersionMax=clip(raw.appVersionMax,32)
   const config=sanitizeCollectConfigInput(input.config||{}),operator=clip(input.operator||'admin',64)
   const prevRows=(await env.DB.prepare('select scope_json,config_json,config_version from collect_configs order by created_at desc,id desc limit 200').all()).results
-  const before=resolveCollectConfig(prevRows,{appId:scope.appId||'',platform:scope.platform||'',sdkVersion:scope.sdkVersionMax||''})
+  const before=resolveCollectConfig(prevRows,{appId:scope.appId||'',platform:scope.platform||'',sdkVersion:scope.sdkVersionMax||'',release:scope.appVersionMax||''})
   const auditResult=await env.DB.prepare('insert into collect_config_audit(action,scope_json,config_snapshot,diff_json,operator,created_at) values(?,?,?,?,?,?)').bind(before?'update':'create',JSON.stringify(scope),JSON.stringify(config),JSON.stringify({text:diffConfigs(before?.config||DEFAULT_COLLECT_CONFIG,config)}),operator,now).run()
   const configVersion=Number(auditResult.meta.last_row_id)
   await env.DB.prepare('insert into collect_configs(scope_json,config_json,config_version,created_by,created_at) values(?,?,?,?,?)').bind(JSON.stringify(scope),JSON.stringify(config),configVersion,operator,now).run()

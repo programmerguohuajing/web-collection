@@ -694,12 +694,12 @@ await eys.flushReplay(true)                   // force-flush the pre-error windo
 Every event carries:
 | Field | Description |
 | --- | --- |
-| `sdkVersion` | SDK version |
+| `sdkVersion` | **The SDK package's own version** (e.g. `0.3.0`), injected at build time. You never set it |
 | `environment` | Runtime environment, e.g. production/test |
 | `source` | `auto`, `manual` or `platform` |
 | `context` | Redacted global/event context |
 | `appId` | Application identifier |
-| `release` | Release version |
+| `release` | **Your application's release version** (e.g. `1.2.0`), from `createEys({ release })`, defaults to `'dev'` |
 | `userId/userName/userPhone` | User info |
 | `sessionId` | Session ID |
 | `deviceId` | Device ID |
@@ -707,6 +707,13 @@ Every event carries:
 | `url/path/title/referrer` | Page info |
 | `userAgent` | Browser UA |
 | `ts` | Event timestamp |
+
+> **Don't confuse the two version numbers**
+> - `sdkVersion`: the SDK package's own version (e.g. `0.3.0`). Injected at build time and reported automatically — it only changes when you upgrade `@web-collection/sdk`.
+> - `release`: **your business application's** release version (e.g. `1.2.0`). Passed via `createEys({ release })`, following your own release cadence.
+>
+> They are independent and are separate filter dimensions in the dashboard. Remote collect-config targeting matches them separately too:
+> `sdkVersionMax` constrains the former (for "new SDK only" rollouts), `appVersionMax` the latter (for "per business release" rollouts).
 
 ## 📡 Queue, Transport & Reporting
 

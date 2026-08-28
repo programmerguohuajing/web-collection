@@ -415,10 +415,15 @@ const sdkConfigHits = new Map()
 app.get('/sdk-config', async (req, res, next) => {
   try {
     if (!sdkConfigRateLimit(req.ip)) return res.status(429).type('text/plain; charset=utf-8').send('too many requests')
+    // 版本维度：新 SDK 分别携带 sdk_version（SDK 版本）与 release（应用版本）；
+    // 旧 SDK 只发 sdk_version 且其中装的是应用版本 → 以「是否存在 release 参数」判定新旧，旧请求维持旧语义。
+    const hasRelease = Object.prototype.hasOwnProperty.call(req.query, 'release')
+    const legacyVersion = String(req.query.sdk_version || '').slice(0, 32)
     const resolved = await previewCollectConfig({
       appId: String(req.query.app_id || '').slice(0, 64),
       platform: String(req.query.platform || '').slice(0, 32),
-      sdkVersion: String(req.query.sdk_version || '').slice(0, 32)
+      sdkVersion: hasRelease ? legacyVersion : '',
+      appVersion: hasRelease ? String(req.query.release || '').slice(0, 32) : legacyVersion
     })
     const payload = {
       config_version: resolved.configVersion,
