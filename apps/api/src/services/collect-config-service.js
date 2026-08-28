@@ -37,7 +37,8 @@ export async function previewCollectConfig(input = {}) {
   const context = {
     appId: String(input.appId || '').slice(0, 64),
     platform: String(input.platform || '').slice(0, 32),
-    sdkVersion: String(input.sdkVersion || '').slice(0, 32)
+    sdkVersion: String(input.sdkVersion || '').slice(0, 32),
+    release: String(input.appVersion || '').slice(0, 32)
   }
   if (input.fallback === false) {
     // 保存前对比用：无命中时返回 null 而不是默认配置
@@ -114,11 +115,13 @@ function normalizeScope(input = {}) {
   if (input.appId) scope.appId = String(input.appId).slice(0, 64)
   if (input.platform) scope.platform = String(input.platform).slice(0, 32)
   if (input.sdkVersionMax ?? input.sdk_version_max) scope.sdkVersionMax = String(input.sdkVersionMax ?? input.sdk_version_max).slice(0, 32)
+  // appVersionMax 约束接入方应用 release 版本，与 sdkVersionMax（SDK 包版本）是独立维度
+  if (input.appVersionMax ?? input.app_version_max) scope.appVersionMax = String(input.appVersionMax ?? input.app_version_max).slice(0, 32)
   return scope
 }
 
 function contextFromScope(scope) {
-  return { appId: scope.appId || '', platform: scope.platform || '', sdkVersion: scope.sdkVersionMax || '' }
+  return { appId: scope.appId || '', platform: scope.platform || '', sdkVersion: scope.sdkVersionMax || '', release: scope.appVersionMax || '' }
 }
 
 function parseMaybe(value) {

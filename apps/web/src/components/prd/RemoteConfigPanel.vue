@@ -5,7 +5,8 @@ import { api } from '../../dashboard.js'
 
 // ---------------- 编辑器状态 ----------------
 const activeTab = ref('edit')
-const scopeForm = reactive({ mode: 'global', appId: '', sdkVersionMax: '' })
+// versionKind: 'sdk' 约束 SDK 包版本（sdkVersionMax）；'app' 约束应用 release 版本（appVersionMax）
+const scopeForm = reactive({ mode: 'global', appId: '', versionKind: 'sdk', sdkVersionMax: '', appVersionMax: '' })
 const configForm = reactive({
   masterSwitch: true,
   sampling: { error: 100, performance: 10, replay: 5, behavior: 100 },
@@ -36,7 +37,9 @@ async function loadPreview() {
     if (scopeForm.mode === 'app' && scopeForm.appId) params.set('appId', scopeForm.appId)
     if (scopeForm.mode === 'version') {
       if (scopeForm.appId) params.set('appId', scopeForm.appId)
-      if (scopeForm.sdkVersionMax) params.set('sdkVersion', scopeForm.sdkVersionMax)
+      if (scopeForm.versionKind === 'sdk') {
+        if (scopeForm.sdkVersionMax) params.set('sdkVersion', scopeForm.sdkVersionMax)
+      } else if (scopeForm.appVersionMax) params.set('appVersion', scopeForm.appVersionMax)
     }
     previewHit.value = await api(`/api/collect-config?${params}`, { requestKey: 'rc:preview' })
   } catch { previewHit.value = null }
@@ -69,7 +72,8 @@ const conflictNote = computed(() => {
   if (!previewHit.value?.matched || !previewHit.value?.scope) return ''
   const scope = previewHit.value.scope
   const bits = []
-  if (scope.sdkVersionMax) bits.push(`版本区间 ≤${scope.sdkVersionMax}`)
+  if (scope.sdkVersionMax) bits.push(`SDK 版本区间 ≤${scope.sdkVersionMax}`)
+  if (scope.appVersionMax) bits.push(`应用版本区间 ≤${scope.appVersionMax}`)
   if (scope.appId) bits.push(scope.appId)
   if (!bits.length) return ''
   return `⚠ 该范围将被「${bits.join(' / ')}」的更具体配置覆盖；保存前请确认命中预期（可用「命中查询」验证）。`
@@ -87,7 +91,10 @@ async function queryHit() {
 
 async function saveConfig() {
   if (scopeForm.mode === 'app' && !scopeForm.appId.trim()) return ElMessage.warning('应用模式下请填写 App ID')
-  if (scopeForm.mode === 'version' && !scopeForm.sdkVersionMax.trim()) return ElMessage.warning('版本区间模式请填写版本上界')
+  if (scopeForm.mode === 'version') {
+    const ceiling = scopeForm.versionKind === 'sdk' ? scopeForm.sdkVersionMax : scopeForm.appVersionMax
+    if (!String(ceiling || '').trim()) return ElMessage.warning('版本区间模式请填写版本上界')
+  }
   if (!configForm.masterSwitch) {
     try {
       await ElMessageBox.prompt('采集总开关关闭将大幅影响观测能力。请输入「确认关闭」以继续：', '高危操作确认', {
@@ -103,7 +110,11 @@ async function saveConfig() {
   const payload = {
     scope: scopeForm.mode === 'global' ? {} : {
       ...(scopeForm.appId.trim() ? { appId: scopeForm.appId.trim() } : {}),
-      ...(scopeForm.mode === 'version' ? { sdkVersionMax: scopeForm.sdkVersionMax.trim() } : {})
+      ...(scopeForm.mode === 'version'
+        ? (scopeForm.versionKind === 'sdk'
+          ? { sdkVersionMax: scopeForm.sdkVersionMax.trim() }
+          : { appVersionMax: scopeForm.appVersionMax.trim() })
+        : {})
     },
     config: {
       masterSwitch: configForm.masterSwitch ? 'on' : 'off',
@@ -139,7 +150,8 @@ function scopeLabel(scope) {
   const bits = []
   if (scope.appId) bits.push(scope.appId)
   if (scope.platform) bits.push(scope.platform)
-  if (scope.sdkVersionMax) bits.push(`≤${scope.sdkVersionMax}`)
+  if (scope.sdkVersionMax) bits.push(`SDK≤${scope.sdkVersionMax}`)
+  if (scope.appVersionMax) bits.push(`App≤${scope.appVersionMax}`)
   return bits.join(' / ') || '全局'
 }
 async function rollback(item) {
@@ -185,8 +197,19 @@ onMounted(async () => {
               <el-option label="版本区间 ≤" value="version" />
             </el-select>
             <el-input v-if="scopeForm.mode !== 'global'" v-model="scopeForm.appId" placeholder="App ID（可留空=全部应用）" style="width: 200px" @change="onScopeChange" />
-            <el-input v-if="scopeForm.mode === 'version'" v-model="scopeForm.sdkVersionMax" placeholder="版本上界，如 0.1.0-alpha.50" style="width: 220px" @change="onScopeChange" />
+            <!-- SDK 版本 = SDK 包自身版本；应用版本 = 接入方业务的 release 版本，二者独立维度 -->
+            <template v-if="scopeForm.mode === 'version'">
+              <el-select v-model="scopeForm.versionKind" style="width: 150px" @change="onScopeChange">
+                <el-option label="SDK 版本 ≤" value="sdk" />
+                <el-option label="应用版本 ≤" value="app" />
+              </el-select>
+              <el-input v-if="scopeForm.versionKind === 'sdk'" v-model="scopeForm.sdkVersionMax" placeholder="SDK 版本上界，如 0.3.0" style="width: 200px" @change="onScopeChange" />
+              <el-input v-else v-model="scopeForm.appVersionMax" placeholder="应用 release 上界，如 1.2.0" style="width: 200px" @change="onScopeChange" />
+            </template>
             <el-tag type="info" size="small">最具体者生效：版本区间 &gt; 应用 &gt; 全局</el-tag>
+            <el-tooltip content="SDK 版本 = SDK 包自身版本（0.3.0），随依赖升级变化；应用版本 = 你业务的 release（1.2.0），由 createEys({ release }) 上报。二者独立。" placement="top">
+              <el-tag type="warning" size="small" style="cursor: help">两个版本维度？</el-tag>
+            </el-tooltip>
             <el-button size="small" @click="queryHit">命中查询</el-button>
           </div>
           <div v-if="conflictNote" class="conflict-note">{{ conflictNote }}</div>

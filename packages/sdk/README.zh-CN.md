@@ -696,12 +696,12 @@ await eys.flushReplay(true)                   // 强制冲刷错误前 30 秒窗
 每条事件都会带上：
 | 字段 | 说明 |
 | --- | --- |
-| `sdkVersion` | SDK 版本 |
+| `sdkVersion` | **SDK 包自身版本**（如 `0.3.0`），构建时自动注入，接入方无需也无法配置 |
 | `environment` | 运行环境，如 production/test |
 | `source` | `auto`、`manual` 或 `platform` |
 | `context` | 已脱敏的全局/事件上下文 |
 | `appId` | 应用标识 |
-| `release` | 发布版本 |
+| `release` | **你的应用发布版本**（如 `1.2.0`），来自 `createEys({ release })`，默认 `'dev'` |
 | `userId/userName/userPhone` | 用户信息 |
 | `sessionId` | 会话 ID |
 | `deviceId` | 设备 ID |
@@ -709,6 +709,13 @@ await eys.flushReplay(true)                   // 强制冲刷错误前 30 秒窗
 | `url/path/title/referrer` | 页面信息 |
 | `userAgent` | 浏览器 UA |
 | `ts` | 事件时间戳 |
+
+> **两个版本号不要混淆**
+> - `sdkVersion`：SDK 包自身的版本（如 `0.3.0`）。由 SDK 构建时注入并自动上报，你升级 `@web-collection/sdk` 依赖它才会变。
+> - `release`：**你的业务应用**的发布版本（如 `1.2.0`）。通过 `createEys({ release })` 传入，跟着你的业务发版节奏走。
+>
+> 二者彼此独立，在监控平台也是两个筛选维度。远程采集配置的灰度同样按这两个维度分开匹配：
+> `sdkVersionMax` 约束前者（用于「新 SDK 才有的能力」灰度），`appVersionMax` 约束后者（用于「按业务发版」灰度）。
 
 ## 📡 队列、传输与上报
 

@@ -7,14 +7,24 @@
  * - ETag 协商：304 免传输；绝不因配置系统故障停采。
  */
 
+import { SDK_VERSION } from '../core/event.js'
+
 const DEFAULT_TTL_MS = 300000
 const FETCH_TIMEOUT_MS = 3000
 
 /**
+ * 请求参数携带两个彼此独立的版本维度（后端据此做配置灰度）：
+ * - sdk_version：SDK 包自身版本，由本模块自动注入，接入方不可覆盖；
+ * - release：接入方应用的发布版本，来自 createEys({ release })。
+ *
+ * 历史沿革：早期版本把 release 值塞进了 sdk_version 参数，导致后端无法按真实 SDK 版本灰度，
+ * 且 scope.sdkVersionMax 实际约束的是应用版本。现拆分为两个参数；
+ * 后端对仅带 sdk_version 的旧版 SDK 仍按原语义兼容。
+ *
  * @param {object} opts
  * @param {string} opts.endpoint - 采集端点（用于推导同源 /sdk-config 地址）
  * @param {string} opts.appId
- * @param {string} [opts.release]
+ * @param {string} [opts.release] - 应用发布版本
  * @param {string} [opts.environment]
  * @param {boolean|string} [opts.remoteConfig=true] - false 关闭；字符串作为自定义配置地址
  * @param {(config: object|null) => void} opts.onConfig - 每次配置应用时回调（null 表示无远程配置）
@@ -41,7 +51,8 @@ export function setupRemoteConfig({ endpoint, appId, release, environment, remot
       try {
         const url = new URL(configUrl, location.href)
         url.searchParams.set('app_id', appId || 'default')
-        if (release) url.searchParams.set('sdk_version', release)
+        url.searchParams.set('sdk_version', SDK_VERSION)
+        if (release) url.searchParams.set('release', release)
         if (environment) url.searchParams.set('platform', environment)
         const res = await fetch(url.toString(), { headers, signal: controller.signal, credentials: 'omit' })
         if (res.status === 304) return // 未变化，沿用当前配置

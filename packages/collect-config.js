@@ -4,6 +4,12 @@
  * 三级控制模型：L1 事件拉黑 / L2 插件开关 / L3 总开关+采样，附上限保护。
  * 匹配规则：最具体者生效（约束数多者优先）；同特异性取 config_version 最新。
  * 失败安全约定：SDK 拉取失败沿用上次配置，从未拉到则使用 DEFAULT_CONFIG。
+ *
+ * 两个独立的版本维度（易混淆，务必区分）：
+ * - SDK 版本（context.sdkVersion / scope.sdkVersionMax）：接入的 SDK 包自身版本，由 SDK 自动上报，
+ *   接入方无法伪造也不应手工填写；用于「新 SDK 才有的能力」灰度。
+ * - 应用版本（context.release / scope.appVersionMax）：接入方业务应用自身的发布版本，来自
+ *   createEys({ release })；用于「按业务发版节奏」灰度。
  */
 
 /** 内置默认配置：全开。SDK 在从未拉到配置时按此运行，绝不因配置系统故障停采 */
@@ -20,7 +26,11 @@ const SAMPLING_KEYS = ['error', 'performance', 'replay', 'behavior']
 
 /**
  * scope 特异性：约束数越多越具体（版本区间 > 应用 > 全局）。
- * @param {{appId?:string, platform?:string, sdkVersionMax?:string}} scope
+ *
+ * sdkVersionMax 约束**接入方 SDK 包的版本**，appVersionMax 约束**接入方应用自身的 release 版本**；
+ * 二者是彼此独立的维度，可同时叠加（各计权重 2）。
+ *
+ * @param {{appId?:string, platform?:string, sdkVersionMax?:string, appVersionMax?:string}} scope
  * @returns {number}
  */
 export function scopeSpecificity(scope) {
@@ -28,18 +38,22 @@ export function scopeSpecificity(scope) {
   if (scope?.appId) score += 1
   if (scope?.platform) score += 1
   if (scope?.sdkVersionMax) score += 2 // 版本区间最难命中，权重最高
+  if (scope?.appVersionMax) score += 2
   return score
 }
 
 /**
- * 判断 scope 是否命中上下文；sdkVersionMax 支持 <= 区间语义。
+ * 判断 scope 是否命中上下文；sdkVersionMax / appVersionMax 均支持 <= 区间语义。
  * 版本号按点段数值逐段比较（0.1.0-alpha.12 → [0,1,0] 前缀），避免字符串比较错序。
+ *
+ * 向后兼容：scope 未声明某维度（值为空）时不做该维度约束，老配置行行为不变。
  */
 export function scopeMatches(scope, context) {
   if (!scope || typeof scope !== 'object') return true
   if (scope.appId && scope.appId !== context.appId) return false
   if (scope.platform && scope.platform !== context.platform) return false
   if (scope.sdkVersionMax && !versionLte(context.sdkVersion, scope.sdkVersionMax)) return false
+  if (scope.appVersionMax && !versionLte(context.release, scope.appVersionMax)) return false
   return true
 }
 
@@ -64,7 +78,8 @@ function versionParts(value) {
 /**
  * 从候选配置行中解析出命中结果：最具体者生效，同特异性取版本最新。
  * @param {Array<{scope_json: object|string, config_json: object|string, config_version: number}>} rows 按 created_at desc 排列的候选
- * @param {{appId?:string, platform?:string, sdkVersion?:string}} context
+ * @param {{appId?:string, platform?:string, sdkVersion?:string, release?:string}} context
+ *   sdkVersion=SDK 包版本（由 SDK 随 /sdk-config 请求自动上报）；release=接入方应用版本（createEys 的 release 配置项）
  * @returns {{scope:object, config:object, configVersion:number}|null}
  */
 export function resolveCollectConfig(rows, context) {
