@@ -135,14 +135,34 @@ async function record(env, event, application, ctx) {
   }
   const id = crypto.randomUUID()
   const storedProps = event.parentSpanId ? { ...(event.props || {}), __parentSpanId: event.parentSpanId } : event.props
-  await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json, app_version, product_id, event_id, request_id, occurred_at, received_at, schema_version, batch_id, retry_count, contract_status, contract_errors_json) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(storedProps||null),JSON.stringify(event.breadcrumbs||null), event.appVersion || event.release, event.productId || null, event.eventId || id, event.requestId || null, event.occurredAt || event.ts, now, event.schemaVersion || '1', event.batchId || null, event.retryCount || 0, 'accepted', null])
+  await storageWrite(env, `insert into events (id,ts,type,app_id,release_name,user_id,user_name,user_phone,session_id,device_id,trace_id,span_id,url,path,title,referrer,user_agent,sdk_version,environment,source,context_json,name,metric,value,message,stack,props_json,breadcrumbs_json, app_version, product_id, event_id, request_id, occurred_at, received_at, schema_version, batch_id, retry_count, contract_status, contract_errors_json, device, os, browser) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id,event.ts,event.type,event.appId,event.release,event.userId,event.userName,event.userPhone,event.sessionId,event.deviceId,event.traceId,event.spanId,event.url,event.path,event.title,event.referrer,event.userAgent,event.sdkVersion,event.environment,event.source,JSON.stringify(event.context||null),event.name,event.metric,event.value,event.message,event.stack,JSON.stringify(storedProps||null),JSON.stringify(event.breadcrumbs||null), event.appVersion || event.release, event.productId || null, event.eventId || id, event.requestId || null, event.occurredAt || event.ts, now, event.schemaVersion || '1', event.batchId || null, event.retryCount || 0, 'accepted', null, deriveDevice(event.userAgent), deriveOs(event.userAgent), deriveBrowser(event.userAgent)])
   const issue = event.type === 'error' ? await upsertIssue(env, event) : null
   if (event.type === 'error' || (event.type === 'log' && event.name === 'error') || event.type === 'perf') await alert(env, event, issue, ctx)
   return true
 }
 
+// 从 user_agent 派生设备/系统/浏览器，对齐 Postgres 版（apps/api/src/index.js）。
+// D1 events 表此前缺少这三列，导致 journey/timeline 查询报 "no such column: e.device"。
+function deriveBrowser(ua) {
+  if (/Edg/i.test(ua)) return 'Edge'
+  if (/Chrome/i.test(ua)) return 'Chrome'
+  if (/Safari/i.test(ua)) return 'Safari'
+  if (/Firefox/i.test(ua)) return 'Firefox'
+  return 'Unknown'
+}
+function deriveOs(ua) {
+  if (/Windows/i.test(ua)) return 'Windows'
+  if (/Mac OS/i.test(ua)) return 'macOS'
+  if (/Android/i.test(ua)) return 'Android'
+  if (/iPhone|iPad/i.test(ua)) return 'iOS'
+  if (/Linux/i.test(ua)) return 'Linux'
+  return 'Unknown'
+}
+function deriveDevice(ua) {
+  return /Mobile|Android|iPhone/i.test(ua) ? 'Mobile' : 'Desktop'
+}
+
 async function storageWrite(env, sql, values) {
-  const run = () => env.DB.prepare(sql).bind(...values).run()
   try {
     return await run()
   } catch (error) {
