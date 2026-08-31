@@ -10,11 +10,19 @@ const items = ref([])
 const loading = ref(false)
 const scanning = ref(false)
 const detail = reactive({ open: false, finding: null, diagnosis: null, diagnosing: false, pushing: false })
+const scanScopes = ref(['error-cluster', 'release-regression', 'perf-regression', 'metric-drop'])
+const scanSinceHours = ref(24)
 
 const SCOPE_LABEL = {
   'error-cluster': '错误簇', 'release-regression': '发布回归',
   'perf-regression': '性能退化', 'metric-drop': '指标骤降'
 }
+const SCOPE_OPTIONS = Object.entries(SCOPE_LABEL).map(([value, label]) => ({ value, label }))
+const SINCE_OPTIONS = [
+  { value: 6, label: '近 6 小时' },
+  { value: 24, label: '近 24 小时' },
+  { value: 72, label: '近 3 天' }
+]
 const STATUS_LABEL = { open: '待处理', ack: '已确认', resolved: '已解决', ignored: '已忽略' }
 const STATUS_TYPE = { open: 'danger', ack: 'warning', resolved: 'success', ignored: 'info' }
 
@@ -35,7 +43,12 @@ async function load() {
 async function scan() {
   scanning.value = true
   try {
-    const r = await api('/api/ai/scan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', requestKey: 'insights:scan' })
+    const r = await api('/api/ai/scan', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scopes: scanScopes.value, sinceHours: scanSinceHours.value }),
+      requestKey: 'insights:scan'
+    })
     ElMessage.success(`扫描完成：新增 ${r.inserted?.length || 0} 条，跳过 ${r.skipped || 0} 条`)
     await load()
   } catch (e) {
@@ -112,8 +125,14 @@ onMounted(load)
         <p class="sub">系统主动扫描发现的错误簇 / 发布回归 / 性能退化 / 指标骤降，无需点开错误即可发现。</p>
       </div>
       <div class="actions">
+        <el-select v-model="scanScopes" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" placeholder="扫描类别" style="width: 260px" aria-label="选择扫描类别">
+          <el-option v-for="opt in SCOPE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
+        <el-select v-model="scanSinceHours" style="width: 140px" aria-label="选择扫描时间范围">
+          <el-option v-for="opt in SINCE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-        <el-button type="primary" :icon="MagicStick" :loading="scanning" @click="scan">立即扫描</el-button>
+        <el-button type="primary" :icon="MagicStick" :loading="scanning" :disabled="!scanScopes.length" @click="scan">立即扫描</el-button>
       </div>
     </div>
 

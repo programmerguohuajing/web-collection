@@ -205,7 +205,11 @@ async function route(request, env, url, path) {
   // ---- P1 主动诊断 · 洞察流 ----
   if (path === '/api/ai/scan' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}))
-    return json(await runScan(db, { appId: body.appId || undefined, sinceHours: Number(body.sinceHours) || 24 }))
+    return json(await runScan(db, {
+      appId: body.appId || undefined,
+      sinceHours: Number(body.sinceHours) || 24,
+      scopes: Array.isArray(body.scopes) && body.scopes.length ? body.scopes : undefined
+    }))
   }
   if (path === '/api/ai/findings' && request.method === 'GET') {
     const repo = createFindingsRepo(db)
