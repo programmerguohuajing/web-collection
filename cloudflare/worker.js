@@ -163,6 +163,7 @@ function deriveDevice(ua) {
 }
 
 async function storageWrite(env, sql, values) {
+  const run = () => env.DB.prepare(sql).bind(...(values || [])).run()
   try {
     return await run()
   } catch (error) {
