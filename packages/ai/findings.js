@@ -20,8 +20,12 @@ const FINDING_TTL = 7 * 24 * HOUR // 同类 open 洞察去重窗口
 
 export function createFindingsRepo(db) {
   async function insert(finding) {
-    const id = finding.id || hash(`${finding.scope}:${finding.object}:${finding.created_at}`)
     const now = finding.created_at || Date.now()
+    // 关键：id 必须每次插入唯一。原实现用 finding.created_at（恒为 undefined）参与 hash，
+    // 导致 scope:object 相同的洞察 id 恒定 -> 一旦 findOpen 漏判（旧洞察已 resolved/ack、或去重窗口外），
+    // 重新插入即触发 ai_findings.id 主键冲突 -> runScan 抛 500 internal error。
+    // 改为用实际时间戳 + 随机后缀生成唯一 id；去重仍由 findOpen(scope,object,status='open',近 7d) 负责。
+    const id = finding.id || hash(`${finding.scope}:${finding.object}:${now}:${Math.random().toString(36).slice(2, 10)}`)
     await db.prepare(
       `insert into ai_findings (id,scope,object,app_id,summary,evidence_json,detail_json,confidence,status,created_at,updated_at)
        values (?,?,?,?,?,?,?,?,?,?,?)`
