@@ -457,6 +457,7 @@ defineExpose({ play, currentSessionCode })
             :step="500"
             :disabled="!duration"
             :format-tooltip="formatTime"
+            tooltip-class="replay-slider-tooltip"
             aria-label="回放进度"
             @input="onSliderInput"
             @change="seek"
@@ -627,5 +628,19 @@ defineExpose({ play, currentSessionCode })
   .replay-speed { grid-column: 1 / -1; justify-self: end; }
   .replay-side-stack { grid-template-columns: 1fr; }
   .replay-session-card { grid-column: auto; }
+}
+</style>
+
+<!-- 回放进度条 tooltip（el-slider format-tooltip）由 ElTooltip 渲染到 body，需用全局样式。
+     位置固定在进度条正上方；正 margin-top 让浮层贴着进度条（而非反向飘进回放画面）。 -->
+<style>
+.replay-slider-tooltip.el-tooltip__popper[data-popper-placement^='top'] {
+  margin-top: 6px !important;
+  padding: 4px 9px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
 }
 </style>

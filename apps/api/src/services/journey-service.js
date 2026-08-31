@@ -27,10 +27,11 @@ const SEARCH_FIELD = {
 export async function searchJourneySessions(input = {}) {
   const type = SEARCH_FIELD[input.type] ? input.type : 'session'
   const value = String(input.value || '').trim()
-  if (!value) throw badRequest('标识值不能为空', 'MISSING_VALUE')
   const column = SEARCH_FIELD[type]
-  const parts = [`e.${column} = ?`]
-  const params = [value]
+  const parts = [`coalesce(e.session_id, '') <> ''`]
+  const params = []
+  // value 为空时进入「浏览最近会话」模式，进入页面即有数据（无需先输入标识）。
+  if (value) { parts.push(`e.${column} = ?`); params.push(value) }
   if (input.appId) { parts.push('e.app_id = ?'); params.push(String(input.appId).slice(0, 64)) }
   const startTime = finite(input.startTime)
   const endTime = finite(input.endTime)
@@ -48,13 +49,13 @@ export async function searchJourneySessions(input = {}) {
       max(e.app_id) app_id, max(e.sdk_version) sdk_version,
       max(e.device) device, max(e.browser) browser
     from events e
-    ${where} and coalesce(e.session_id, '') <> ''
+    ${where}
     group by e.session_id
     order by last_at desc
     limit ? offset ?`, [...params, pageSize, (page - 1) * pageSize])
   const totalRows = await all(`
     select count(*)::integer count from (
-      select 1 from events e ${where} and coalesce(e.session_id, '') <> '' group by e.session_id
+      select 1 from events e ${where} group by e.session_id
     ) sessions`, params)
   const replayIds = await all(`select distinct base_session_id from replay_events where base_session_id is not null`)
   const replaySet = new Set(replayIds.map(row => row.base_session_id))
