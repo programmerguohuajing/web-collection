@@ -97,6 +97,39 @@ function onViewModeChange(name) {
   if (name === 'click') loadClickPaths()
 }
 
+function clickPage(n) {
+  const id = n?.id || ''
+  const idx = id.indexOf('@')
+  return idx >= 0 ? id.slice(idx + 1) : '未标注'
+}
+
+// 点击视角按「所在页面」分组着色，让力导向图按页聚簇、图例可辨（后端节点 type 均为 'click'，默认单色无法区分）
+const CLICK_PALETTE = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#9254DE', '#13C2C2', '#EB2F96', '#FA8C16', '#2F54EB', '#52C41A']
+const clickColorMap = computed(() => {
+  const pages = [...new Set((clickPaths.value.nodes || []).map(clickPage))].filter(Boolean)
+  const map = {}
+  pages.forEach((p, i) => { map[p] = CLICK_PALETTE[i % CLICK_PALETTE.length] })
+  return map
+})
+const clickNodesByPage = computed(() => (clickPaths.value.nodes || []).map(n => ({ ...n, type: clickPage(n) })))
+const topClickNodes = computed(() =>
+  [...(clickPaths.value.nodes || [])].sort((a, b) => Number(b.value || 0) - Number(a.value || 0)).slice(0, 10)
+)
+const clickKpis = computed(() => {
+  const nodes = clickPaths.value.nodes || []
+  const edges = clickPaths.value.edges || []
+  const totalClicks = nodes.reduce((s, n) => s + Number(n.value || 0), 0)
+  const totalTrans = edges.reduce((s, e) => s + Number(e.calls || 0), 0)
+  const top = [...nodes].sort((a, b) => Number(b.value || 0) - Number(a.value || 0))[0]
+  const topLabel = top ? (top.label.length > 16 ? top.label.slice(0, 16) + '…' : top.label) : '-'
+  return [
+    { label: '总点击次数', value: totalClicks.toLocaleString(), delta: '当前筛选范围', valueClass: 'value-primary' },
+    { label: '点击元素种类', value: nodes.length.toLocaleString(), delta: '去重 UI 元素', valueClass: 'value-purple' },
+    { label: '最热点击元素', value: topLabel, delta: top ? `${top.value} 次` : '—', valueClass: 'value-success' },
+    { label: '点击跳转关系', value: edges.length.toLocaleString(), delta: `共 ${totalTrans.toLocaleString()} 次过渡`, valueClass: 'value-danger' }
+  ]
+})
+
 onMounted(load)
 </script>
 
@@ -135,7 +168,34 @@ onMounted(load)
           <template #title>当前时间范围内没有点击路径数据</template>
           <template #default>点击事件通常跨数十天分布，当前所选时间窗可能将其整体过滤为空。请尝试在右上角将时间范围改为「全部时间」或「最近90天」后刷新。</template>
         </el-alert>
-        <TopologyChart :nodes="clickPaths.nodes" :edges="clickPaths.edges" height="560px" v-loading="clickLoading" />
+        <template v-else>
+          <KpiGrid v-if="clickPaths.nodes.length" :items="clickKpis" />
+          <div class="click-graph">
+            <div class="click-graph-head">
+              <b>点击流向图</b>
+              <small class="muted">节点 = UI 点击元素（按所在页面着色，可在图例中筛选）；连线 = 用户连续两次点击的跳转，粗细 = 过渡次数。支持拖拽节点、滚轮缩放、点击高亮相邻路径。</small>
+            </div>
+            <TopologyChart :nodes="clickNodesByPage" :edges="clickPaths.edges" :node-colors="clickColorMap" height="560px" v-loading="clickLoading" />
+          </div>
+          <div v-if="!clickLoading && clickPaths.nodes.length" class="click-top">
+            <div class="click-top-head">
+              <b>热门点击元素 Top 10</b>
+              <small class="muted">按点击次数降序</small>
+            </div>
+            <el-table :data="topClickNodes" size="small" border max-height="340">
+              <el-table-column type="index" label="#" width="48" />
+              <el-table-column label="点击元素" min-width="200">
+                <template #default="{ row }"><OverflowTip :text="row.label" :force="true" /></template>
+              </el-table-column>
+              <el-table-column label="所在页面" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">{{ clickPage(row) || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="点击次数" width="110" align="right">
+                <template #default="{ row }">{{ Number(row.value || 0).toLocaleString() }}</template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </template>
       </el-tab-pane>
     </el-tabs>
   </el-card>
@@ -148,4 +208,12 @@ onMounted(load)
   padding: 8px 12px 12px;
   line-height: 1.5;
 }
+.muted { color: var(--el-text-color-secondary); font-weight: 400; }
+.click-graph { margin-top: 4px; }
+.click-graph-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; }
+.click-graph-head b { color: var(--el-text-color-primary); font-size: 14px; }
+.click-graph-head .muted { flex: 1 1 420px; line-height: 1.6; font-size: 12px; }
+.click-top { margin-top: 18px; }
+.click-top-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.click-top-head b { color: var(--el-text-color-primary); font-size: 14px; }
 </style>
