@@ -335,4 +335,19 @@ defineExpose({ open })
 .section { margin-top: 12px; }
 .loading-tip { display: flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); margin-top: 16px; }
 .rediagnose { display: none; }
+/* 窄抽屉内 tab 超宽触发 scrollable 时，强制 nav-wrap 行内布局，避免左右滚动箭头被挤到单独一行 */
+.ai-diagnosis-drawer :deep(.el-tabs__nav-wrap) {
+  display: flex;
+  align-items: center;
+}
+.ai-diagnosis-drawer :deep(.el-tabs__nav-scroll) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ai-diagnosis-drawer :deep(.el-tabs__nav-prev),
+.ai-diagnosis-drawer :deep(.el-tabs__nav-next) {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
 </style>
