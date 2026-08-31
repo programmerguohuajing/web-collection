@@ -13,7 +13,7 @@ const store = useFilterStore()
 const searchForm = reactive({
   type: ['user', 'device', 'session', 'trace'].includes(route.query.type) ? route.query.type : 'session',
   value: String(route.query.value || ''),
-  range: '24h'
+  range: ['24h', '7d', 'all'].includes(route.query.range) ? route.query.range : '24h'
 })
 const TYPE_OPTIONS = [
   { value: 'session', label: '会话 ID' },
@@ -33,10 +33,10 @@ const timelineLoading = ref(false)
 const selectedEvent = ref(null)
 const aiDrawer = ref(false)
 
-const rangeStart = () => searchForm.range === '7d' ? Date.now() - 7 * 86400000 : Date.now() - 86400000
+const rangeStart = () => searchForm.range === '7d' ? Date.now() - 7 * 86400000 : searchForm.range === 'all' ? 0 : Date.now() - 86400000
 
 function syncUrl() {
-  router.replace({ query: { ...route.query, type: searchForm.type, value: searchForm.value || undefined } })
+  router.replace({ query: { ...route.query, type: searchForm.type, value: searchForm.value || undefined, range: searchForm.range !== '24h' ? searchForm.range : undefined } })
 }
 
 async function loadSessions() {
@@ -49,8 +49,10 @@ async function loadSessions() {
   try {
     const params = new URLSearchParams({ type: searchForm.type, value })
     if (store.appId) params.set('appId', store.appId)
-    params.set('startTime', String(rangeStart()))
-    params.set('endTime', String(Date.now()))
+    if (searchForm.range !== 'all') {
+      params.set('startTime', String(rangeStart()))
+      params.set('endTime', String(Date.now()))
+    }
     const data = await api(`/api/journey/sessions?${params}`, { requestKey: 'journey:sessions' })
     sessions.value = Array.isArray(data?.sessions) ? data.sessions : []
     sessionStats.events = sessions.value.reduce((sum, item) => sum + Number(item.eventCount || 0), 0)
@@ -259,6 +261,7 @@ onMounted(() => {
         <el-select v-model="searchForm.range" style="width: 120px">
           <el-option label="近 24 小时" value="24h" />
           <el-option label="近 7 天" value="7d" />
+          <el-option label="全部时间" value="all" />
         </el-select>
         <el-button type="primary" :loading="loading" @click="loadSessions">查询</el-button>
       </div>
