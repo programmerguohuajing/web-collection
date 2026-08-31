@@ -171,14 +171,18 @@ export async function detectMetricDrops(db, { appId, windowMs = HOUR, type } = {
  * 运行全部检测器，去重后写入新洞察。
  * @returns {{ inserted: string[], skipped: number, scannedAt: number }}
  */
-export async function runScan(db, { appId, sinceHours = 24 } = {}) {
+export async function runScan(db, { appId, sinceHours = 24, scopes } = {}) {
   const repo = createFindingsRepo(db)
   const sinceTs = Date.now() - sinceHours * HOUR
+  // 指定了 scopes 时只跑选中的检测器；否则扫全部四类
+  const enabled = Array.isArray(scopes) && scopes.length
+    ? scopes
+    : ['error-cluster', 'release-regression', 'perf-regression', 'metric-drop']
   const candidates = [
-    ...await detectErrorClusters(db, { appId, sinceTs }),
-    ...await detectReleaseRegressions(db, { appId }),
-    ...await detectPerfRegressions(db, { appId }),
-    ...await detectMetricDrops(db, { appId })
+    ...(enabled.includes('error-cluster') ? await detectErrorClusters(db, { appId, sinceTs }) : []),
+    ...(enabled.includes('release-regression') ? await detectReleaseRegressions(db, { appId }) : []),
+    ...(enabled.includes('perf-regression') ? await detectPerfRegressions(db, { appId }) : []),
+    ...(enabled.includes('metric-drop') ? await detectMetricDrops(db, { appId }) : [])
   ]
 
   const inserted = []
