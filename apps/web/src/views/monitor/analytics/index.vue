@@ -221,9 +221,6 @@ async function openSession(row) {
 function changeTab(name) {
   tab.value = name
 }
-function goFunnels() {
-  router.push('/funnels')
-}
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 
 onMounted(() => { timer = window.setInterval(async () => { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) }, 30000) })
@@ -284,17 +281,6 @@ watch(selectedDashboardId, loadDashboardResults)
       </el-table>
       <el-pagination v-if="sessionPager.total > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
     </el-tab-pane>
-    <el-tab-pane label="漏斗分析" name="funnels">
-      <el-card shadow="never" class="funnel-merge-card">
-        <div class="merge-inner">
-          <div class="merge-text">
-            <h2>漏斗分析已合并到独立页面</h2>
-            <p>为消除重复入口，漏斗的「新建 / 编辑 / 报告 / 维度细分 / 流失洞察 / 每日趋势 / 流失会话明细」已全部合并到 <b>漏斗分析</b> 独立页面。本页不再重复提供漏斗能力，避免同一漏斗在两处出现语义不同的结果。</p>
-          </div>
-          <el-button type="primary" @click="goFunnels">前往漏斗分析 →</el-button>
-        </div>
-      </el-card>
-    </el-tab-pane>
     <el-tab-pane label="版本对比" name="releases">
       <el-table :data="releases" border><el-table-column label="版本"><template #default="{ row }">{{ presentValue(row.release, row.release_name, row.releaseName, row.version) }}</template></el-table-column><el-table-column label="事件"><template #default="{ row }">{{ presentValue(row.events, row.event_count, row.eventCount) }}</template></el-table-column><el-table-column label="用户"><template #default="{ row }">{{ presentValue(row.users, row.user_count, row.userCount) }}</template></el-table-column><el-table-column label="错误"><template #default="{ row }">{{ presentValue(row.errors, row.error_count, row.errorCount) }}</template></el-table-column><el-table-column label="平均 LCP"><template #default="{ row }">{{ presentValue(row.lcp, row.avg_lcp, row.avgLcp, row.average_lcp, row.averageLcp) }}</template></el-table-column></el-table>
     </el-tab-pane>
@@ -331,70 +317,5 @@ watch(selectedDashboardId, loadDashboardResults)
 .path-expand { padding: 4px 8px; }
 .path-expand-title { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
 .path-expand-body { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.funnel-builder { margin-bottom: 18px; }
-.funnel-builder-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.funnel-builder-head h2 { margin: 0; color: var(--c-text); font-size: 16px; }
-.funnel-builder-head p { margin: 4px 0 0; color: var(--c-text-muted); font-size: 12px; }
-.funnel-meta { display: grid; grid-template-columns: repeat(2, minmax(220px, 320px)); gap: 16px; }
-.funnel-meta :deep(.el-form-item) { margin-bottom: 14px; }
-.funnel-window-hint { margin-left: 10px; color: var(--c-text-muted); font-size: 12px; }
-.funnel-section-head,
-.funnel-candidates-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.funnel-section-head { padding-top: 14px; border-top: 1px solid var(--c-border); }
-.funnel-section-head div { display: flex; align-items: center; gap: 10px; }
-.funnel-section-head span,
-.funnel-candidates-head span { color: var(--c-text-muted); font-size: 12px; }
-.funnel-steps { display: grid; gap: 10px; margin-top: 12px; }
-.funnel-step {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 50px;
-  gap: 12px;
-  align-items: center;
-  padding: 12px;
-  border: 1px solid var(--c-border);
-  border-radius: 8px;
-  background: var(--c-surface);
-}
-.funnel-step:hover { border-color: var(--c-primary-light-7); }
-.funnel-step-index { display: grid; justify-items: center; gap: 2px; }
-.funnel-step-index span {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--c-primary-soft);
-  color: var(--c-primary);
-  font-weight: 700;
-}
-.funnel-step-index small { color: var(--c-text-muted); font-size: 11px; }
-.funnel-step-fields { display: grid; gap: 8px; min-width: 0; }
-.funnel-event-select { width: 100%; }
-.funnel-filter-fields { display: grid; grid-template-columns: minmax(160px, 1fr) 130px minmax(160px, 1fr); gap: 8px; }
-.funnel-add-step { width: 100%; margin-top: 10px; border-style: dashed; }
-.funnel-candidates { margin-top: 16px; padding: 12px 14px; border-radius: 8px; background: var(--c-surface-3); }
-.funnel-candidate-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .dashboard-insight { margin-top: 14px; }
-@media (max-width: 900px) {
-  .funnel-meta { grid-template-columns: 1fr; gap: 0; }
-  .funnel-step { grid-template-columns: 46px minmax(0, 1fr) 50px; }
-  .funnel-filter-fields { grid-template-columns: 1fr; }
-}
-@media (max-width: 600px) {
-  .funnel-builder-head { align-items: flex-start; }
-  .funnel-builder-head p { max-width: 210px; }
-  .funnel-step { grid-template-columns: 38px minmax(0, 1fr); padding: 10px 8px; }
-  .funnel-step > .el-button { grid-column: 2; justify-self: end; }
-}
-.funnel-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
-.funnel-kpi { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 14px; padding: 16px 18px; position: relative; overflow: hidden; box-shadow: var(--sh-md); }
-.funnel-merge-card { margin-top: 4px; }
-.funnel-merge-card :deep(.el-card__body) { padding: 22px 24px; }
-.merge-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
-.merge-text h2 { margin: 0 0 8px; font-size: 16px; color: var(--c-text); }
-.merge-text p { margin: 0; max-width: 720px; color: var(--c-text-muted); font-size: 13px; line-height: 1.7; }
-.merge-text b { color: var(--c-primary); }
-@media (max-width: 900px) {
-  .merge-inner { flex-direction: column; align-items: flex-start; }
-}
 </style>
