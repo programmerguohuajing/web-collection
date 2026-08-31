@@ -121,7 +121,7 @@ export async function detectReleaseRegressions(db, { appId } = {}) {
     if (perfDelta != null && perfDelta >= 15) {
       findings.push({
         scope: 'release-regression', object: cur.release_name, appId,
-        summary: `发布 ${cur.release_name} 性能均值 ${curStats.perfAvg}ms，较上一版（${prevStats.perfAvg}ms）退化 ${perfDelta}%`,
+        summary: `发布 ${cur.release_name} 性能均值 ${fmtDuration(curStats.perfAvg)}，较上一版（${fmtDuration(prevStats.perfAvg)}）退化 ${perfDelta}%`,
         evidence: [`release:${cur.release_name}`, `perfAvg:${curStats.perfAvg}`],
         detail: { current: curStats, previous: prevStats, perfDelta },
         confidence: Math.min(0.95, 0.6 + perfDelta / 200)
@@ -141,7 +141,7 @@ export async function detectPerfRegressions(db, { appId, windowMs = HOUR } = {})
   if (delta == null || delta < 30) return []
   return [{
     scope: 'perf-regression', object: `last-${Math.round(windowMs / HOUR)}h`, appId,
-    summary: `最近 ${Math.round(windowMs / HOUR)}h 性能均值 ${cur.avg.toFixed(1)}ms，较上一窗口（${prev.avg.toFixed(1)}ms）退化 ${delta}%`,
+    summary: `最近 ${Math.round(windowMs / HOUR)}h 性能均值 ${fmtDuration(cur.avg)}，较上一窗口（${fmtDuration(prev.avg)}）退化 ${delta}%`,
     evidence: [`perfAvg:${cur.avg.toFixed(1)}`, `perfAvgPrev:${prev.avg.toFixed(1)}`, `samples:${cur.count}`],
     detail: { current: cur, previous: prev, delta },
     confidence: Math.min(0.9, 0.5 + delta / 200)
@@ -204,3 +204,22 @@ function pctDelta(cur, prev) {
 }
 function fmtPct(v) { return `${(Number(v) * 100).toFixed(2)}%` }
 function safeParse(v, fallback) { try { return typeof v === 'string' ? JSON.parse(v) : v ?? fallback } catch { return fallback } }
+
+/**
+ * 把毫秒格式化为「时:分:秒」展示（HHhMMmSSs）。
+ * <1s 原样保留 ms；>=1h 显示 h/m/s；跨天亦可正确累加小时。
+ * @param {number} ms
+ * @returns {string}
+ */
+function fmtDuration(ms) {
+  const total = Number(ms)
+  if (!isFinite(total) || total < 0) return `${ms}ms`
+  if (total < 1000) return `${total.toFixed(0)}ms`
+  const totalSec = Math.floor(total / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m${String(s).padStart(2, '0')}s`
+  if (m > 0) return `${m}m${String(s).padStart(2, '0')}s`
+  return `${s}s`
+}
