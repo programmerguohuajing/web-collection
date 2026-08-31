@@ -181,7 +181,7 @@ onMounted(async () => {
         </div>
         <div class="navbar-actions">
           <el-badge :value="insightCount" :hidden="!insightCount" :max="99">
-            <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
+            <el-button text circle aria-label="通知" @click="navigate('/ai-insights')"><el-icon><Bell /></el-icon></el-button>
           </el-badge>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>

@@ -40,14 +40,15 @@ function syncUrl() {
 }
 
 async function loadSessions() {
-  const value = searchForm.value.trim()
-  if (!value) return ElMessage.warning('请输入标识值')
   syncUrl()
   loading.value = true
   loadError.value = ''
   pageLoading.value = true
   try {
-    const params = new URLSearchParams({ type: searchForm.type, value })
+    const params = new URLSearchParams({ type: searchForm.type })
+    const value = searchForm.value.trim()
+    // value 为空时后端进入「浏览最近会话」模式，进入页面即有数据（无需先输入标识）
+    if (value) params.set('value', value)
     if (store.appId) params.set('appId', store.appId)
     if (searchForm.range !== 'all') {
       params.set('startTime', String(rangeStart()))
@@ -233,7 +234,8 @@ function formatDuration(ms) {
 }
 
 onMounted(() => {
-  if (searchForm.value.trim()) void loadSessions()
+  // 进入页面即加载「最近会话」，无需先输入标识（修复空白首屏）
+  void loadSessions()
 })
 </script>
 
@@ -288,7 +290,7 @@ onMounted(() => {
               <span v-if="session.hasReplay">⏯</span>
             </div>
           </div>
-          <div v-if="!loading && !sessions.length" class="j-empty">输入标识开始检索</div>
+          <div v-if="!loading && !sessions.length" class="j-empty">暂无会话数据，可输入标识检索</div>
         </div>
       </div>
 

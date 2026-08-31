@@ -809,8 +809,10 @@ function collectConfigStats(env){
 // PRD 01 用户链路（spans 无 session_id，API 类别主要来自 perf/fetch|xhr 事件；后端 span 经 trace_id 补充）
 function journeySessions(env,url){
   const fieldMap={user:'user_id',device:'device_id',session:'session_id',trace:'trace_id'},column=fieldMap[url.searchParams.get('type')]||'session_id'
-  const value=url.searchParams.get('value');if(!value)return json({error:'标识值不能为空'},400)
-  const parts=[`e.${column}=?`],values=[value]
+  const value=url.searchParams.get('value')
+  const parts=[`ifnull(e.session_id,'')<>''`],values=[]
+  // value 为空时进入「浏览最近会话」模式，进入页面即有数据（无需先输入标识）。
+  if(value){parts.push(`e.${column}=?`);values.push(value)}
   if(url.searchParams.get('appId')){parts.push('e.app_id=?');values.push(url.searchParams.get('appId'))}
   if(url.searchParams.get('startTime')){parts.push('e.ts>=?');values.push(Number(url.searchParams.get('startTime')))}
   if(url.searchParams.get('endTime')){parts.push('e.ts<=?');values.push(Number(url.searchParams.get('endTime')))}
