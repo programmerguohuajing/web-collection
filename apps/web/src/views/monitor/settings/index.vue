@@ -156,9 +156,24 @@ onMounted(load)
     <el-card shadow="never" class="panel settings-form-card section">
       <template #header><div class="panel-head"><div><h2>告警规则</h2><small>定义需要关注的回归与异常阈值</small></div><el-button type="primary" @click="saveIngest">保存设置</el-button></div></template>
       <el-form label-position="top" class="settings-form">
-        <el-form-item label="错误回归"><el-switch v-model="rules.regression" /><small>检测已解决问题再次出现</small></el-form-item>
-        <el-form-item label="错误率异常"><el-switch v-model="rules.highErrorRate" /><small>错误率超过基线时通知</small></el-form-item>
-        <el-form-item label="页面加载变慢"><el-switch v-model="rules.slowPage" /><small>Core Web Vitals P95 超过阈值时通知</small></el-form-item>
+        <el-form-item label="错误回归">
+          <div class="ingest-row">
+            <el-switch v-model="rules.regression" />
+            <small class="hint">检测已解决问题再次出现</small>
+          </div>
+        </el-form-item>
+        <el-form-item label="错误率异常">
+          <div class="ingest-row">
+            <el-switch v-model="rules.highErrorRate" />
+            <small class="hint">错误率超过基线时通知</small>
+          </div>
+        </el-form-item>
+        <el-form-item label="页面加载变慢">
+          <div class="ingest-row">
+            <el-switch v-model="rules.slowPage" />
+            <small class="hint">Core Web Vitals P95 超过阈值时通知</small>
+          </div>
+        </el-form-item>
       </el-form>
     </el-card>
   </template>
