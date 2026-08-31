@@ -503,7 +503,7 @@ function corsMiddleware(req, res, next) {
   res.set({
     'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
     'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-app-key,traceparent'
+    'access-control-allow-headers': 'content-type,x-app-key,x-ai-key,traceparent,if-none-match,if-match,if-modified-since,if-unmodified-since'
   })
   if (req.method === 'OPTIONS') return res.status(204).end()
   next()
