@@ -288,7 +288,7 @@ watch(selectedDashboardId, loadDashboardResults)
     <el-tab-pane label="自定义仪表盘" name="dashboards">
       <el-space class="section"><el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select><el-button type="danger" plain :disabled="!selectedDashboardId" @click="removeDashboard">删除仪表盘</el-button></el-space>
       <el-form><el-form-item label="名称"><el-input v-model="dashboardForm.name" style="width:260px" /></el-form-item><el-form-item label="基础组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in ['live','sessions','errors','releases']" :key="item" :value="item">{{ widgetLabel(item) }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightOptions.length" label="分析组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in insightOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightsSupported && funnelOptions.length" label="漏斗组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in funnelOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-button type="primary" @click="saveDashboard">保存仪表盘</el-button></el-form>
-      <el-alert v-if="activeDashboard" :title="`当前仪表盘：${activeDashboard.name}（${activeDashboard.widgets_json?.map(widgetLabel).join('、')}）`" type="success" :closable="false" />
+      <el-alert v-if="activeDashboard" class="dashboard-current" :title="`当前仪表盘：${activeDashboard.name}（${activeDashboard.widgets_json?.map(widgetLabel).join('、')}）`" type="success" :closable="false" />
       <KpiGrid v-if="activeDashboard" :items="dashboardKpis" />
       <template v-for="widget in activeDashboard?.widgets_json || []" :key="widgetKey(widget)">
         <el-card v-if="typeof widget === 'object' && dashboardResults[widgetKey(widget)]" class="section dashboard-insight" shadow="never">
@@ -318,5 +318,6 @@ watch(selectedDashboardId, loadDashboardResults)
 .path-expand { padding: 4px 8px; }
 .path-expand-title { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
 .path-expand-body { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.dashboard-current { margin-top: 14px; }
 .dashboard-insight { margin-top: 14px; }
 </style>
