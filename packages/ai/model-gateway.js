@@ -137,16 +137,16 @@ function providerConfig(env, name) {
 export function createModelGateway(env = {}, { fetchFn = fetch } = {}) {
   const rawFetch = fetchFn
   const providers = {
-    local: async (messages, signal) => {
+    local: async (messages, signal, { jsonMode } = {}) => {
       const cfg = providerConfig(env, 'local')
       if (!cfg.baseURL) throw new Error('local provider 未配置 LOCAL_MODEL_BASE_URL')
-      return CALLERS[cfg.apiFormat](rawFetch, cfg, messages, { signal })
+      return CALLERS[cfg.apiFormat](rawFetch, cfg, messages, { signal, jsonMode })
     },
-    domestic: async (messages, signal) => {
-      return CALLERS[providerConfig(env, 'domestic').apiFormat](rawFetch, providerConfig(env, 'domestic'), messages, { signal })
+    domestic: async (messages, signal, { jsonMode } = {}) => {
+      return CALLERS[providerConfig(env, 'domestic').apiFormat](rawFetch, providerConfig(env, 'domestic'), messages, { signal, jsonMode })
     },
-    overseas: async (messages, signal) => {
-      return CALLERS[providerConfig(env, 'overseas').apiFormat](rawFetch, providerConfig(env, 'overseas'), messages, { signal })
+    overseas: async (messages, signal, { jsonMode } = {}) => {
+      return CALLERS[providerConfig(env, 'overseas').apiFormat](rawFetch, providerConfig(env, 'overseas'), messages, { signal, jsonMode })
     },
     // Cloudflare Workers AI 兜底：ai-worker 自带 AI 绑定，无需 key/隧道，
     // local/domestic/overseas 全部不可达时仍可产出诊断（质量较低但可用）。
@@ -197,7 +197,7 @@ export function createModelGateway(env = {}, { fetchFn = fetch } = {}) {
       const ctrl = new AbortController()
       const timer = setTimeout(() => ctrl.abort(), timeoutMs)
       try {
-        const content = await provider(safeMessages, ctrl.signal)
+        const content = await provider(safeMessages, ctrl.signal, { jsonMode })
         clearTimeout(timer)
         return { model: `${name}:${providerModelName(env, name)}`, content, provider: name }
       } catch (e) {

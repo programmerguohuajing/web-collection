@@ -77,14 +77,17 @@ async function pushFinding(f) {
   }
 }
 
-/** 深诊断：用 P0 scope 引擎对洞察对象做完整诊断 */
+/** 深诊断：把洞察（四类 scope）映射回 P0 引擎做完整诊断 */
 async function deepDiagnose(f) {
   detail.diagnosing = true
   detail.diagnosis = null
   try {
     const r = await api('/api/ai/diagnose', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scope: f.scope, ref: f.object }), requestKey: `insights:deep:${f.id}`
+      body: JSON.stringify({
+        scope: 'finding',
+        finding: { scope: f.scope, object: f.object, summary: f.summary, evidence: f.evidence }
+      }), requestKey: `insights:deep:${f.id}`
     })
     detail.diagnosis = r
   } catch (e) {

@@ -170,3 +170,89 @@ test('P0 buildQuery：无错误 trace 检索 query 含慢节点而非 error 文�
   await d.diagnose({ scope: 'trace', ref: 't-perf', appId: 'a' })
   assert.ok(!userPrompt.includes('## 错误事件'))
 })
+
+// ---------- P1 洞察深诊断：finding scope 映射 ----------
+
+test('P1 深诊断 scope=finding：release-regression → release 引擎', async () => {
+  let userPrompt = ''
+  const gateway = modelGateway(async (sys, up) => { userPrompt = up; return { model: 'm', provider: 'p', content: JSON.stringify({ summary: 'v2 错误率上升', hypotheses: [], suggestions: [], relatedKb: [] }) } })
+  const customDb = {
+    inserts: [],
+    prepare(sql) {
+      const stmt = {
+        bind(...v) { this._v = v; return this },
+        async all() {
+          if (sql.includes('group by type')) {
+            const name = this._v[this._v.length - 1]
+            return name === 'v1' ? RELEASE_STATS_PREV : RELEASE_STATS
+          }
+          if (sql.includes('min(ts)')) return RELEASE_LIST
+          return []
+        },
+        async first() { return null },
+        async run() { return { changes: 1 } }
+      }
+      return stmt
+    }
+  }
+  const d = createDiagnoser({ db: customDb, gateway, kb: { search: async () => [] }, embedder: {} })
+  const res = await d.diagnose({ scope: 'finding', finding: { scope: 'release-regression', object: 'v2', summary: 's', evidence: ['x'] }, appId: 'a' })
+  assert.equal(res.degraded, false)
+  assert.equal(res.refId, 'v2')
+  assert.ok(userPrompt.includes('版本发布对比'))
+})
+
+test('P1 深诊断 scope=finding：error-cluster → error 引擎', async () => {
+  let userPrompt = ''
+  const gateway = modelGateway(async (sys, up) => { userPrompt = up; return { model: 'm', provider: 'p', content: JSON.stringify({ summary: 'TypeError 高频', hypotheses: [], suggestions: [], relatedKb: [] }) } })
+  const db = buildDb({ ...FIXTURES, issue: { fingerprint: 'fp1', name: 'TypeError', message: 'boom' } })
+  const d = createDiagnoser({ db, gateway, kb: { search: async () => [] }, embedder: {} })
+  const res = await d.diagnose({ scope: 'finding', finding: { scope: 'error-cluster', object: 'TypeError', summary: 's', evidence: ['x'] }, appId: 'a' })
+  assert.equal(res.degraded, false)
+  assert.ok(userPrompt.includes('## 当前 issue'))
+})
+
+test('P1 深诊断 scope=finding：perf-regression / metric-drop → ask（自然语言归一化）', async () => {
+  const gateway = modelGateway(async () => ({ model: 'm', provider: 'p', content: '性能窗口样本不足，建议补齐 INP 采集后再诊断' }))
+  const d = createDiagnoser({ db: buildDb(FIXTURES), gateway, kb: { search: async () => [] }, embedder: {} })
+  const res = await d.diagnose({ scope: 'finding', finding: { scope: 'perf-regression', object: 'last-24h', summary: '性能退化 35%', evidence: ['perfAvg:3200'] }, appId: 'a' })
+  // 复用 ask：返回归一化结构 + 原始 answer
+  assert.ok(res.answer)
+  assert.equal(res.summary, res.answer)
+  const res2 = await d.diagnose({ scope: 'finding', finding: { scope: 'metric-drop', object: 'all-non-error', summary: '事件量下降 42%', evidence: ['volume:30'] }, appId: 'a' })
+  assert.ok(res2.answer)
+  assert.equal(res2.summary, res2.answer)
+})
+
+test('P1 深诊断 scope=finding：缺 finding 抛 400', async () => {
+  const d = createDiagnoser({ db: buildDb(FIXTURES), gateway: modelGateway(async () => ({ content: '' })), kb: { search: async () => [] }, embedder: {} })
+  await assert.rejects(() => d.diagnose({ scope: 'finding', appId: 'a' }), err => err.status === 400)
+})
+
+test('P1 深诊断 scope=finding：release-regression 已受支持（不再抛 400），未知类型抛 400', async () => {
+  const gateway = modelGateway(async () => ({ model: 'm', provider: 'p', content: JSON.stringify({ summary: 'ok', hypotheses: [], suggestions: [], relatedKb: [] }) }))
+  const db = {
+    inserts: [],
+    prepare(sql) {
+      const stmt = {
+        bind(...v) { this._v = v; return this },
+        async all() {
+          if (sql.includes('group by type')) {
+            const name = this._v[this._v.length - 1]
+            return name === 'v1' ? RELEASE_STATS_PREV : RELEASE_STATS
+          }
+          if (sql.includes('min(ts)')) return RELEASE_LIST
+          return []
+        },
+        async first() { return null },
+        async run() { return { changes: 1 } }
+      }
+      return stmt
+    }
+  }
+  const d = createDiagnoser({ db, gateway, kb: { search: async () => [] }, embedder: {} })
+  // release-regression 现在应被识别为支持的类型，不抛错
+  await assert.doesNotReject(() => d.diagnose({ scope: 'finding', finding: { scope: 'release-regression', object: 'v2' }, appId: 'a' }))
+  // 未知洞察类型仍抛 400
+  await assert.rejects(() => d.diagnose({ scope: 'finding', finding: { scope: 'bogus-type', object: 'x' }, appId: 'a' }), err => err.status === 400)
+})

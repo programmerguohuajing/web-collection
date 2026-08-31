@@ -39,14 +39,53 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
   }
 
   /** 统一入口：按 scope 路由（P0 产品化） */
-  async function diagnose({ scope, ref, appId, preferOverseas, conversationId }) {
+  async function diagnose({ scope, ref, appId, preferOverseas, conversationId, finding }) {
     const s = String(scope || 'trace').toLowerCase()
+    if (s === 'finding') return deepDiagnoseFinding(finding || ref, { appId, preferOverseas, conversationId })
     if (!ref?.trim()) throw Object.assign(new Error('ref 必填（traceId / sessionId / release 名称 / 问题文本）'), { status: 400 })
     if (s === 'trace' || s === 'perf') return trace({ traceId: ref, appId, preferOverseas, perfOnly: s === 'perf' })
     if (s === 'session') return session({ sessionId: ref, appId, preferOverseas })
     if (s === 'release') return release({ releaseName: ref, appId, preferOverseas })
     if (s === 'ask') return ask({ question: ref, appId, preferOverseas, conversationId })
     throw Object.assign(new Error(`不支持的 scope: ${scope}`), { status: 400 })
+  }
+
+  /**
+   * 洞察深诊断：把 P1 主动扫描产出的洞察（四类 scope）映射到 P0 引擎。
+   * - release-regression → release（对比上一版）
+   * - error-cluster      → error（按错误名做相似 issue 检索）
+   * - perf-regression / metric-drop → ask（无专属引擎，注入洞察结论+证据做根因分析）
+   */
+  async function deepDiagnoseFinding(finding, { appId, preferOverseas, conversationId }) {
+    if (!finding || !finding.scope) throw Object.assign(new Error('finding 必填（含 scope / object / summary / evidence）'), { status: 400 })
+    const sc = String(finding.scope).toLowerCase()
+    if (sc === 'release-regression') {
+      if (!finding.object?.trim()) throw Object.assign(new Error('该洞察缺少发布版本对象'), { status: 400 })
+      return release({ releaseName: finding.object, appId, preferOverseas })
+    }
+    if (sc === 'error-cluster') {
+      if (!finding.object?.trim()) throw Object.assign(new Error('该洞察缺少错误对象'), { status: 400 })
+      return error({ errorText: finding.object, appId, preferOverseas })
+    }
+    if (sc === 'perf-regression' || sc === 'metric-drop') {
+      const question = buildFindingQuestion(finding)
+      const a = await ask({ question, appId, preferOverseas, conversationId })
+      // 归一化为诊断渲染结构（answer 同时保留，供助手页引用）
+      return { ...a, summary: a.answer, hypotheses: [], suggestions: [] }
+    }
+    throw Object.assign(new Error(`不支持的洞察类型: ${finding.scope}`), { status: 400 })
+  }
+
+  /** 把洞察结论+证据拼成自然语言问题，供 ask 做根因分析 */
+  function buildFindingQuestion(finding) {
+    const ev = Array.isArray(finding.evidence) && finding.evidence.length
+      ? finding.evidence.map(e => `- ${e}`).join('\n')
+      : '（无结构化证据）'
+    const scopeLabel = {
+      'perf-regression': '性能退化',
+      'metric-drop': '关键指标骤降'
+    }[finding.scope] || finding.scope
+    return `这是一条系统主动发现的「${scopeLabel}」洞察。\n\n结论：${finding.summary || ''}\n\n证据：\n${ev}\n\n请基于现有遥测数据，给出最可能的根因假设（按置信度排序）与可执行的排查/修复建议；若数据不足以定位，请明确说明缺什么证据。`
   }
 
   /** trace 诊断（解耦错误前提） */
@@ -155,7 +194,7 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
       : ''
     const historyBlock = history.length ? '## 对话历史\n' + history.map(m => `${m.role}: ${m.content}`).join('\n') : ''
     const userPrompt = `用户问题：${question}\n\n## 可观测上下文（自动聚合）\n${contextText}\n\n${kbBlock}\n\n${historyBlock}\n\n请基于以上给出简洁、有证据支撑的回答；若数据不足请明确说明。`
-    const { content, model, provider } = await gateway.route(ASK_SYSTEM_PROMPT, userPrompt, { preferOverseas })
+    const { content, model, provider } = await gateway.route(ASK_SYSTEM_PROMPT, userPrompt, { preferOverseas, jsonMode: false })
     let cid = conv?.id
     if (cid) {
       await store.append(cid, { role: 'user', content: question })

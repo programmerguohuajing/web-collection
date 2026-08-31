@@ -92,7 +92,7 @@ onMounted(() => { pushPrefill(); loadConversations(); loadInsights() })
     <aside class="col col-left">
       <div class="col-head">
         <span>对话历史</span>
-        <el-button :icon="Plus" circle size="small" @click="newChat" />
+        <el-button :icon="Plus" size="small" @click="newChat" />
       </div>
       <div class="conv-list">
         <div
