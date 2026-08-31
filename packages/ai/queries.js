@@ -169,6 +169,58 @@ export async function getIssue(db, fingerprint) {
   return row ? mapIssue(row) : null
 }
 
+/** 单会话全部事件（供 session 级诊断上下文） */
+export async function getSessionEvents(db, sessionId, appId) {
+  if (!sessionId?.trim()) return []
+  const rows = appId
+    ? await db.prepare('select * from events where session_id=? and app_id=? order by ts').bind(sessionId, appId).all()
+    : await db.prepare('select * from events where session_id=? order by ts').bind(sessionId).all()
+  return (rows || []).map(mapEvent)
+}
+
+/**
+ * 单版本聚合统计（供 release 级诊断上下文）。
+ * 返回 { release, appId, total, errors, perfAvg }，无数据返回 null。
+ */
+export async function getReleaseStats(db, releaseName, appId) {
+  if (!releaseName?.trim()) return null
+  const sql = appId
+    ? 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? and app_id=? group by type'
+    : 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? group by type'
+  const params = appId ? ['perf', releaseName, appId] : ['perf', releaseName]
+  const rows = await db.prepare(sql).bind(...params).all()
+  if (!rows?.length) return null
+  let total = 0, errors = 0, perfAvg = null
+  for (const r of rows) {
+    const cnt = Number(r.cnt) || 0
+    total += cnt
+    if (r.type === 'error') errors += cnt
+    if (r.type === 'perf' && r.perf_avg != null) perfAvg = Number(r.perf_avg)
+  }
+  return { release: releaseName, appId: appId || null, total, errors, perfAvg: perfAvg ? Number(perfAvg.toFixed(2)) : null }
+}
+
+/**
+ * 版本时间线（首次出现时间升序），供「上一版本」定位。
+ * 仅统计 events 中实际出现过的 release_name（releases 表未必全）。
+ */
+export async function getReleaseList(db, appId) {
+  const sql = appId
+    ? 'select release_name, min(ts) as first_ts from events where app_id=? and release_name is not null group by release_name order by first_ts asc'
+    : 'select release_name, min(ts) as first_ts from events where release_name is not null group by release_name order by first_ts asc'
+  const params = appId ? [appId] : []
+  const rows = await db.prepare(sql).bind(...params).all()
+  return (rows || []).map(r => ({ release_name: r.release_name, firstTs: Number(r.first_ts) || 0 }))
+}
+
+/** 当前版本的「上一版本」：按首次出现时间排序，取当前版本之前的那一个 */
+export async function getPreviousRelease(db, releaseName, appId) {
+  const list = await getReleaseList(db, appId)
+  const idx = list.findIndex(r => r.release_name === releaseName)
+  if (idx <= 0) return null
+  return list[idx - 1]
+}
+
 /** 关联 trace 的错误事件（供诊断上下文） */
 export async function getErrorEvents(db, { traceId, appId, limit = 20 } = {}) {
   let where = '', params = []
@@ -203,6 +255,47 @@ export async function getSimilarIssues(db, { name, message, appId, limit = 5 } =
   }
   const rows = await db.prepare(`${sql} order by count desc limit ?`).bind(...values, limit).all()
   return (rows || []).map(mapIssue)
+}
+
+/**
+ * 错误簇聚合：窗口内按错误名分组计数，按次数降序取 top。
+ * 供 P1 主动诊断「错误簇突增」检测器使用。
+ */
+export async function getErrorClusters(db, { appId, sinceTs, limit = 5 } = {}) {
+  const where = []
+  const params = []
+  if (appId) { where.push('app_id = ?'); params.push(appId) }
+  if (sinceTs) { where.push('ts >= ?'); params.push(Number(sinceTs)) }
+  const sql = `select name, message, count(*) as cnt, count(distinct user_id) as affected
+    from events where type = 'error'${where.length ? ' and ' + where.join(' and ') : ''}
+    group by name, message order by cnt desc limit ?`
+  const rows = await db.prepare(sql).bind(...params, limit).all()
+  return (rows || []).map(r => ({ name: r.name, message: r.message, count: Number(r.cnt), affected: Number(r.affected || 0) }))
+}
+
+/** 时间窗内性能均值（type='perf' 的 value 视为耗时/指标值） */
+export async function getPerfWindow(db, { appId, fromTs, toTs } = {}) {
+  const where = []
+  const params = []
+  if (appId) { where.push('app_id = ?'); params.push(appId) }
+  if (fromTs != null) { where.push('ts >= ?'); params.push(Number(fromTs)) }
+  if (toTs != null) { where.push('ts <= ?'); params.push(Number(toTs)) }
+  const sql = `select count(*) as cnt, avg(value) as avgv from events where type = 'perf'${where.length ? ' and ' + where.join(' and ') : ''}`
+  const row = await db.prepare(sql).bind(...params).first()
+  return { count: Number(row?.cnt || 0), avg: row?.avgv != null ? Number(row.avgv) : null }
+}
+
+/** 时间窗内非错误事件量（流量/转化代理指标） */
+export async function getVolumeWindow(db, { appId, fromTs, toTs, type } = {}) {
+  const where = []
+  const params = []
+  if (appId) { where.push('app_id = ?'); params.push(appId) }
+  if (fromTs != null) { where.push('ts >= ?'); params.push(Number(fromTs)) }
+  if (toTs != null) { where.push('ts <= ?'); params.push(Number(toTs)) }
+  if (type) { where.push('type = ?'); params.push(type) }
+  const sql = `select count(*) as cnt from events where type <> 'error'${where.length ? ' and ' + where.join(' and ') : ''}`
+  const row = await db.prepare(sql).bind(...params).first()
+  return Number(row?.cnt || 0)
 }
 
 /** D1 的 SQLITE_MAX_LIKE_PATTERN_LENGTH 很小（实测 >~50 字符即报错），保守取 32 */
