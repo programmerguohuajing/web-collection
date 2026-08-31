@@ -77,7 +77,10 @@ export function queryFromFilters(extra = {}, names = null) {
   const [startTime, endTime] = f.range || []
   const values = { ...f, startTime, endTime }
   delete values.range
-  const allowed = names ? new Set([...names.filter(name => name !== 'range'), 'startTime', 'endTime']) : null
+  // names 仅用于限制「自动注入的」store/filters 字段（避免把全局筛选 keyword/userId 等泄漏给不相关的端点）；
+  // 调用方通过 extra 显式传入的自定义参数（如 dim / a / b / path / start / end）必须始终放行，
+  // 否则会被静默丢弃——曾导致「按 SDK 版本」tab 实际查到应用版本 release_name(0.1.0)、A/B 对比与参与度详情失效等 bug。
+  const allowed = names ? new Set([...names.filter(name => name !== 'range'), 'startTime', 'endTime', ...Object.keys(extra)]) : null
   Object.entries(values).forEach(([name, value]) => {
     if (allowed && !allowed.has(name)) return
     if (value !== '' && value != null) params.set(name, value)
