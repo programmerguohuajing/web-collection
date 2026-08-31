@@ -318,6 +318,11 @@ function seek(value) {
   progress.value = offset
 }
 
+/** 拖动进度条时仅更新本地进度值（不触发 rrweb seek），松手后由 @change=seek 真正跳转。 */
+function onSliderInput(value) {
+  progress.value = Math.max(0, Number(value) || 0)
+}
+
 function setPlaybackRate(rate) {
   playbackRate.value = rate
   currentReplayer?.setConfig({ speed: rate })
@@ -451,7 +456,9 @@ defineExpose({ play, currentSessionCode })
             :max="duration || 1"
             :step="500"
             :disabled="!duration"
+            :format-tooltip="formatTime"
             aria-label="回放进度"
+            @input="onSliderInput"
             @change="seek"
           />
           <span class="replay-time">{{ formatTime(progress) }} / {{ formatTime(duration) }}</span>
