@@ -309,7 +309,6 @@ app.delete('/api/analytics/insights/:id', async (req, res, next) => { try { res.
 app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels(filters(req.query))) } catch (err) { next(err) } })
 app.post('/api/funnels', async (req, res, next) => { try { res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
 app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await deleteFunnel(req.params.id)) } catch (err) { next(err) } })
-app.get('/api/funnels/:id/run', async (req, res, next) => { try { res.json(await runFunnel(req.params.id, filters(req.query))) } catch (err) { next(err) } })
 
 // ==================== PRD 集合：洞察/治理层 ====================
 // PRD 01 用户链路

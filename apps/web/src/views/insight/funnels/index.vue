@@ -2,7 +2,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
 import { api, pageLoading } from '../../../dashboard.js'
+import AnalyticsChart from '../../../components/AnalyticsChart.vue'
 
 const router = useRouter()
 
@@ -170,13 +172,26 @@ function useTemplate(template) {
 // ---------------- 报告渲染 ----------------
 const maxStepUsers = computed(() => Math.max(1, ...(report.value?.steps || []).map(step => step.users)))
 const currentSegment = computed(() => (report.value?.segments || []).find(item => item.field === segmentField.value))
+const funnelTrendChart = computed(() => {
+  const trend = report.value?.trend || []
+  if (!trend.length) return null
+  return {
+    table: trend.map(item => ({ bucket: new Date(item.day).getTime(), value: 0 })),
+    series: [
+      { name: '进入', points: trend.map(item => ({ bucket: new Date(item.day).getTime(), value: Math.round((item.rate || 0) * 100) })) }
+    ]
+  }
+})
 function barWidth(users) { return `${Math.max(6, Math.round(Number(users) / maxStepUsers.value * 100))}%` }
 function formatWindow(ms) {
   const found = WINDOW_OPTIONS.find(option => option.value === Number(ms))
   return found?.label || (ms ? `${Math.round(ms / 60000)} 分钟` : '不限')
 }
 function jumpJourney(sessionId) {
-  router.push(`/journey?type=session&value=${encodeURIComponent(sessionId)}`)
+  router.push(`/journey?type=session&value=${encodeURIComponent(sessionId)}&range=all`)
+}
+function replay(id) {
+  if (id) router.push({ path: '/replays', query: { replayId: id } })
 }
 
 onMounted(loadFunnels)
@@ -280,6 +295,32 @@ onMounted(loadFunnels)
             <el-button size="small" type="primary" :disabled="!report.lossInsight.sampleSessionIds?.length" @click="jumpJourney(report.lossInsight.sampleSessionIds[0])">↗ 跳用户链路（抽样首条）</el-button>
           </div>
         </div>
+
+        <!-- 每日趋势（合并自原分析页漏斗 tab，统一到 /report） -->
+        <div v-if="funnelTrendChart" style="margin-top: 18px">
+          <h4 class="prd-sub">📈 每日转化率趋势</h4>
+          <AnalyticsChart kind="trend" :result="funnelTrendChart" />
+        </div>
+
+        <!-- 流失会话明细（合并自原分析页漏斗 tab，统一到 /report） -->
+        <div v-if="report.lostSessions?.length" style="margin-top: 18px">
+          <h4 class="prd-sub">👥 流失会话明细（前 {{ report.lostSessions.length }} 条）</h4>
+          <el-table :data="report.lostSessions" size="small" border>
+            <el-table-column prop="actor" label="用户" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="lastEvent" label="最后步骤" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="errors" label="错误数" width="90" align="right" />
+            <el-table-column label="会话" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }"><span class="muted">{{ row.sessionId }}</span></template>
+            </el-table-column>
+            <el-table-column label="操作" width="150">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="jumpJourney(row.sessionId)">用户链路</el-button>
+                <el-button v-if="row.replaySessionId" link type="primary" size="small" @click="replay(row.replaySessionId)">回放</el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </el-card>
     </div>
 
@@ -296,7 +337,7 @@ onMounted(loadFunnels)
           <el-option v-for="option in eventOptions" :key="option.name" :value="option.name" :label="`${option.name}（${({ healthy: '🟢 健康', fluctuating: '🟡 波动', incomplete: '🟠 缺失', stalled: '🔴 停滞' })[option.health] || option.health}）`" :disabled="option.health === 'stalled'" />
         </el-select>
         <el-input v-model="step.constraint" placeholder="约束 k=v" style="width: 130px; flex: none" />
-        <el-button link type="danger" @click="removeStep(index)">删</el-button>
+        <el-button link type="danger" :icon="Delete" @click="removeStep(index)" />
       </div>
       <el-button size="small" style="margin-top: 8px" @click="addStep">＋ 加一步</el-button>
       <el-form label-width="86px" style="margin-top: 12px">
@@ -331,6 +372,8 @@ onMounted(loadFunnels)
 .tpl-card h3 { margin: 0 0 4px; font-size: 14px; }
 .tpl-card p { margin: 0; color: var(--c-text-muted); font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere; }
 .step-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.prd-sub { margin: 0 0 10px; font-size: 13px; font-weight: 650; color: var(--c-text); }
+.muted { color: var(--c-text-muted); }
 @media (max-width: 1180px) { .tpl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .tpl-grid { grid-template-columns: 1fr; } }
 </style>

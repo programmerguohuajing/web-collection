@@ -263,7 +263,6 @@ async function adminApi(request, env, url) {
   if (path === '/api/funnels' && request.method === 'GET') return funnelList(env, url)
   if (path === '/api/funnels' && request.method === 'POST') return saveFunnel(env, await request.json())
   if (/^\/api\/funnels\/\d+$/.test(path) && request.method === 'DELETE') { await env.DB.prepare('delete from funnel_definitions where id=?').bind(Number(path.split('/').at(-1))).run(); return json({ok:true}) }
-  if (/\/funnels\/\d+\/run$/.test(path)) return runFunnel(env, Number(path.split('/').at(-2)), url)
   if (path === '/api/dashboards' && request.method === 'GET') return json((await env.DB.prepare('select * from dashboards order by updated_at desc').all()).results.map(row => ({...row,widgets_json:parse(row.widgets_json,[])})))
   if (path === '/api/dashboards' && request.method === 'POST') return saveDashboard(env, await request.json())
   if (/^\/api\/dashboards\/\d+$/.test(path) && request.method === 'DELETE') { await env.DB.prepare('delete from dashboards where id=?').bind(Number(path.split('/').at(-1))).run(); return json({ok:true}) }
