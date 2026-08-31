@@ -56,7 +56,7 @@ import { createTracer, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcesso
 // Phase 6 · 确定性采样（U06 / SDK-208）：基于 traceId/sessionId 的一致性采样 + 优先级保留。
 import { createDeterministicSampler } from './sampling/index.js'
 // Reliable Transport v2：可替换、可测试的发送通道与持久化队列（SDK-207 / SDK-219）。
-import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock } from './transport/index.js'
+import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock, SelfMonitor } from './transport/index.js'
 // PRD 04 · 远程采集配置：/sdk-config 拉取（ETag 304 + 失败安全沿用上次）。
 import { setupRemoteConfig } from './config/remote-config.js'
 
@@ -348,6 +348,10 @@ export function createEys(options = {}) {
   const breadcrumbs = []
   const globalContext = {}
   const stats = { enqueued: 0, dropped: 0, droppedByConsent: 0, droppedBySample: 0, droppedByRemote: 0, sent: 0, failed: 0 }
+  // 自监控：订阅 transport 诊断事件，统计采集/交付健康度（防「采集正常但零送达」静默失败）。
+  const selfMonitor = new SelfMonitor()
+  // 暴露全局句柄，便于控制台自查与自诊断页读取（不污染业务命名空间）。
+  if (typeof window !== 'undefined') window.__EYS_MONITOR__ = selfMonitor
   const originalFetch = window.fetch?.bind(window)
   /**
    * Reliable Transport v2：内存热队列 + IndexedDB 冷队列 + Fetch/Beacon 通道。
@@ -359,6 +363,9 @@ export function createEys(options = {}) {
     if (event.type === 'retry' || event.type === 'flush_failed' || event.type === 'dropped_non_retryable') {
       stats.failed += Number(event.count || 0)
     }
+    // 自监控：同一诊断事件驱动健康度统计与异常告警（限频、不抛错）。
+    selfMonitor.onDiagnostic(event)
+    selfMonitor.warnIfDegraded()
     if (typeof cfg.onDiagnostic === 'function') cfg.onDiagnostic(event)
   })
   // P1-4 · Web 平台能力位（基于特征检测）：浏览器环境默认全开；SSR / Node / 测试环境按需降级。
@@ -582,7 +589,9 @@ export function createEys(options = {}) {
     // P2-5 · 双 ID 身份：设置已登录用户 ID（appUserId），并与匿名设备 ID 关联；已入队事件回填 userId。
     identify: (userId, traits = {}) => setUser({ id: userId, ...traits }),
     // P2-5 · 获取匿名设备 ID（anonymousId），与 identify 后的 userId 共同构成双 ID 模型。
-    getAnonymousId: () => deviceId
+    getAnonymousId: () => deviceId,
+    // 自监控：返回 SDK 采集/交付健康度快照（sent/dropped/retried/失败率/最近错误/health 等）。
+    monitoring: () => selfMonitor.snapshot()
   }
 
   function startCapture() {
