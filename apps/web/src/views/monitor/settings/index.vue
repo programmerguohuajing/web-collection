@@ -14,6 +14,9 @@ const saving = ref(false)
 const form = reactive({ name: '', platform: 'web', endpoint: '', description: '' })
 const ingest = reactive({ errors: true, sampleRate: 100, batchSize: 30, flushInterval: 60000, replay: false })
 const rules = reactive({ regression: true, highErrorRate: true, slowPage: false })
+// 保存前先拉取当前全局配置，merge 后再回写，避免覆盖远程配置（governance 远程配置面板）已设的其他字段
+const collectConfig = ref(null)
+const appSettings = ref(null)
 
 const activeLabel = computed(() => ({ apps: '项目管理', ingest: '采样与上报', alerts: '告警规则', members: '成员权限', retention: '数据留存' })[activeTab.value])
 
@@ -44,6 +47,8 @@ async function load() {
     loading.value = false
     pageLoading.value = false
   }
+  void loadIngest()
+  void loadAlerts()
 }
 
 function openCreate() {
@@ -77,8 +82,83 @@ function configure(row) {
   router.push({ path: '/governance', query: { appId: row.id || row.appKey } })
 }
 
-function saveIngest() {
-  ElMessage.success(`${activeLabel.value}设置已保存`)
+// ---------------- 采样与上报（对接全局 collect-config） ----------------
+async function loadIngest() {
+  try {
+    const cfg = await api('/api/collect-config', { requestKey: 'settings:collect-config' })
+    const c = cfg?.config || {}
+    collectConfig.value = c
+    if (c.plugins) ingest.replay = c.plugins.replay !== false
+    if (c.sampling) {
+      ingest.errors = Number(c.sampling.error) >= 1
+      const perf = Number(c.sampling.performance)
+      if (Number.isFinite(perf)) ingest.sampleRate = Math.round(perf * 100)
+    }
+  } catch { /* 加载失败保留表单默认值 */ }
+}
+
+async function saveIngest() {
+  let base = collectConfig.value
+  if (!base || typeof base !== 'object') {
+    try {
+      const cfg = await api('/api/collect-config', { requestKey: 'settings:collect-config' })
+      base = cfg?.config || {}
+    } catch { base = {} }
+  }
+  const config = {
+    ...base,
+    sampling: {
+      ...(base.sampling || {}),
+      error: ingest.errors ? 1 : ingest.sampleRate / 100,
+      performance: ingest.sampleRate / 100,
+      behavior: ingest.sampleRate / 100
+    },
+    plugins: { ...(base.plugins || {}), replay: ingest.replay }
+  }
+  try {
+    await api('/api/collect-config', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scope: {}, config, operator: 'admin' })
+    })
+    collectConfig.value = config
+    ElMessage.success('采样与上报设置已保存（批量上报大小 / 间隔为 SDK 初始化参数，需在 SDK 初始化时配置）')
+  } catch (error) {
+    ElMessage.error(error.message || '保存失败')
+  }
+}
+
+// ---------------- 告警规则（对接全局 settings.alerts） ----------------
+async function loadAlerts() {
+  try {
+    const data = await api('/api/settings', { requestKey: 'settings:app-settings' })
+    const a = data?.alerts || {}
+    appSettings.value = data || {}
+    rules.regression = a.regression !== false
+    rules.highErrorRate = a.error !== false
+    rules.slowPage = a.slowPage === true
+  } catch { /* 加载失败保留表单默认值 */ }
+}
+
+async function saveAlerts() {
+  const baseAlerts = (appSettings.value && appSettings.value.alerts) || {}
+  const alerts = {
+    ...baseAlerts,
+    regression: rules.regression,
+    error: rules.highErrorRate,
+    slowPage: rules.slowPage
+  }
+  try {
+    await api('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ alerts })
+    })
+    appSettings.value = { ...(appSettings.value || {}), alerts }
+    ElMessage.success('告警规则设置已保存')
+  } catch (error) {
+    ElMessage.error(error.message || '保存失败')
+  }
 }
 
 onMounted(load)
@@ -132,14 +212,14 @@ onMounted(load)
         <el-form-item label="批量上报大小（batchSize）">
           <div class="ingest-row">
             <el-input-number v-model="ingest.batchSize" :min="1" :max="200" />
-            <small class="hint">达到该条数立即 flush 上报</small>
+            <small class="hint">达到该条数立即 flush 上报（SDK 初始化参数，需于 createEys 时配置）</small>
           </div>
         </el-form-item>
         <el-form-item label="上报间隔（flushInterval）">
           <div class="ingest-row">
             <el-input-number v-model="ingest.flushInterval" :min="1000" :step="1000" />
             <span class="field-suffix">ms</span>
-            <small class="hint">当前 {{ Math.round(ingest.flushInterval / 1000) }}s，抑制碎片化小批量</small>
+            <small class="hint">当前 {{ Math.round(ingest.flushInterval / 1000) }}s，抑制碎片化小批量（SDK 初始化参数，需于 createEys 时配置）</small>
           </div>
         </el-form-item>
         <el-form-item label="会话回放录制">
@@ -154,7 +234,7 @@ onMounted(load)
 
   <template v-else-if="activeTab === 'alerts'">
     <el-card shadow="never" class="panel settings-form-card section">
-      <template #header><div class="panel-head"><div><h2>告警规则</h2><small>定义需要关注的回归与异常阈值</small></div><el-button type="primary" @click="saveIngest">保存设置</el-button></div></template>
+      <template #header><div class="panel-head"><div><h2>告警规则</h2><small>定义需要关注的回归与异常阈值</small></div><el-button type="primary" @click="saveAlerts">保存设置</el-button></div></template>
       <el-form label-position="top" class="settings-form">
         <el-form-item label="错误回归">
           <div class="ingest-row">
