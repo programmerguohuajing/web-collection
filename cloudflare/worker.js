@@ -9,16 +9,100 @@ import { keyFieldsOf } from '../packages/event-keyfields.js'
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
+// ── 入库自监控（防 2026-08-28 式「全绿但零入库」静默失败） ──────────────────────
+// 统计最近窗口内的 collect 请求数、进入写入的事件数、成功入库数、失败数与最近错误。
+// 写库异常原本被 collect 的 ctx.waitUntil 静默吞掉（表象 health 绿、接口 200、但零数据），
+// 现改为：捕获 → console.error（wrangler tail 可见）→ 计数 → 自动写 alert_history 告警。
+const ingestionMonitor = {
+  windowMs: 10 * 60 * 1000,
+  since: Date.now(),
+  received: 0, // collect 请求数
+  eventsAccepted: 0, // 通过校验进入写入的事件数
+  written: 0, // 成功入库的事件数
+  failed: 0, // 写入失败的事件数
+  lastError: null, // { message, at, appId }
+  errors: [], // 最近错误（最多 20 条）
+  reset() {
+    this.since = Date.now()
+    this.received = 0
+    this.eventsAccepted = 0
+    this.written = 0
+    this.failed = 0
+    this.errors = []
+  },
+  tick() {
+    if (Date.now() - this.since > this.windowMs) this.reset()
+  }
+}
+
+function ingestionStatus() {
+  const { received, eventsAccepted, written, failed } = ingestionMonitor
+  if (failed === 0) return 'healthy'
+  return written === 0 && failed >= eventsAccepted ? 'critical' : 'degraded'
+}
+
+function healthPayload() {
+  ingestionMonitor.tick()
+  return {
+    ok: true, // 存活探针保持 200，便于外部 uptime 检查；入库健康度见 ingestion 字段。
+    runtime: 'cloudflare-workers',
+    ingestion: {
+      status: ingestionStatus(),
+      received: ingestionMonitor.received,
+      eventsAccepted: ingestionMonitor.eventsAccepted,
+      written: ingestionMonitor.written,
+      failed: ingestionMonitor.failed,
+      failureRate: Number(ingestionMonitor.eventsAccepted ? ingestionMonitor.failed / ingestionMonitor.eventsAccepted : 0).toFixed(4),
+      lastErrorAt: ingestionMonitor.lastError?.at || null,
+      lastErrorMessage: ingestionMonitor.lastError ? String(ingestionMonitor.lastError.message || '').slice(0, 300) : null,
+      since: ingestionMonitor.since
+    }
+  }
+}
+
+function ingestionMonitorSnapshot() {
+  ingestionMonitor.tick()
+  return {
+    status: ingestionStatus(),
+    received: ingestionMonitor.received,
+    eventsAccepted: ingestionMonitor.eventsAccepted,
+    written: ingestionMonitor.written,
+    failed: ingestionMonitor.failed,
+    failureRate: Number(ingestionMonitor.eventsAccepted ? ingestionMonitor.failed / ingestionMonitor.eventsAccepted : 0).toFixed(4),
+    lastError: ingestionMonitor.lastError,
+    recentErrors: ingestionMonitor.errors.slice(-10).map(e => ({ message: String(e.message || '').slice(0, 300), at: e.at, appId: e.appId })),
+    since: ingestionMonitor.since
+  }
+}
+
+// 入库失败自动告警：复用 alert_history，使失败在现有告警 UI / 渠道可见（防静默）。
+// 同隔离内 60s 仅写一次，避免失败风暴刷爆 alert_history / D1；跨隔离靠 D1 cooldown 去重。
+let ingestionAlertedAt = 0
+async function maybeIngestionAlert(env, appId, err) {
+  const now = Date.now()
+  if (now - ingestionAlertedAt < 60000) return
+  ingestionAlertedAt = now
+  const app = appId || 'default'
+  const config = await settings(env).catch(() => ({ alerts: {} }))
+  const cooldown = Number(config?.alerts?.cooldownMinutes || 30) * 60000
+  const fingerprint = `ingestion:${app}`
+  const recent = await env.DB.prepare('select id from alert_history where app_id=? and metric=? and fingerprint=? and created_at>=?').bind(app, 'ingestion', fingerprint, now - cooldown).first().catch(() => null)
+  if (recent) return
+  const result = await env.DB.prepare('insert into alert_history(app_id,metric,fingerprint,level,value,message,threshold,notified,context_json,created_at) values(?,?,?,?,?,?,?,0,?,?)').bind(app, 'ingestion', fingerprint, 'critical', 1, `[Web Collection] 入库失败：${String(err?.message || err).slice(0, 300)}`, 0, JSON.stringify({ source: 'ingestion_monitor' }), now).run()
+  try { await createAlertDeliveries(env, Number(result.meta.last_row_id)) } catch {}
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url)
     if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }), request)
     try {
       let response
-      if (url.pathname === '/health') response = json({ ok: true, runtime: 'cloudflare-workers' })
+      if (url.pathname === '/health') response = json(healthPayload())
       else if (url.pathname === '/sdk-config') response = await sdkConfig(request, env, url)
       else if (url.pathname === '/api/collect' && request.method === 'POST') response = await collect(request, env, ctx)
       else if (url.pathname === '/api/collect.gif') response = await collectGif(url, env)
+      else if (url.pathname === '/api/monitoring/ingestion') response = json(ingestionMonitorSnapshot())
       else if (url.pathname.startsWith('/api/ai/')) response = await proxyAi(request, env, url)
       else if (url.pathname.startsWith('/api/')) response = await adminApi(request, env, url)
       else if (url.pathname.startsWith('/sdk/')) response = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request))
@@ -42,14 +126,49 @@ async function collect(request, env, ctx) {
   const app = await env.DB.prepare('select enabled, sample_rate, replay_sample_rate, collect_key_hash, rules_json from applications where app_id=?').bind(appId).first()
   if (app?.collect_key_hash && await sha256(request.headers.get('x-app-key') || '') !== app.collect_key_hash) return new Response('bad app key', { status: 401 })
   const events = inputs.slice(0, 100).map(sanitize)
+  ingestionMonitor.tick()
+  ingestionMonitor.received++
+  ingestionMonitor.eventsAccepted += events.length
   // ponytail: acknowledge after validation; add a Queue if guaranteed ingestion is required.
-  ctx.waitUntil((async () => { for (const event of events) await record(env, event, app, ctx) })())
+  // 关键：写库异常原本被 waitUntil 静默吞掉（health 绿、接口 200、但零入库，即 2026-08-28 事故根因）。
+  // 现捕获 → console.error（wrangler tail 可见）→ 计数 → 自动告警，确保「入库失败」可被发现。
+  ctx.waitUntil((async () => {
+    for (const event of events) {
+      try {
+        await record(env, event, app, ctx)
+        ingestionMonitor.written++
+      } catch (err) {
+        ingestionMonitor.failed++
+        const message = String(err?.message || err)
+        ingestionMonitor.lastError = { message, at: Date.now(), appId: event.appId }
+        ingestionMonitor.errors.push({ message, at: Date.now(), appId: event.appId })
+        if (ingestionMonitor.errors.length > 20) ingestionMonitor.errors.shift()
+        console.error('[ingestion] record failed', err)
+        try { await maybeIngestionAlert(env, event.appId, err) } catch {}
+      }
+    }
+  })())
   return json({ ok: true, accepted: events.length, received: inputs.length })
 }
 
 async function collectGif(url, env) {
   const data = url.searchParams.get('data')
-  if (data) await record(env, sanitize(JSON.parse(data)))
+  if (data) {
+    try {
+      await record(env, sanitize(JSON.parse(data)))
+      ingestionMonitor.tick()
+      ingestionMonitor.received++
+      ingestionMonitor.eventsAccepted++
+      ingestionMonitor.written++
+    } catch (err) {
+      ingestionMonitor.failed++
+      const message = String(err?.message || err)
+      ingestionMonitor.lastError = { message, at: Date.now(), appId: 'gif' }
+      ingestionMonitor.errors.push({ message, at: Date.now(), appId: 'gif' })
+      console.error('[ingestion] gif record failed', err)
+      try { await maybeIngestionAlert(env, 'gif', err) } catch {}
+    }
+  }
   return new Response(Uint8Array.from(atob('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=='), c => c.charCodeAt(0)), { headers: { 'content-type': 'image/gif', 'cache-control': 'no-store' } })
 }
 
