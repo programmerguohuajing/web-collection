@@ -363,6 +363,13 @@ function formatTime(ms) {
   return `${minute}:${second}`
 }
 
+// 进度时间气泡的水平位置：跟随滑块百分比，并夹在 4%~96% 避免溢出控制条。
+const bubbleLeft = computed(() => {
+  const max = Number(duration.value) || 1
+  const pct = (Number(progress.value) / max) * 100
+  return `${Math.min(96, Math.max(4, pct))}%`
+})
+
 function formatDuration(ms) {
   const seconds = Math.floor((Number(ms) || 0) / 1000)
   const minute = Math.floor(seconds / 60)
@@ -451,17 +458,20 @@ defineExpose({ play, currentSessionCode })
           >
             <el-icon><VideoPause v-if="isPlaying" /><VideoPlay v-else /></el-icon>
           </el-button>
-          <el-slider
-            :model-value="progress"
-            :max="duration || 1"
-            :step="500"
-            :disabled="!duration"
-            :format-tooltip="formatTime"
-            tooltip-class="replay-slider-tooltip"
-            aria-label="回放进度"
-            @input="onSliderInput"
-            @change="seek"
-          />
+          <div class="replay-slider-wrap">
+            <el-slider
+              :model-value="progress"
+              :max="duration || 1"
+              :step="500"
+              :disabled="!duration"
+              :show-tooltip="false"
+              aria-label="回放进度"
+              @input="onSliderInput"
+              @change="seek"
+            />
+            <!-- 当前进度时间气泡：组件内渲染、锚定在进度条手柄正上方（不用 teleport 的 popper，避免定位飘移） -->
+            <div v-if="duration" class="replay-progress-bubble" :style="{ left: bubbleLeft }">{{ formatTime(progress) }}</div>
+          </div>
           <span class="replay-time">{{ formatTime(progress) }} / {{ formatTime(duration) }}</span>
           <div class="replay-speed segmented" aria-label="播放速度">
             <button
@@ -586,6 +596,34 @@ defineExpose({ play, currentSessionCode })
 .replay-stage-state.is-error .el-icon, .replay-stage-state.is-error strong { color: #fda29b; }
 .replay-control-bar { display: grid; grid-template-columns: 36px minmax(160px, 1fr) auto auto; align-items: center; gap: 12px; min-height: 68px; padding: 12px 16px; background: var(--c-surface); border-top: 1px solid var(--c-border-2); }
 .replay-play-button { width: 36px; height: 36px; }
+.replay-slider-wrap { position: relative; display: flex; align-items: center; min-width: 0; }
+.replay-progress-bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  color: #f2f4f7;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(23, 28, 40, .92);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+  z-index: 5;
+}
+.replay-progress-bubble::after {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  content: '';
+  border: 4px solid transparent;
+  border-top-color: rgba(23, 28, 40, .92);
+  border-bottom: 0;
+}
 .replay-time { color: var(--c-text-muted); font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
 .replay-speed { flex: 0 0 auto; }
 .replay-speed button { min-height: 26px; padding: 3px 8px; font-family: var(--font-mono); font-size: 11px; }
@@ -634,18 +672,5 @@ defineExpose({ play, currentSessionCode })
   .replay-speed { grid-column: 1 / -1; justify-self: end; }
   .replay-side-stack { grid-template-columns: 1fr; }
   .replay-session-card { grid-column: auto; }
-}
-</style>
-
-<!-- 回放进度条 tooltip（el-slider format-tooltip）由 ElTooltip 渲染到 body，需用全局样式。
-     不再覆盖 margin-top：Popper 默认把手柄正上方作为基准，手动负 margin 会把它反向推回放画面里。 -->
-<style>
-.replay-slider-tooltip.el-tooltip__popper {
-  padding: 4px 9px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  font-weight: 600;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
 }
 </style>
