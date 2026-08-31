@@ -248,11 +248,11 @@ async function route(request, env, url, path) {
 }
 
 async function diagnoseMap(diagnoser, body) {
-  const { type, scope, ref, traceId, sessionId, release, issueId, errorText, appId, preferOverseas } = body || {}
+  const { type, scope, ref, finding, traceId, sessionId, release, issueId, errorText, appId, preferOverseas } = body || {}
   // P0 产品化：统一入口 scope + ref（ref 缺省时从各 legacy 字段回退解析）
   if (scope) {
     const resolvedRef = ref || traceId || sessionId || release || issueId || errorText
-    return diagnoser.diagnose({ scope, ref: resolvedRef, appId, preferOverseas })
+    return diagnoser.diagnose({ scope, ref: resolvedRef, finding, appId, preferOverseas })
   }
   // 旧兼容：type / traceId / issueId / errorText
   if (type === 'trace' || traceId) return diagnoser.trace({ traceId, appId, preferOverseas })
