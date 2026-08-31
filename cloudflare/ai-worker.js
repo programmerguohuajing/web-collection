@@ -19,6 +19,9 @@ import { createEmbedder } from '../packages/ai/embed.js'
 import { createKb } from '../packages/ai/kb.js'
 import { createModelGateway } from '../packages/ai/model-gateway.js'
 import { createDiagnoser } from '../packages/ai/diagnoser.js'
+import { runScan, createFindingsRepo } from '../packages/ai/findings.js'
+import { createConversationStore } from '../packages/ai/conversation.js'
+import { loadPushChannels, deliverFinding } from '../packages/ai/notify.js'
 import { ingestResolvedIssues } from '../packages/ai/ingest.js'
 import { createRateLimiter } from '../packages/ai/rate-limit.js'
 import { sedimentFeedback } from '../packages/ai/feedback.js'
@@ -57,6 +60,18 @@ export default {
       // 5xx 落日志：否则 CF 控制台/wrangler tail 看不到根因（如 subrequest 超限、绑定缺失）
       console.error(`[ai] ${request.method} ${url.pathname} failed (${status}):`, error?.stack || error?.message || error)
       return cors(json({ error: status >= 500 ? 'internal error' : (error?.message || 'error') }, status), request)
+    }
+  },
+
+  /** Cron Trigger：定时主动扫描并写入洞察流（P1）。异常不抛出以免中断 cron。 */
+  async scheduled(event, env) {
+    try {
+      const { DB } = env
+      const db = createD1Adapter({ DB })
+      const result = await runScan(db, { sinceHours: 24 })
+      console.log(`[ai:scheduled] scan done: inserted=${result.inserted.length} skipped=${result.skipped}`)
+    } catch (error) {
+      console.error('[ai:scheduled] scan failed:', String(error?.message || error))
     }
   }
 }
@@ -186,14 +201,63 @@ async function route(request, env, url, path) {
     if (!title || !text) throw Object.assign(new Error('title 与 text（或 url）必填'), { status: 400 })
     return json(await kb.ingestRunbook({ title, text, appId: String(body?.appId || ''), sourceType }))
   }
+
+  // ---- P1 主动诊断 · 洞察流 ----
+  if (path === '/api/ai/scan' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}))
+    return json(await runScan(db, { appId: body.appId || undefined, sinceHours: Number(body.sinceHours) || 24 }))
+  }
+  if (path === '/api/ai/findings' && request.method === 'GET') {
+    const repo = createFindingsRepo(db)
+    const list = await repo.list({
+      appId: url.searchParams.get('appId') || undefined,
+      scope: url.searchParams.get('scope') || undefined,
+      status: url.searchParams.get('status') || undefined,
+      limit: Number(url.searchParams.get('limit')) || 50
+    })
+    return json({ items: list, total: list.length })
+  }
+  const findingStatus = path.match(/^\/api\/ai\/findings\/([^/]+)\/status$/)
+  if (findingStatus && request.method === 'POST') {
+    const repo = createFindingsRepo(db)
+    const { status } = await request.json().catch(() => ({}))
+    if (!['open', 'ack', 'resolved', 'ignored'].includes(status)) throw Object.assign(new Error('非法 status'), { status: 400 })
+    return json(await repo.updateStatus(findingStatus[1], status))
+  }
+  const findingNotify = path.match(/^\/api\/ai\/findings\/([^/]+)\/notify$/)
+  if (findingNotify && request.method === 'POST') {
+    const repo = createFindingsRepo(db)
+    const finding = await repo.get(findingNotify[1])
+    if (!finding) throw Object.assign(new Error('finding 不存在'), { status: 404 })
+    const channels = await loadPushChannels(db)
+    const results = await deliverFinding(finding, { channels })
+    return json({ ok: results.every(r => r.ok), results })
+  }
+
+  // ---- P2 对话式助手 ----
+  if (path === '/api/ai/conversations' && request.method === 'GET') {
+    const store = createConversationStore(db)
+    return json({ items: await store.list({ appId: url.searchParams.get('appId') || undefined, limit: Number(url.searchParams.get('limit')) || 30 }) })
+  }
+  if (path === '/api/ai/ask' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}))
+    return json(await diagnoser.ask({ question: body.question, appId: body.appId, preferOverseas: body.preferOverseas, conversationId: body.conversationId }))
+  }
+
   return json({ error: 'not found' }, 404)
 }
 
 async function diagnoseMap(diagnoser, body) {
-  const { type, traceId, issueId, errorText, appId, preferOverseas } = body || {}
+  const { type, scope, ref, traceId, sessionId, release, issueId, errorText, appId, preferOverseas } = body || {}
+  // P0 产品化：统一入口 scope + ref（ref 缺省时从各 legacy 字段回退解析）
+  if (scope) {
+    const resolvedRef = ref || traceId || sessionId || release || issueId || errorText
+    return diagnoser.diagnose({ scope, ref: resolvedRef, appId, preferOverseas })
+  }
+  // 旧兼容：type / traceId / issueId / errorText
   if (type === 'trace' || traceId) return diagnoser.trace({ traceId, appId, preferOverseas })
   if (type === 'error' || issueId || errorText) return diagnoser.error({ issueId, errorText, appId, preferOverseas })
-  throw Object.assign(new Error('type/traceId/issueId/errorText 至少提供一项'), { status: 400 })
+  throw Object.assign(new Error('scope/type/traceId/issueId/errorText 至少提供一项'), { status: 400 })
 }
 
 async function saveFeedback(db, kb, body) {

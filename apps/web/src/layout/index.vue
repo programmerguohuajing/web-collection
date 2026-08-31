@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
-  Histogram, House, Lock, Menu, Monitor, Operation, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection
+  Histogram, House, Lock, Menu, Monitor, Operation, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled
 } from '@element-plus/icons-vue'
 import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
@@ -19,6 +19,7 @@ const applications = ref([])
 const menuOpen = ref(false)
 const aiDrawerOpen = ref(false)
 const aiDrawerRef = ref(null)
+const insightCount = ref(0)
 
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
@@ -47,13 +48,15 @@ const groups = [
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Aim },
     { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
-    { title: '发布管理', path: '/releases', icon: Operation }
+    { title: '发布管理', path: '/releases', icon: Operation },
+    { title: 'AI 洞察', path: '/ai-insights', icon: BellFilled }
   ] },
   { label: '治理', items: [
     { title: '事件字典', path: '/dictionary', icon: Collection },
     { title: '采集治理', path: '/governance', icon: Operation },
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
+    { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
     { title: '知识库', path: '/knowledge', icon: Collection }
   ] },
   { label: '系统设置', items: [
@@ -100,6 +103,11 @@ onMounted(async () => {
   } catch (loadError) {
     if (loadError?.code !== 'ABORT_ERR') error.value = loadError.message || '应用列表加载失败'
   }
+  // P1 主动洞察：拉取未处理洞察数，导航红点提示
+  try {
+    const r = await api('/api/ai/findings?status=open&limit=1', { requestKey: 'layout:insights' })
+    insightCount.value = r?.total || 0
+  } catch { /* 非阻塞 */ }
 })
 </script>
 
@@ -172,7 +180,9 @@ onMounted(async () => {
           </el-select>
         </div>
         <div class="navbar-actions">
-          <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
+          <el-badge :value="insightCount" :hidden="!insightCount" :max="99">
+            <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
+          </el-badge>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>
           <span class="user-avatar" aria-label="当前用户">运</span>

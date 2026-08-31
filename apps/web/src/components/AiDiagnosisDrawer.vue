@@ -23,6 +23,8 @@ const visible = computed({
 const activeTab = ref('auto')
 const traceInput = ref('')
 const errorInput = ref('')
+const perfInput = ref('')
+const releaseInput = ref('')
 const loading = ref(false)
 const result = ref(null)          // 诊断结果（含 degraded）
 const errorMessage = ref('')
@@ -50,11 +52,17 @@ async function diagnose(payload) {
   feedback.correction = ''
   try {
     const body = { appId: filterStore.appId || undefined }
-    if (payload.traceId) body.traceId = payload.traceId
-    if (payload.issueFp) body.issueId = payload.issueFp
-    if (payload.errorText) body.errorText = payload.errorText
-    if (body.traceId) body.type = 'trace'
-    else body.type = 'error'
+    if (payload.scope) {
+      // P0 产品化：通用 scope 入口（trace/perf/session/release），与后端 diagnoser.diagnose 对齐
+      body.scope = payload.scope
+      body.ref = payload.ref
+    } else {
+      if (payload.traceId) body.traceId = payload.traceId
+      if (payload.issueFp) body.issueId = payload.issueFp
+      if (payload.errorText) body.errorText = payload.errorText
+      if (body.traceId) body.type = 'trace'
+      else body.type = 'error'
+    }
     result.value = await api('/api/ai/diagnose', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -86,6 +94,16 @@ function diagnoseManualError() {
   const t = errorInput.value.trim()
   if (t.length <= 64 && !/\s/.test(t)) diagnose({ issueFp: t })
   else diagnose({ errorText: t })
+}
+
+function diagnosePerf() {
+  if (!perfInput.value.trim()) return ElMessage.warning('请输入 traceId 进行性能诊断')
+  diagnose({ scope: 'perf', ref: perfInput.value.trim() })
+}
+
+function diagnoseRelease() {
+  if (!releaseInput.value.trim()) return ElMessage.warning('请输入 release 名称进行版本对比诊断')
+  diagnose({ scope: 'release', ref: releaseInput.value.trim() })
 }
 
 async function submitFeedback() {
@@ -162,6 +180,22 @@ defineExpose({ open })
             placeholder="粘贴错误文本 / 原始 stack / issue 指纹"
           />
           <el-button type="primary" :loading="loading" @click="diagnoseManualError">诊断</el-button>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="按性能" name="manual-perf">
+        <p class="ctx-label">输入 traceId，即使无报错也会分析性能热点 / 关键路径。</p>
+        <div class="manual-row">
+          <el-input v-model="perfInput" placeholder="traceId（性能维度诊断）" clearable />
+          <el-button type="primary" :loading="loading" @click="diagnosePerf">诊断</el-button>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="按发布" name="manual-release">
+        <p class="ctx-label">输入 release 名称，与上一版本对比错误率 / 性能变化。</p>
+        <div class="manual-row">
+          <el-input v-model="releaseInput" placeholder="release 名称（如 2.3.0）" clearable />
+          <el-button type="primary" :loading="loading" @click="diagnoseRelease">诊断</el-button>
         </div>
       </el-tab-pane>
     </el-tabs>
