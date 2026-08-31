@@ -517,6 +517,9 @@ export function createEys(options = {}) {
   // P2-5 · 启动排队：Web SDK 同步就绪（无异步初始化），但保留缓冲机制以结构统一并保护潜在异步初始化。
   const pendingTracks = []
   let readyResolved = false
+  // 同一「卸载/隐藏周期」内只发一次退出批：pagehide + visibilitychange + 应用层 onHide 可能在同窗触发多次 flushAll(true)，
+  // 不合并会产生多个 keepalive 请求，撑爆 Chrome ~64KB keepalive 缓冲 → 前几个一直 pending、仅最后一个成功。
+  let unloadCycleFlushed = false
   const timer = setInterval(flushAll, cfg.flushInterval)
   addEventListener('pagehide', () => {
     finalizePerformance()
@@ -525,7 +528,11 @@ export function createEys(options = {}) {
     flushAll(true)
   })
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) return
+    if (!document.hidden) {
+      // 页面重新可见 → 解除周期锁，允许下一次真实的卸载/隐藏再次发送。
+      unloadCycleFlushed = false
+      return
+    }
     finalizePerformance()
     flushAll(true)
   })
@@ -1013,12 +1020,16 @@ export function createEys(options = {}) {
    */
   async function flushAll(force = false) {
     if (force) {
-      // 页面退出/隐藏/冻结：先把留存回放（错误前 30 秒窗口）冲刷进队列，再走 Beacon 尽力排队。
+      // 同一卸载周期只发一次（详见 unloadCycleFlushed 注释）：避免重复 keepalive 请求堆积导致前几个 pending。
+      if (unloadCycleFlushed) return
+      unloadCycleFlushed = true
+      // 页面退出/隐藏/冻结：先把留存回放（错误前 30 秒窗口）冲刷进队列，再走 Beacon 尽力排队（非破坏性，服务端按 eventId 幂等去重）。
       await flushReplay(true)
       await sender.sendExitBatch()
+      tracer?.flushSpans?.()
+      return
     }
     await flush(force)
-    if (force) tracer?.flushSpans?.()
   }
 
   /** 记录用户行为面包屑（最近 20 条），用于错误事件的上下文还原 */

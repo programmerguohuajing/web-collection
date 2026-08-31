@@ -258,23 +258,39 @@ export class ReliableSender {
    */
   async sendExitBatch(sendOpts = {}) {
     await this.ready
-    if (!this.items.length) return { outcome: 'empty', sent: 0 }
-    const events = this.items.map((i) => i.value)
-    if (this.beacon) {
-      return this.beacon.send(events, { diagnostic: this.diagnostic }).catch((err) => ({
-        outcome: 'error',
-        error: String((err && err.message) || err)
-      }))
-    }
-    if (this.transport && this.transport.available()) {
+    // 与 sendBatchOnline 共用同一把锁，并复用进行中的退出 flush promise：
+    // 并发的退出 flush（pagehide + visibilitychange + 应用层 onHide 同窗触发）只产生一次真实发送，
+    // 避免多个 keepalive 请求撑爆浏览器 ~64KB keepalive 缓冲（前几个一直 pending、仅最后一个成功）。
+    if (this._exitFlushPromise) return this._exitFlushPromise
+    const run = async () => {
+      if (this.flushing) return { outcome: 'skipped', sent: 0 }
+      this.flushing = true
       try {
-        const res = await this.transport.send(events, { keepalive: true, timeout: this.transport.timeout })
-        return { outcome: 'keepalive', status: res.status, ok: res.ok }
-      } catch (err) {
-        return { outcome: 'keepalive_failed', error: String((err && err.message) || err) }
+        if (!this.items.length) return { outcome: 'empty', sent: 0 }
+        const events = this.items.map((i) => i.value)
+        if (this.beacon) {
+          return this.beacon.send(events, { diagnostic: this.diagnostic }).catch((err) => ({
+            outcome: 'error',
+            error: String((err && err.message) || err)
+          }))
+        }
+        if (this.transport && this.transport.available()) {
+          try {
+            const res = await this.transport.send(events, { keepalive: true, timeout: this.transport.timeout })
+            return { outcome: 'keepalive', status: res.status, ok: res.ok }
+          } catch (err) {
+            return { outcome: 'keepalive_failed', error: String((err && err.message) || err) }
+          }
+        }
+        return { outcome: 'unavailable' }
+      } finally {
+        this.flushing = false
       }
     }
-    return { outcome: 'unavailable' }
+    this._exitFlushPromise = run()
+    // promise 落定后清空，允许下一次真实卸载/隐藏周期重新发送。
+    this._exitFlushPromise.finally(() => { this._exitFlushPromise = null }).catch(() => {})
+    return this._exitFlushPromise
   }
 
   /** 网络恢复时唤醒在线发送。 */

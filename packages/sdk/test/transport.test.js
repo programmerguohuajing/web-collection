@@ -348,6 +348,23 @@ test('ReliableSender 并发 flush 仅单活跃发送者', async () => {
   assert.ok(a.skipped || b.skipped)
 })
 
+test('ReliableSender 退出 flush 并发仅单活跃发送者（与 sendBatchOnline 共用锁）', async () => {
+  let beaconCalls = 0
+  let fetchCalls = 0
+  const beacon = new BeaconTransport({
+    endpoint: '/api/collect',
+    sendBeacon: () => { beaconCalls++; return true }
+  })
+  const transport = new FetchTransport({ endpoint: '/api/collect', fetchImpl: async () => { fetchCalls++; return jsonResponse(200) } })
+  // 无 beacon 时回退 fetch keepalive；构造有 beacon 的场景验证并发去重。
+  const s = new ReliableSender({ transport, beacon, maxQueue: 10, maxBatch: 10 })
+  for (let i = 0; i < 3; i++) s.enqueue({ type: 'track', name: 'e' + i })
+  const [a, b] = await Promise.all([s.sendExitBatch(), s.sendExitBatch()])
+  // 只走了一次 beacon：并发的退出 flush 被合并为单次真实发送（另一个复用进行中的 promise）
+  assert.equal(beaconCalls, 1)
+  assert.ok(a.outcome && b.outcome)
+})
+
 test('ReliableSender 退出 flush 走 Beacon 且非破坏性（保留队列）', async () => {
   let beaconCalls = 0
   const beacon = new BeaconTransport({
