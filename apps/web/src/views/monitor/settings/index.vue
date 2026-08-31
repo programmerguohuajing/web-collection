@@ -116,11 +116,38 @@ onMounted(load)
     <el-card shadow="never" class="panel settings-form-card section">
       <template #header><div class="panel-head"><div><h2>采样与上报</h2><small>控制采集成本与数据完整性</small></div><el-button type="primary" @click="saveIngest">保存设置</el-button></div></template>
       <el-form label-position="top" class="settings-form">
-        <el-form-item label="错误全量上报"><el-switch v-model="ingest.errors" /><small>关闭后将按采样率上报，避免高频噪音淹没关键错误</small></el-form-item>
-        <el-form-item label="性能数据采样率"><el-input-number v-model="ingest.sampleRate" :min="0" :max="100" /><span class="field-suffix">%</span><small>按百分比采样 Web Vitals 与资源加载</small></el-form-item>
-        <el-form-item label="批量上报大小（batchSize）"><el-input-number v-model="ingest.batchSize" :min="1" :max="200" /><small>达到该条数立即 flush 上报</small></el-form-item>
-        <el-form-item label="上报间隔（flushInterval）"><el-input-number v-model="ingest.flushInterval" :min="1000" :step="1000" /><span class="field-suffix">ms</span><small>当前 {{ Math.round(ingest.flushInterval / 1000) }}s，抑制碎片化小批量</small></el-form-item>
-        <el-form-item label="会话回放录制"><el-switch v-model="ingest.replay" /><small>录制用户操作用于排障（请遵守合规与脱敏策略）</small></el-form-item>
+        <el-form-item label="错误全量上报">
+          <div class="ingest-row">
+            <el-switch v-model="ingest.errors" />
+            <small class="hint">关闭后将按采样率上报，避免高频噪音淹没关键错误</small>
+          </div>
+        </el-form-item>
+        <el-form-item label="性能数据采样率">
+          <div class="ingest-row">
+            <el-input-number v-model="ingest.sampleRate" :min="0" :max="100" />
+            <span class="field-suffix">%</span>
+            <small class="hint">按百分比采样 Web Vitals 与资源加载</small>
+          </div>
+        </el-form-item>
+        <el-form-item label="批量上报大小（batchSize）">
+          <div class="ingest-row">
+            <el-input-number v-model="ingest.batchSize" :min="1" :max="200" />
+            <small class="hint">达到该条数立即 flush 上报</small>
+          </div>
+        </el-form-item>
+        <el-form-item label="上报间隔（flushInterval）">
+          <div class="ingest-row">
+            <el-input-number v-model="ingest.flushInterval" :min="1000" :step="1000" />
+            <span class="field-suffix">ms</span>
+            <small class="hint">当前 {{ Math.round(ingest.flushInterval / 1000) }}s，抑制碎片化小批量</small>
+          </div>
+        </el-form-item>
+        <el-form-item label="会话回放录制">
+          <div class="ingest-row">
+            <el-switch v-model="ingest.replay" />
+            <small class="hint">录制用户操作用于排障（请遵守合规与脱敏策略）</small>
+          </div>
+        </el-form-item>
       </el-form>
     </el-card>
   </template>
@@ -171,7 +198,9 @@ onMounted(load)
 .settings-form .el-form-item { position: relative; margin-bottom: 20px; }
 .settings-form .el-form-item small { display: block; margin-top: 6px; line-height: 1.45; }
 .settings-form .el-select { width: 100%; }
-.field-suffix { margin-left: 8px; color: var(--c-text-muted); }
+.field-suffix { margin-left: 0; color: var(--c-text-muted); white-space: nowrap; }
+.ingest-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ingest-row .hint { color: var(--c-text-muted); font-size: 12px; line-height: 1.5; flex: 1 1 auto; min-width: 160px; }
 .status-tag { max-width: none !important; overflow: visible !important; }
 .status-tag :deep(.el-tag__content) { overflow: visible !important; white-space: nowrap; }
 .settings-placeholder { min-height: 280px; display: grid; place-items: center; }
