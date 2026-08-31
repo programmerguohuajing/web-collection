@@ -632,10 +632,9 @@ defineExpose({ play, currentSessionCode })
 </style>
 
 <!-- 回放进度条 tooltip（el-slider format-tooltip）由 ElTooltip 渲染到 body，需用全局样式。
-     位置固定在进度条正上方；正 margin-top 让浮层贴着进度条（而非反向飘进回放画面）。 -->
+     不再覆盖 margin-top：Popper 默认把手柄正上方作为基准，手动负 margin 会把它反向推回放画面里。 -->
 <style>
-.replay-slider-tooltip.el-tooltip__popper[data-popper-placement^='top'] {
-  margin-top: 6px !important;
+.replay-slider-tooltip.el-tooltip__popper {
   padding: 4px 9px;
   font-family: var(--font-mono);
   font-size: 12px;
