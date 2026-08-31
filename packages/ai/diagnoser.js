@@ -219,7 +219,7 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
       getVolumeWindow(db, { appId, fromTs: sinceTs })
     ])
     const parts = [`近 24h 事件量(非错误): ${vol}`]
-    if (perf.count) parts.push(`近 24h 性能均值: ${perf.avg?.toFixed(1)}ms（样本 ${perf.count}）`)
+    if (perf.count) parts.push(`近 24h 性能均值: ${fmtDuration(perf.avg)}（样本 ${perf.count}）`)
     if (clusters.length) parts.push('近 24h 错误簇: ' + clusters.map(c => `${c.name}（${c.count} 次 / 影响 ${c.affected} 人）`).join('；'))
     return parts.join('\n')
   }
@@ -351,6 +351,20 @@ function asResult(response) {
 }
 
 function safeParse(v, fallback) { try { return typeof v === 'string' ? JSON.parse(v) : v ?? fallback } catch { return fallback } }
+
+/** 把毫秒格式化为「时:分:秒」展示（HHhMMmSSs）；<1s 原样保留 ms。 */
+function fmtDuration(ms) {
+  const total = Number(ms)
+  if (!isFinite(total) || total < 0) return `${ms}ms`
+  if (total < 1000) return `${total.toFixed(0)}ms`
+  const totalSec = Math.floor(total / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m${String(s).padStart(2, '0')}s`
+  if (m > 0) return `${m}m${String(s).padStart(2, '0')}s`
+  return `${s}s`
+}
 
 /** 模型输出解析失败时降级而非抛错（推理模型偶发输出非 JSON），保证诊断链路不中断 */
 function parseModelOutput(content) {
