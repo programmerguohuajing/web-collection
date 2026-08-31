@@ -573,6 +573,12 @@ defineExpose({ play, currentSessionCode })
 .replay-browser-bar .el-icon { flex: 0 0 auto; color: #667085; }
 .replay-browser-bar span { min-width: 0; overflow: hidden; font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .replay-stage { position: relative; min-height: 462px; overflow: hidden; }
+/* 回放页 root 透明时，iframe 会透出外层深色面板（df23697 引入的回归，表现为「黑块」）。
+   给 replayer 容器/iframe 一个白底，让透明区域像真实浏览器一样显示白底。 */
+.replay-stage :deep(.replayer-wrapper),
+.replay-stage :deep(.replayer-wrapper > iframe) {
+  background-color: #fff;
+}
 .replay-stage-state { position: absolute; inset: 38px 0 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 9px; padding: 24px; color: #d0d5dd; text-align: center; background: #0f1420; }
 .replay-stage-state .el-icon { color: #98a2b3; font-size: 30px; }
 .replay-stage-state strong { color: #f2f4f7; font-size: 15px; }
