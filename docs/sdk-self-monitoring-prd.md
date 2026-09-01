@@ -1,7 +1,7 @@
 # 特性规格（PRD）：SDK 自监控与采集健康可观测
 
 > 版本：v0.2（已落地对齐）
-> 状态：P0 / P1 / P2 核心已实现；R2-2（SDK 心跳探针）待定
+> 状态：P0 / P1 / P2 全部已实现（含 R2-2 SDK 心跳探针）
 > 作者：web-eys-sdk 维护
 > 关联事故：2026-08-28 线上采集静默中断（零数据 3 天）
 > 实现提交：`778b516`（自监控基座）、`a01d550`（P0 持久化 + P2 diagnostics/控制台卡片）
@@ -20,9 +20,9 @@
 | P1 `SelfMonitor` | ✅ 已实现 | `packages/sdk/src/transport/self-monitor.js` + `monitoring()` / `window.__EYS_MONITOR__` | stats/sent/dropped/retried/health/warnIfDegraded 齐全 |
 | P2-R2-1 `/api/diagnostics` | ✅ 已实现 | `worker.js:117-135` + 路由 `:168` | 按 appId 返回 `lastEventTs/eventsLast1h/ingestErrorCount` |
 | P2-R2-3 控制台「采集健康」卡片 | ✅ 已实现 | `apps/web/src/views/monitor/overview/index.vue` | 30s 轮询 `/api/monitoring/ingestion`，红/绿展示，可区分「没流量」与「采集挂了」 |
-| P2-R2-2 SDK 心跳探针 | ❌ 待定 | — | 见 §7 Q3；建议用轻量 GET 比对方案，避免污染业务指标 |
+| P2-R2-2 SDK 心跳探针 | ✅ 已落地（15d8e8a） | `self-monitor.js` + `index.js` | GET /api/diagnostics 比对 lastEventTs 与 lastSuccessAt，零事件污染 |
 
-**结论**：8.28 事故的直接防线（P0 + 控制台卡片 + `/api/diagnostics`）已全部上线。剩余 R2-2 属「SDK 侧也能发现服务端黑洞」的增强项，非阻塞，且需先定污染规避方案，故列为待定。
+**结论**：8.28 事故的全部自监控防线（P0 服务端入库健康 + P1 SDK 采集可见性 + P2 端到端回传校验 + R2-2 SDK 心跳探针 + 控制台采集健康卡片）均已实现并落地（提交 778b516 / a01d550 / 15d8e8a）。SDK 侧现在也能在自身运行时发现「collect 200 但服务端未落库」的黑洞，通过 `onStatus('server-blackhole')` 回调让消费方 UI 即时感知。
 
 ---
 
@@ -140,13 +140,16 @@
 **R2-1：服务端诊断接口**
 - 新增 `GET /api/diagnostics?appId=`（可鉴权）：返回 `{ receivedLast1h, lastEventTs, errorRate, ingestErrorCount }`，供 SDK/控制台回查「我发的到底有没有落库」。
 
-**R2-2：SDK 心跳/探针（待定）**
-- **状态**：未实现。核心价值是让 SDK 消费方在自身运行时也能发现「服务端黑洞」（collect 返回 200 但没落库，即 8.28 场景在 SDK 侧的表现）。
-- **推荐方案（避免污染业务指标）**：不新增 `is_probe` 事件，改为 SDK `SelfMonitor` 周期性 `GET /api/diagnostics?appId=<本应用>` 并比对 `lastEventTs` 与本端 `lastSentTs`：
-  - 若本端持续发送成功（`sent>0`）但 `diagnostics.lastEventTs` 长时间落后于 `lastSentTs` → 判定「服务端未落库」，触发 `onStatus('server-blackhole')`。
-  - 零额外入库事件、零业务指标污染、复用已上线接口，成本极低。
-- **前置依赖**：P1 `SelfMonitor` 的 `lastSentTs` 记录（已具备 `sent` 计数，补一个 `lastSentTs` 时间戳即可）。
-- **是否实现**：取决于是否要在 SDK 侧（而非仅控制台/运维侧）暴露黑洞信号；非 8.28 防复发必需项，建议作为后续增强。
+**R2-2：SDK 心跳/探针（✅ 已落地，提交 15d8e8a）**
+- **状态**：已实现。核心价值是让 SDK 消费方在自身运行时也能发现「服务端黑洞」（collect 返回 200 但没落库，即 8.28 场景在 SDK 侧的表现）。
+- **实现方案（零事件污染）**：SDK `SelfMonitor` 周期性 `GET /api/diagnostics?appId=<本应用>` 并比对 `lastEventTs` 与本端 `lastSuccessAt`：
+  - 若本端持续发送成功（`lastSuccessAt` 在 `staleSuccessMs` 窗口内）但 `diagnostics.lastEventTs` 落后超 `blackholeThresholdMs`（默认 3min）→ 判定「服务端未落库」，触发 `onStatus('server-blackhole')`。
+  - 或近 1h 服务端入库告警 `ingestErrorCount>0` → 直接判定 `server-blackhole`。
+  - 规避跨机时钟差：比对基准用事件 `ts`（= 客户端写入时间），非绝对墙钟。
+  - 零额外入库事件、零业务指标污染、复用已上线接口 `/api/diagnostics`，成本极低。
+- **消费方接入**：`createEys({ onStatus, diagnosticsPollMs })`——`onStatus(status, snapshot)` 在健康度等级切换时回调（`healthy/degraded/critical/server-blackhole`）；`diagnosticsPollMs` 默认 60s（限幅 5s~5min，0=关闭）。
+- **自监控查询**：`sdk.monitoring()` 快照新增 `serverLastEventTs` / `serverStatus` / `serverIngestErrorCount` / `blackholeSuspected` 字段。
+- **验证**：server-blackhole 逻辑单测 5/5 通过（滞后阈值 / 同步 / 入库告警 / 无本地成功不误判 / 快照字段）。
 
 **R2-3：web 控制台「采集健康」卡片**
 - `apps/web` 新增卡片：读取 `/api/diagnostics`，展示最后事件时间、入库速率、错误率，红/绿态；陈旧/错误时高亮提示。
@@ -175,7 +178,7 @@
 |---|---|---|---|
 | Q1 | ~~`ingest_errors` 历史保留~~ → 已消解：改用 `alert_history`，沿用其既有保留/清理策略，无需新表治理。 | 工程 | **已消解** |
 | Q2 | `/health` 扩展字段当前公开是否安全？是否需要鉴权（复用 x-app-key）？ | 工程/安全 | 非阻塞（健康字段不含 PII，可公开） |
-| Q3 | P2 心跳如何避免污染业务指标？ | 工程 | 非阻塞；**推荐 GET `/api/diagnostics` 比对方案**（见 R2-2），零事件污染 |
+| Q3 | P2 心跳如何避免污染业务指标？ | 工程 | ✅ 已采用 **GET `/api/diagnostics` 比对方案**（R2-2），零事件污染，已落地 |
 | Q4 | SDK `onStatus` 默认行为：dev 警告 / 生产静默 / 始终回调？ | 设计/工程 | 非阻塞（建议 dev 警告 + 生产按需 `onStatus`） |
 | Q5 | P0 的 `lastWriteTs` 阈值告警（默认 5min）是否合适？不同应用流量差异大（低频应用可能 5min 无事件） | 运维 | 非阻塞（低频应用可配更大阈值或看 `ingestErrorCount`） |
 
