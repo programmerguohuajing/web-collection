@@ -1,11 +1,11 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import TrendChart from '../../../components/TrendChart.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
 import OverviewDistribution from '../../../components/OverviewDistribution.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
-import { events, issues, replays, summary } from '../../../dashboard.js'
+import { events, issues, replays, summary, api } from '../../../dashboard.js'
 import { formatDuration, readableText } from '../../../utils/format.js'
 
 const router = useRouter()
@@ -33,12 +33,60 @@ const activityRows = computed(() => {
 
 function openIssue() { router.push('/errors') }
 function openReplay(sessionId) { router.push({ path: '/replays', query: { replayId: sessionId } }) }
+
+// ── 采集健康（PRD P0/P2：让业务方直观区分「没流量」与「采集挂了」）──
+const ingestionHealth = ref(null)
+const ingestionError = ref(false)
+let ingestionTimer = null
+async function loadIngestionHealth() {
+  try {
+    ingestionHealth.value = await api('/api/monitoring/ingestion')
+    ingestionError.value = false
+  } catch {
+    ingestionError.value = true
+  }
+}
+onMounted(() => { loadIngestionHealth(); ingestionTimer = setInterval(loadIngestionHealth, 30000) })
+onUnmounted(() => { if (ingestionTimer) clearInterval(ingestionTimer) })
+
+const ingestionStatusType = computed(() => {
+  const s = ingestionHealth.value?.ingestion?.status
+  if (s === 'critical') return 'danger'
+  if (s === 'degraded') return 'warning'
+  return 'success'
+})
+const ingestionStatusText = computed(() => {
+  const s = ingestionHealth.value?.ingestion?.status
+  return { healthy: '采集正常', degraded: '采集异常（降级）', critical: '采集中断' }[s] || '未知'
+})
+const ingestionStalledText = computed(() => {
+  const ms = ingestionHealth.value?.ingestion?.stalledMs
+  if (ms == null) return '无数据'
+  const m = Math.floor(ms / 60000)
+  if (m < 1) return '刚刚'
+  if (m < 60) return `${m} 分钟前`
+  const h = Math.floor(m / 60)
+  return `${h} 小时 ${m % 60} 分钟前`
+})
 </script>
 
 <template>
   <div class="page-heading"><div><h1>实时概览</h1><p>过去 24 小时全站遥测数据汇总</p></div><div class="segmented"><button v-for="item in [{ label: '1h', value: '1h' }, { label: '24h', value: '24h' }, { label: '7d', value: '7d' }, { label: '30d', value: '30d' }]" :key="item.value" type="button" :class="{ active: selectedRange === item.value }" @click="selectedRange = item.value">{{ item.label }}</button></div></div>
 
   <KpiGrid :items="overviewKpis" />
+
+  <el-card shadow="never" class="panel section ingestion-health-panel">
+    <template #header><div class="panel-head"><div><h2>采集健康</h2><small>SDK 采集与入库链路状态</small></div><el-tag :type="ingestionStatusType" effect="dark">{{ ingestionStatusText }}</el-tag></div></template>
+    <div v-if="ingestionError" class="ingestion-error">监控接口暂不可达</div>
+    <div v-else-if="ingestionHealth" class="ingestion-metrics">
+      <div class="im"><span class="im-k">最后入库</span><span class="im-v">{{ ingestionStalledText }}</span></div>
+      <div class="im"><span class="im-k">窗口接收 / 入库</span><span class="im-v">{{ ingestionHealth.ingestion.received }} / {{ ingestionHealth.ingestion.written }}</span></div>
+      <div class="im"><span class="im-k">入库失败</span><span class="im-v" :class="{ danger: ingestionHealth.ingestion.failed > 0 }">{{ ingestionHealth.ingestion.failed }}</span></div>
+      <div class="im"><span class="im-k">近 1h 入库告警</span><span class="im-v" :class="{ danger: ingestionHealth.ingestion.ingestErrorCount > 0 }">{{ ingestionHealth.ingestion.ingestErrorCount }}</span></div>
+      <div class="im im-wide"><span class="im-k">最近错误</span><span class="im-v err">{{ ingestionHealth.ingestion.lastErrorMessage || '无' }}</span></div>
+    </div>
+    <div v-else class="ingestion-error">加载中…</div>
+  </el-card>
 
   <section class="grid overview-insights">
     <el-card shadow="never" class="panel trend-panel">
@@ -72,6 +120,17 @@ function openReplay(sessionId) { router.push({ path: '/replays', query: { replay
 <style scoped>
 .overview-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .health-value { color: #0f766e; }
+.ingestion-health-panel .ingestion-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; }
+.ingestion-health-panel .im { display: flex; flex-direction: column; gap: 4px; }
+.ingestion-health-panel .im-wide { grid-column: 1 / -1; }
+.ingestion-health-panel .im-k { font-size: 12px; color: var(--c-text-faint); }
+.ingestion-health-panel .im-v { font-size: 16px; font-weight: 600; min-height: 22px; }
+.ingestion-health-panel .im-v.danger { color: #ef4444; }
+.ingestion-health-panel .im-v.err { font-size: 13px; font-weight: 400; color: #b91c1c; word-break: break-all; }
+.ingestion-health-panel .ingestion-error { color: var(--c-text-faint); padding: 8px 0; }
 @media (max-width: 1000px) { .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .overview-metrics { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .overview-metrics { grid-template-columns: 1fr; }
+  .ingestion-health-panel .ingestion-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>

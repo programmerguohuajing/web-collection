@@ -35,44 +35,106 @@ const ingestionMonitor = {
   }
 }
 
-function ingestionStatus() {
-  const { received, eventsAccepted, written, failed } = ingestionMonitor
-  if (failed === 0) return 'healthy'
-  return written === 0 && failed >= eventsAccepted ? 'critical' : 'degraded'
+// 持久化入库健康（跨隔离 / 冷启动不丢），PRD R0-3 核心信号：
+// 内存计数器会在隔离冷启动或 10min 窗口重置后归零，无法反映「已停写 X 分钟」；
+// 故额外从 D1 真实 max(ts) 与近 1h 入库告警数补充，30s 缓存降低查询压力。
+let _dbHealthCache = { at: 0, lastWriteTs: null, ingestErrorCount: 0 }
+async function dbIngestionHealth(env) {
+  const now = Date.now()
+  if (now - _dbHealthCache.at < 30000) return _dbHealthCache
+  const [maxRow, errRow] = await Promise.all([
+    env.DB.prepare('select max(ts) as m from events').first().catch(() => null),
+    env.DB.prepare("select count(*) as c from alert_history where metric='ingestion' and created_at>=?").bind(now - 3600 * 1000).first().catch(() => null)
+  ])
+  _dbHealthCache = {
+    at: now,
+    lastWriteTs: maxRow?.m != null ? Number(maxRow.m) : null,
+    ingestErrorCount: Number(errRow?.c || 0)
+  }
+  return _dbHealthCache
 }
 
-function healthPayload() {
+// staleMs：最后一次成功入库距现在的毫秒数（null = 无数据）。
+function ingestionStatus(db) {
+  const { received, eventsAccepted, written, failed } = ingestionMonitor
+  // 实时窗口内判定
+  if (failed >= eventsAccepted && eventsAccepted > 0 && written === 0) return 'critical'
+  if (failed > 0) return 'degraded'
+  // 跨隔离 / 冷启动：基于数据库真实最后写入时间
+  if (db && db.lastWriteTs != null) {
+    const stalled = Date.now() - db.lastWriteTs
+    if (stalled > 15 * 60 * 1000) return 'critical'
+    if (stalled > 5 * 60 * 1000) return 'degraded'
+  }
+  if (db && db.ingestErrorCount > 0) return 'degraded'
+  return 'healthy'
+}
+
+async function healthPayload(env) {
   ingestionMonitor.tick()
+  const db = await dbIngestionHealth(env)
+  const lastWriteTs = db.lastWriteTs
   return {
     ok: true, // 存活探针保持 200，便于外部 uptime 检查；入库健康度见 ingestion 字段。
     runtime: 'cloudflare-workers',
     ingestion: {
-      status: ingestionStatus(),
+      status: ingestionStatus(db),
       received: ingestionMonitor.received,
       eventsAccepted: ingestionMonitor.eventsAccepted,
       written: ingestionMonitor.written,
       failed: ingestionMonitor.failed,
       failureRate: Number(ingestionMonitor.eventsAccepted ? ingestionMonitor.failed / ingestionMonitor.eventsAccepted : 0).toFixed(4),
+      lastWriteTs,
+      stalledMs: lastWriteTs != null ? Date.now() - lastWriteTs : null,
       lastErrorAt: ingestionMonitor.lastError?.at || null,
       lastErrorMessage: ingestionMonitor.lastError ? String(ingestionMonitor.lastError.message || '').slice(0, 300) : null,
+      ingestErrorCount: db.ingestErrorCount,
       since: ingestionMonitor.since
     }
   }
 }
 
-function ingestionMonitorSnapshot() {
+async function ingestionMonitorSnapshot(env) {
   ingestionMonitor.tick()
+  const db = await dbIngestionHealth(env)
   return {
-    status: ingestionStatus(),
+    status: ingestionStatus(db),
     received: ingestionMonitor.received,
     eventsAccepted: ingestionMonitor.eventsAccepted,
     written: ingestionMonitor.written,
     failed: ingestionMonitor.failed,
     failureRate: Number(ingestionMonitor.eventsAccepted ? ingestionMonitor.failed / ingestionMonitor.eventsAccepted : 0).toFixed(4),
+    lastWriteTs: db.lastWriteTs,
+    stalledMs: db.lastWriteTs != null ? Date.now() - db.lastWriteTs : null,
     lastError: ingestionMonitor.lastError,
     recentErrors: ingestionMonitor.errors.slice(-10).map(e => ({ message: String(e.message || '').slice(0, 300), at: e.at, appId: e.appId })),
+    ingestErrorCount: db.ingestErrorCount,
     since: ingestionMonitor.since
   }
+}
+
+// PRD R2-1：端到端回传校验——供 SDK/控制台确认「我发的事件到底有没有落库」。
+async function diagnostics(request, env, url) {
+  const appId = clip(url.searchParams.get('appId') || 'default', 64)
+  const now = Date.now()
+  const [last, cnt, errs] = await Promise.all([
+    env.DB.prepare('select max(ts) as m from events where app_id=?').bind(appId).first().catch(() => null),
+    env.DB.prepare('select count(*) as c from events where app_id=? and ts>=?').bind(appId, now - 3600 * 1000).first().catch(() => null),
+    env.DB.prepare("select count(*) as c from alert_history where app_id=? and metric='ingestion' and created_at>=?").bind(appId, now - 3600 * 1000).first().catch(() => null)
+  ])
+  const lastEventTs = last?.m != null ? Number(last.m) : null
+  const stalledMs = lastEventTs != null ? Date.now() - lastEventTs : null
+  let status = 'healthy'
+  if ((lastEventTs != null && Date.now() - lastEventTs > 15 * 60 * 1000) || Number(errs?.c || 0) > 0) status = 'critical'
+  else if (lastEventTs != null && Date.now() - lastEventTs > 5 * 60 * 1000) status = 'degraded'
+  return json({
+    appId,
+    lastEventTs,
+    stalledMs,
+    receivedLast1h: Number(cnt?.c || 0),
+    ingestErrorCount: Number(errs?.c || 0),
+    status
+  })
 }
 
 // 入库失败自动告警：复用 alert_history，使失败在现有告警 UI / 渠道可见（防静默）。
@@ -98,11 +160,12 @@ export default {
     if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }), request)
     try {
       let response
-      if (url.pathname === '/health') response = json(healthPayload())
+      if (url.pathname === '/health') response = json(await healthPayload(env))
       else if (url.pathname === '/sdk-config') response = await sdkConfig(request, env, url)
       else if (url.pathname === '/api/collect' && request.method === 'POST') response = await collect(request, env, ctx)
       else if (url.pathname === '/api/collect.gif') response = await collectGif(url, env)
-      else if (url.pathname === '/api/monitoring/ingestion') response = json(ingestionMonitorSnapshot())
+      else if (url.pathname === '/api/monitoring/ingestion') response = json(await ingestionMonitorSnapshot(env))
+      else if (url.pathname === '/api/diagnostics') response = await diagnostics(request, env, url)
       else if (url.pathname.startsWith('/api/ai/')) response = await proxyAi(request, env, url)
       else if (url.pathname.startsWith('/api/')) response = await adminApi(request, env, url)
       else if (url.pathname.startsWith('/sdk/')) response = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request))
