@@ -56,7 +56,7 @@ import { createTracer, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcesso
 // Phase 6 · 确定性采样（U06 / SDK-208）：基于 traceId/sessionId 的一致性采样 + 优先级保留。
 import { createDeterministicSampler } from './sampling/index.js'
 // Reliable Transport v2：可替换、可测试的发送通道与持久化队列（SDK-207 / SDK-219）。
-import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock, SelfMonitor } from './transport/index.js'
+import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock, SelfMonitor, MONITOR_HEALTH } from './transport/index.js'
 // PRD 04 · 远程采集配置：/sdk-config 拉取（ETag 304 + 失败安全沿用上次）。
 import { setupRemoteConfig } from './config/remote-config.js'
 
@@ -273,6 +273,12 @@ export function createEys(options = {}) {
     permissionsMonitoring: false,     // 权限状态快照
     // onDiagnostic 暴露传输层自诊断事件（队列满/限流/超时/丢弃/Beacon 等），不含业务敏感数据。
     onDiagnostic: null,
+    // onStatus 在采集/交付健康度发生等级切换时回调（healthy/degraded/critical/server-blackhole）。
+    // 用于消费方在自身 UI 表达对「采集异常」的感知（如弹提示、打点），无需依赖平台通知。
+    onStatus: null,
+    // diagnosticsPollMs：SDK 侧周期性比对服务端 /api/diagnostics（防「本地发送成功但服务端未落库」黑洞）。
+    // 0 表示关闭；默认 60s 一次轻量 GET（零业务事件污染）。
+    diagnosticsPollMs: 60000,
     // transportTimeout 单次在线发送超时（ms），超时按网络错误重试。
     transportTimeout: 10000,
     // beaconMaxBytes 页面退出阶段单个 Beacon 批次的 UTF-8 字节上限。
@@ -366,6 +372,7 @@ export function createEys(options = {}) {
     // 自监控：同一诊断事件驱动健康度统计与异常告警（限频、不抛错）。
     selfMonitor.onDiagnostic(event)
     selfMonitor.warnIfDegraded()
+    emitStatus() // 本地健康度发生等级切换时即时触发 onStatus（server-blackhole 由诊断轮询驱动）
     if (typeof cfg.onDiagnostic === 'function') cfg.onDiagnostic(event)
   })
   // P1-4 · Web 平台能力位（基于特征检测）：浏览器环境默认全开；SSR / Node / 测试环境按需降级。
@@ -528,6 +535,54 @@ export function createEys(options = {}) {
   // 不合并会产生多个 keepalive 请求，撑爆 Chrome ~64KB keepalive 缓冲 → 前几个一直 pending、仅最后一个成功。
   let unloadCycleFlushed = false
   const timer = setInterval(flushAll, cfg.flushInterval)
+  // R2-2 · 服务端黑洞探针：周期性比对 /api/diagnostics 的「服务端最后事件时间」与本端 lastSuccessAt，
+  // 发现「本地发送全部成功（HTTP 2xx）但服务端未落库」的黑洞（类比 2026-08-28 静默零采集事故）。
+  // 同时据健康度等级切换触发 onStatus 回调，让消费方在自身 UI 表达对采集异常的感知（零业务事件污染）。
+  const fetchImpl = originalFetch || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null)
+  let diagnosticTimer = null
+  let lastEmittedStatus = null // null 表示尚未回调过，用于抑制初始化时的 healthy 噪声
+  function emitStatus() {
+    const snap = selfMonitor.snapshot()
+    const status = snap.health
+    if (status === lastEmittedStatus) return
+    // 首次且为 healthy：仅记录状态，不回调（避免初始化噪声）。
+    if (lastEmittedStatus === null && status === MONITOR_HEALTH.HEALTHY) {
+      lastEmittedStatus = status
+      return
+    }
+    lastEmittedStatus = status
+    if (typeof cfg.onStatus === 'function') {
+      try { cfg.onStatus(status, snap) } catch (_) {}
+    }
+  }
+  async function pollServerDiagnostics() {
+    if (disposed || !fetchImpl || !cfg.appId) return
+    try {
+      const base = String(cfg.endpoint || '').replace(/\/$/, '')
+      if (!base) return
+      const url = `${base}/api/diagnostics?appId=${encodeURIComponent(cfg.appId)}`
+      const ctrl = new AbortController()
+      const to = setTimeout(() => ctrl.abort(), 8000)
+      const res = await fetchImpl(url, {
+        method: 'GET',
+        headers: { 'x-app-key': cfg.appKey || '' },
+        signal: ctrl.signal
+      }).catch(() => null)
+      clearTimeout(to)
+      if (!res || !res.ok) return
+      const data = await res.json().catch(() => null)
+      if (data && typeof data === 'object') selfMonitor.setServerDiagnostics(data)
+    } catch (_) {
+      // 网络/解析失败不影响主流程；黑洞靠「服务端最后事件时间持续落后」才显形，这里静默。
+    } finally {
+      emitStatus()
+    }
+  }
+  if (cfg.diagnosticsPollMs > 0 && fetchImpl && typeof window !== 'undefined') {
+    // 限幅 5s~5min，避免过长/过短；首次延迟一个周期开始，不阻塞初始化。
+    const pollMs = Math.max(5000, Math.min(cfg.diagnosticsPollMs, 300000))
+    diagnosticTimer = setInterval(pollServerDiagnostics, pollMs)
+  }
   addEventListener('pagehide', () => {
     finalizePerformance()
     currentSegmentEndReason = 'page_unload'
@@ -1236,6 +1291,7 @@ export function createEys(options = {}) {
   async function destroy() {
     disposed = true
     clearInterval(timer)
+    if (diagnosticTimer) clearInterval(diagnosticTimer)
     clearTimeout(replayStartTimer)
     clearTimeout(throttleTimer)
     throttleTimer = null
