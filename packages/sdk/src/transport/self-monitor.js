@@ -14,7 +14,9 @@
 export const MONITOR_HEALTH = Object.freeze({
   HEALTHY: 'healthy',
   DEGRADED: 'degraded',
-  CRITICAL: 'critical'
+  CRITICAL: 'critical',
+  // 服务端黑洞：SDK 本地发送全部成功（HTTP 2xx），但服务端未落库（类比 2026-08-28——collect 返回 200 却零入库）。
+  SERVER_BLACKHOLE: 'server-blackhole'
 })
 
 export class SelfMonitor {
@@ -23,6 +25,7 @@ export class SelfMonitor {
    * @param {number} [opts.windowMs=600000] - 滚动统计窗口（默认 10 分钟）
    * @param {number} [opts.degradedFailThreshold=3] - 进入 degraded 的最小失败样本数
    * @param {number} [opts.staleSuccessMs=300000] - 超过该时长无成功交付即视为异常（默认 5 分钟）
+   * @param {number} [opts.blackholeThresholdMs=180000] - 本地持续发送成功，但服务端最后事件时间落后本端超过该值即判定为服务端黑洞（默认 3 分钟）
    * @param {number} [opts.warnCooldownMs=300000] - 控制台告警最小间隔（默认 5 分钟）
    * @param {boolean} [opts.consoleWarn=true] - 是否在异常时 console.warn
    */
@@ -30,6 +33,7 @@ export class SelfMonitor {
     this.windowMs = opts.windowMs != null ? opts.windowMs : 10 * 60 * 1000
     this.degradedFailThreshold = opts.degradedFailThreshold != null ? opts.degradedFailThreshold : 3
     this.staleSuccessMs = opts.staleSuccessMs != null ? opts.staleSuccessMs : 5 * 60 * 1000
+    this.blackholeThresholdMs = opts.blackholeThresholdMs != null ? opts.blackholeThresholdMs : 3 * 60 * 1000
     this.warnCooldownMs = opts.warnCooldownMs != null ? opts.warnCooldownMs : 5 * 60 * 1000
     this.consoleWarn = opts.consoleWarn !== false
     this._lastWarnAt = 0
@@ -48,6 +52,10 @@ export class SelfMonitor {
     this.lastSuccessAt = null
     this.lastError = null // { type, status, at }
     this.recentFailures = [] // 最近失败（带时间戳），最多保留 20 条
+    // 服务端回传（来自 /api/diagnostics）：用于发现「本地发送成功但服务端未落库」的黑洞。
+    this.serverLastEventTs = null // 服务端该 appId 的最后事件 ts（= 客户端事件 ts，规避跨机时钟差）
+    this.serverStatus = null // 服务端诊断状态（healthy/degraded/critical）
+    this.serverIngestErrorCount = 0 // 近 1h 服务端入库告警数
   }
 
   _maybeReset() {
@@ -103,6 +111,17 @@ export class SelfMonitor {
     if (this.recentFailures.length > 20) this.recentFailures.shift()
   }
 
+  /**
+   * 接入服务端回传的诊断数据（来自 /api/diagnostics），用于发现「本地发送成功但服务端未落库」的黑洞。
+   * @param {object} data - { lastEventTs, status, ingestErrorCount }
+   */
+  setServerDiagnostics(data) {
+    if (!data) return
+    if (data.lastEventTs != null) this.serverLastEventTs = Number(data.lastEventTs)
+    if (data.status != null) this.serverStatus = data.status
+    if (data.ingestErrorCount != null) this.serverIngestErrorCount = Number(data.ingestErrorCount)
+  }
+
   /** 计算健康度。 */
   health() {
     this._maybeReset()
@@ -115,6 +134,17 @@ export class SelfMonitor {
     if (this.lastSuccessAt && Date.now() - this.lastSuccessAt > this.staleSuccessMs && failEvents > 0) {
       const secs = Math.round((Date.now() - this.lastSuccessAt) / 1000)
       return { status: MONITOR_HEALTH.CRITICAL, message: `已 ${secs}s 未成功交付事件，可能存在上报阻断` }
+    }
+    // server-blackhole：本地持续发送成功（HTTP 2xx），但服务端未落库。
+    // 关键判据：本端最近一次成功交付仍在窗口内（说明 SDK 自认发送正常），
+    // 且服务端该 appId 的最后事件时间远落后于本端，或近端出现入库告警。
+    const localDeliveryHealthy = this.lastSuccessAt && (Date.now() - this.lastSuccessAt) <= this.staleSuccessMs
+    if (localDeliveryHealthy && this.serverLastEventTs != null) {
+      const gap = this.lastSuccessAt - this.serverLastEventTs
+      if (gap > this.blackholeThresholdMs || this.serverIngestErrorCount > 0) {
+        const mins = Math.round(gap / 60000) || (this.serverIngestErrorCount > 0 ? '?' : 0)
+        return { status: MONITOR_HEALTH.SERVER_BLACKHOLE, message: `本地发送正常但服务端未落库（疑似采集黑洞，最后入库落后约 ${mins} 分钟 / 近1h入库告警 ${this.serverIngestErrorCount} 次）` }
+      }
     }
     // degraded：失败率偏高且样本充足。
     const failRate = attempts ? (this.dropped + this.retried) / attempts : 0
@@ -145,6 +175,11 @@ export class SelfMonitor {
       secondsSinceLastSuccess: this.lastSuccessAt ? Math.round((Date.now() - this.lastSuccessAt) / 1000) : null,
       lastError: this.lastError,
       recentFailures: this.recentFailures.slice(-10),
+      // 服务端回传视角
+      serverLastEventTs: this.serverLastEventTs,
+      serverStatus: this.serverStatus,
+      serverIngestErrorCount: this.serverIngestErrorCount,
+      blackholeSuspected: h.status === MONITOR_HEALTH.SERVER_BLACKHOLE,
       health: h.status,
       message: h.message
     }
