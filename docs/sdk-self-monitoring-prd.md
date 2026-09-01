@@ -1,9 +1,28 @@
 # 特性规格（PRD）：SDK 自监控与采集健康可观测
 
-> 版本：v0.1（设计稿）
-> 状态：待评审
+> 版本：v0.2（已落地对齐）
+> 状态：P0 / P1 / P2 核心已实现；R2-2（SDK 心跳探针）待定
 > 作者：web-eys-sdk 维护
 > 关联事故：2026-08-28 线上采集静默中断（零数据 3 天）
+> 实现提交：`778b516`（自监控基座）、`a01d550`（P0 持久化 + P2 diagnostics/控制台卡片）
+
+---
+
+## 0. 现状对齐（2026-08-31）
+
+经代码核对，项目自监控实现**已覆盖 PRD 绝大部分内容，且与原始设计有两处主动优化**：
+
+| PRD 条目 | 实现状态 | 实现位置 | 备注 |
+|---|---|---|---|
+| R0-1 `ingest_errors` 表 | ⚠️ 主动优化（未建该表） | `maybeIngestionAlert` → `alert_history(metric='ingestion')` | 复用现有告警表 + 告警渠道分发，失败在既有告警 UI/飞书等可见，**比单独建表更优** |
+| R0-2 `record()` 异常不再静默 | ✅ 已实现 | `worker.js:198-211` ctx.waitUntil 内逐条 try/catch + 计数 + console.error + 告警 | 与 8.28 根因点一致 |
+| R0-3 `/health` 扩展 | ✅ 已实现（增强） | `worker.js:41-135` `healthPayload` 异步返回 `lastWriteTs`/`ingestErrorCount`/`stalledMs` | 含 30s D1 缓存降查询压力；`lastWriteTs` 取真实 D1 `max(ts)`，跨隔离/冷启动仍有效 |
+| P1 `SelfMonitor` | ✅ 已实现 | `packages/sdk/src/transport/self-monitor.js` + `monitoring()` / `window.__EYS_MONITOR__` | stats/sent/dropped/retried/health/warnIfDegraded 齐全 |
+| P2-R2-1 `/api/diagnostics` | ✅ 已实现 | `worker.js:117-135` + 路由 `:168` | 按 appId 返回 `lastEventTs/eventsLast1h/ingestErrorCount` |
+| P2-R2-3 控制台「采集健康」卡片 | ✅ 已实现 | `apps/web/src/views/monitor/overview/index.vue` | 30s 轮询 `/api/monitoring/ingestion`，红/绿展示，可区分「没流量」与「采集挂了」 |
+| P2-R2-2 SDK 心跳探针 | ❌ 待定 | — | 见 §7 Q3；建议用轻量 GET 比对方案，避免污染业务指标 |
+
+**结论**：8.28 事故的直接防线（P0 + 控制台卡片 + `/api/diagnostics`）已全部上线。剩余 R2-2 属「SDK 侧也能发现服务端黑洞」的增强项，非阻塞，且需先定污染规避方案，故列为待定。
 
 ---
 
@@ -64,8 +83,9 @@
 ### P0 — 必须（服务端入库健康）
 
 **R0-1：`ingest_errors` 持久化表**
-- 新增 D1 迁移，建表 `(id, ts, app_id, stage, error, payload_size)`，索引 `ts`、`app_id`。
-- `stage` 标识失败环节（`sanitize`/`storageWrite`/`record` 等）。
+- ⚠️ **已实现为更优方案**：不新建独立表，改为复用现有 `alert_history` 表，写 `metric='ingestion'`、`level='critical'` 的告警行（见 `maybeIngestionAlert`，`worker.js:140-154`）。
+- 优势：失败时自动进入现有告警 UI，并可经既有 `alert_channels`（飞书/钉钉/邮件等）分发，比单独建表更利于「对运维可见」这一目标（G1）。
+- 同隔离 60s 内同指纹只写一次（`cooldown` 去抖），跨隔离靠 D1 已有行去重，避免失败风暴刷爆表。
 
 **R0-2：`record()` 异常不再被静默吞掉**
 - 改动点：`cloudflare/worker.js:46` 的 `ctx.waitUntil((async () => { for (const event of events) await record(...) })())`。
@@ -120,8 +140,13 @@
 **R2-1：服务端诊断接口**
 - 新增 `GET /api/diagnostics?appId=`（可鉴权）：返回 `{ receivedLast1h, lastEventTs, errorRate, ingestErrorCount }`，供 SDK/控制台回查「我发的到底有没有落库」。
 
-**R2-2：SDK 心跳/探针**
-- SDK 周期性（默认 5min）发一个带 `is_probe:true` 标记的心跳事件（或独立轻量端点），避免污染业务数据；服务端在 `diagnostics` 中可区分统计。
+**R2-2：SDK 心跳/探针（待定）**
+- **状态**：未实现。核心价值是让 SDK 消费方在自身运行时也能发现「服务端黑洞」（collect 返回 200 但没落库，即 8.28 场景在 SDK 侧的表现）。
+- **推荐方案（避免污染业务指标）**：不新增 `is_probe` 事件，改为 SDK `SelfMonitor` 周期性 `GET /api/diagnostics?appId=<本应用>` 并比对 `lastEventTs` 与本端 `lastSentTs`：
+  - 若本端持续发送成功（`sent>0`）但 `diagnostics.lastEventTs` 长时间落后于 `lastSentTs` → 判定「服务端未落库」，触发 `onStatus('server-blackhole')`。
+  - 零额外入库事件、零业务指标污染、复用已上线接口，成本极低。
+- **前置依赖**：P1 `SelfMonitor` 的 `lastSentTs` 记录（已具备 `sent` 计数，补一个 `lastSentTs` 时间戳即可）。
+- **是否实现**：取决于是否要在 SDK 侧（而非仅控制台/运维侧）暴露黑洞信号；非 8.28 防复发必需项，建议作为后续增强。
 
 **R2-3：web 控制台「采集健康」卡片**
 - `apps/web` 新增卡片：读取 `/api/diagnostics`，展示最后事件时间、入库速率、错误率，红/绿态；陈旧/错误时高亮提示。
@@ -148,9 +173,9 @@
 
 | # | 问题 | 负责人 | 是否阻塞 |
 |---|---|---|---|
-| Q1 | `ingest_errors` 历史保留多久？是否需要定时清理（D1 存储成本）？ | 工程 | 非阻塞（P0 可先保留，后续加清理） |
+| Q1 | ~~`ingest_errors` 历史保留~~ → 已消解：改用 `alert_history`，沿用其既有保留/清理策略，无需新表治理。 | 工程 | **已消解** |
 | Q2 | `/health` 扩展字段当前公开是否安全？是否需要鉴权（复用 x-app-key）？ | 工程/安全 | 非阻塞（健康字段不含 PII，可公开） |
-| Q3 | P2 心跳 `is_probe` 标记如何避免污染业务指标（events 表需加标记列或独立 appId）？ | 工程 | 非阻塞（P2 才需要） |
+| Q3 | P2 心跳如何避免污染业务指标？ | 工程 | 非阻塞；**推荐 GET `/api/diagnostics` 比对方案**（见 R2-2），零事件污染 |
 | Q4 | SDK `onStatus` 默认行为：dev 警告 / 生产静默 / 始终回调？ | 设计/工程 | 非阻塞（建议 dev 警告 + 生产按需 `onStatus`） |
 | Q5 | P0 的 `lastWriteTs` 阈值告警（默认 5min）是否合适？不同应用流量差异大（低频应用可能 5min 无事件） | 运维 | 非阻塞（低频应用可配更大阈值或看 `ingestErrorCount`） |
 
