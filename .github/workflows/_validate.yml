@@ -1,0 +1,93 @@
+name: Deploy Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: web-collection-cloudflare
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write  # needed for Cloudflare OIDC authentication
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm --filter @web-collection/sdk test
+
+      - name: Build for Cloudflare
+        run: pnpm build:cloudflare
+
+      - name: Apply D1 migrations
+        run: pnpm exec wrangler d1 migrations apply web-collection --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Worker
+        run: pnpm exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # AI worker 需要 Vectorize 索引「ai-kb」+ Workers AI 绑定 + 模型供应商 Secrets 才可部署。
+      # 首次部署若这些尚未创建会失败，这里 continue-on-error 避免阻塞主 worker 的关键路径；
+      # 缺失时会以 warning 呈现，补齐后重跑即可。
+      - name: Deploy AI Worker
+        continue-on-error: true
+        run: pnpm exec wrangler deploy --config cloudflare/ai-wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # 主 worker 通过 AI_WORKER_URL 代理 /api/ai/* 到 ai-worker。
+      # 在仓库 Settings → Secrets and variables → Actions → Variables 配置 AI_WORKER_URL，
+      # 值为 ai-worker 的 URL（如 https://web-collection-ai.<subdomain>.workers.dev）。
+      - name: Set AI worker URL on main worker
+        if: vars.AI_WORKER_URL != ''
+        run: echo "${{ vars.AI_WORKER_URL }}" | pnpm exec wrangler secret put AI_WORKER_URL
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # MCP 服务（apps/mcp）：独立 worker web-collection-mcp，与主/ai worker 三独立部署。
+      # 数据源默认 rest（包装现有 /api/*），运行时经 MCP_DATASOURCE_KIND 可切到 d1 直连。
+      - name: Deploy MCP Worker
+        run: pnpm exec wrangler deploy --config apps/mcp/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # MCP 端点鉴权 secrets，需先在仓库 Settings → Secrets and variables → Actions → Secrets 配置：
+      #   MCP_API_KEY     —— 调用后端 /api/* 的 x-app-key（即现有 appKey / collectKey）
+      #   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务携带的 Bearer token（关键鉴权闸门）
+      # 当且仅当 MCP_AUTH_TOKEN 已配置时才写入 secret；否则跳过本步（沿用已手动设置的值）。
+      # 注意：未设 MCP_AUTH_TOKEN 时端点将全开，务必在仓库 Secrets 中配置该值。
+      - name: Set MCP Worker secrets
+        if: secrets.MCP_AUTH_TOKEN != ''
+        run: |
+          echo "${{ secrets.MCP_API_KEY }}" | pnpm exec wrangler secret put MCP_API_KEY --config apps/mcp/wrangler.jsonc
+          echo "${{ secrets.MCP_AUTH_TOKEN }}" | pnpm exec wrangler secret put MCP_AUTH_TOKEN --config apps/mcp/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
