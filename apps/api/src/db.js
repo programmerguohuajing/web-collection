@@ -446,6 +446,53 @@ export async function ensureSchema() {
     updated_at bigint
   )`)
 
+  // 知识中枢：Article 主表（可编辑 source of truth）
+  await run(`create table if not exists ai_kb_articles (
+    id varchar(128) primary key,
+    slug varchar(160),
+    title text not null,
+    type varchar(16) not null,
+    body text,
+    visibility varchar(16) not null default 'internal',
+    status varchar(16) not null default 'published',
+    tags_json jsonb,
+    linked_errors_json jsonb,
+    app_scope varchar(64) not null default 'global',
+    owner varchar(64),
+    source_json jsonb,
+    version integer not null default 1,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create index if not exists idx_kb_article_type on ai_kb_articles(type)`)
+  await run(`create index if not exists idx_kb_article_vis on ai_kb_articles(visibility)`)
+  await run(`create index if not exists idx_kb_article_status on ai_kb_articles(status)`)
+  await run(`create index if not exists idx_kb_article_app on ai_kb_articles(app_scope)`)
+
+  // 质量指标
+  await run(`create table if not exists ai_kb_quality (
+    article_id varchar(128) primary key,
+    ai_citations integer not null default 0,
+    up_count integer not null default 0,
+    down_count integer not null default 0,
+    useful_rate double precision,
+    feedback_count integer not null default 0,
+    last_cited_at bigint
+  )`)
+  await run(`create index if not exists idx_kb_quality_cite on ai_kb_quality(ai_citations)`)
+
+  // 编辑版本历史
+  await run(`create table if not exists ai_kb_history (
+    id varchar(160) primary key,
+    article_id varchar(128) not null,
+    version integer not null,
+    editor varchar(64),
+    note text,
+    snapshot_json text,
+    created_at bigint not null
+  )`)
+  await run(`create index if not exists idx_kb_hist_article on ai_kb_history(article_id, version)`)
+
   // ==================== PRD 集合：洞察/治理层 ====================
   // PRD 02 事件字典：人工登记含义（统计本身走 events 聚合，此处只存登记元数据）
   await run(`create table if not exists event_dictionary (

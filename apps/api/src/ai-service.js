@@ -123,13 +123,75 @@ export function createAiRouter(opts = {}) {
   router.post('/kb/ingest', wrap(async req => {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
-    return ingestResolvedIssues({ db, kb, embedder: await getEmbedder(), vectorStore: vectorReady ? vectorStore : null, force: !!(req.body && req.body.force) })
+    const types = Array.isArray(req.body?.types) && req.body.types.length ? req.body.types : null
+    const issueRes = await ingestResolvedIssues({ db, kb, embedder: await getEmbedder(), vectorStore: vectorReady ? vectorStore : null, force: !!(req.body && req.body.force) })
+    const rebuildRes = await kb.rebuildAll({ types })
+    const byType = { ...(rebuildRes.byType || {}) }
+    if (issueRes.ingested) byType.issue = (byType.issue || 0) + issueRes.ingested
+    return { ok: true, ingested: (issueRes.ingested || 0) + (rebuildRes.ingested || 0), indexed: (issueRes.indexed || 0) + (rebuildRes.indexed || 0), byType, skipped: issueRes.skipped || 0 }
   }))
 
   router.get('/kb/search', wrap(async req => {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
-    return { results: await kb.search(String(req.query.q || ''), { appId: String(req.query.appId || ''), topK: 8 }) }
+    const publicOnly = req.query.publicOnly === '1' || req.query.publicOnly === 'true'
+    return { results: await kb.search(String(req.query.q || ''), { appId: String(req.query.appId || ''), topK: 8, publicOnly }) }
+  }))
+
+  // 知识中枢：Article 模型（治理台写 / 帮助中心只读）
+  router.get('/kb/articles', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.listArticles({
+      page: String(req.query.page || 1),
+      pageSize: String(req.query.pageSize || 200),
+      type: String(req.query.type || ''),
+      visibility: String(req.query.visibility || ''),
+      status: String(req.query.status || ''),
+      appScope: String(req.query.appScope || ''),
+      publicOnly: req.query.publicOnly === '1' || req.query.publicOnly === 'true',
+      searchTerm: String(req.query.q || '')
+    })
+  }))
+
+  router.post('/kb/article', wrap(async req => {
+    const { title, body } = req.body || {}
+    if (!title || !body) { const err = new Error('title 与 body 必填'); err.statusCode = 400; throw err }
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.createArticle({
+      title, type: String(req.body.type || 'runbook'), body,
+      visibility: String(req.body.visibility || 'internal'), status: String(req.body.status || 'published'),
+      tags: req.body.tags || [], linkedErrors: req.body.linkedErrors || [], appScope: req.body.appScope || 'global',
+      owner: req.body.owner || '', source: req.body.source || null
+    })
+  }))
+
+  router.get('/kb/article/:id', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    const a = await kb.getArticle(String(req.params.id))
+    if (!a) { const err = new Error('知识不存在'); err.statusCode = 404; throw err }
+    return a
+  }))
+
+  router.put('/kb/article/:id', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.editArticle(String(req.params.id), req.body || {})
+  }))
+
+  router.delete('/kb/article/:id', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.deleteArticle(String(req.params.id))
+  }))
+
+  router.post('/kb/article/:id/feedback', wrap(async req => {
+    const { helpful, note, deposit } = req.body || {}
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.recordFeedback(String(req.params.id), { helpful: helpful !== false, note: String(note || ''), deposit: !!deposit })
   }))
 
   router.delete('/kb/source', wrap(async req => {
