@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Search, Reading, Warning, Star, Document, ThumbsUp, ThumbsDown, Close, Collection
+  Search, Reading, Warning, Star, Document, CircleCheck, CircleClose, Close, Collection
 } from '@element-plus/icons-vue'
 import { api } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
@@ -242,8 +242,8 @@ onMounted(load)
           <div class="md" v-html="renderMd(helpArticle.body)" />
           <div class="feedback-bar">
             <span class="ft">这条对你有帮助吗？</span>
-            <el-button class="fb-btn up" :icon="ThumbsUp" @click="markHelpful(helpArticle, true)">有用</el-button>
-            <el-button class="fb-btn down" :icon="ThumbsDown" @click="markHelpful(helpArticle, false)">没用</el-button>
+            <el-button class="fb-btn up" :icon="CircleCheck" @click="markHelpful(helpArticle, true)">有用</el-button>
+            <el-button class="fb-btn down" :icon="CircleClose" @click="markHelpful(helpArticle, false)">没用</el-button>
           </div>
         </div>
       </div>
