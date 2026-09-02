@@ -12,18 +12,19 @@ export default {
   async fetch(request: Request, env: McpEnv, _ctx: unknown): Promise<Response> {
     const cfg = getConfig(env)
 
-    // 1) MCP 端点自身鉴权（Bearer MCP_AUTH_TOKEN），避免采集数据裸暴露
+    // 1) CORS 预检必须先于鉴权返回：浏览器类 MCP 客户端的 OPTIONS 预检不带 Authorization，
+    //    若先鉴权会被 401 挡死，导致后续真实请求无法发出。
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS })
+    }
+
+    // 2) MCP 端点自身鉴权（Bearer MCP_AUTH_TOKEN），避免采集数据裸暴露
     if (cfg.authToken) {
       const auth = request.headers.get('authorization')
       const token = auth?.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : null
       if (token !== cfg.authToken) {
         return jsonError(401, 'Unauthorized')
       }
-    }
-
-    // 2) CORS 预检
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS })
     }
 
     // 3) 仅暴露 /mcp 路径
