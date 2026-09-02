@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "web-collection-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+
+  // D1 绑定：当前 Plan A（REST 包装）不依赖，但预留给未来的 D1DataSource 直连实现，
+  // 实现直连时无需改 wrangler 配置即可启用。
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "web-collection",
+      "database_id": "eddcfc58-339c-480b-98c1-2d0d264450ec"
+    }
+  ],
+
+  // MCP 服务配置入口。
+  // BACKEND_BASE_URL：被包装的后端 REST 基地址（Plan A 调用 /api/*）。
+  // MCP_DATASOURCE_KIND：数据源类型，"rest"（默认，包装现有 /api/*）或 "d1"（直连本 worker 的 DB 绑定）。
+  // Secrets（部署时 `wrangler secret put` 设置，--config apps/mcp/wrangler.jsonc）：
+  //   MCP_API_KEY     —— "rest" 模式调用后端 /api/* 时作为 x-app-key 鉴权（即现有 appKey / collectKey）
+  //   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务必须携带的 Bearer token（保护 MCP 端点本身）
+  "vars": {
+    "BACKEND_BASE_URL": "https://web-collection.jingguohua.cc.cd",
+    "MCP_DATASOURCE_KIND": "rest"
+  }
+}

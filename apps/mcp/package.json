@@ -1,0 +1,22 @@
+{
+  "name": "@web-collection/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server exposing web-collection SDK data (events/traces/issues/replays/analytics/alerts) to AI agents. Plan A: wraps existing /api/* REST. DataSource abstraction allows future direct D1/Postgres implementations.",
+  "main": "src/index.ts",
+  "scripts": {
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "dev": "wrangler dev --config wrangler.jsonc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260901.1",
+    "typescript": "^5.5.4",
+    "wrangler": "^4.0.0"
+  }
+}
