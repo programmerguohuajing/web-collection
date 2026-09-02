@@ -78,26 +78,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
-      # MCP 端点鉴权 secrets，需先在仓库 Settings → Secrets and variables → Actions → Secrets 配置：
-      #   MCP_API_KEY     —— 调用后端 /api/* 的 x-app-key（即现有 appKey / collectKey）
-      #   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务携带的 Bearer token（关键鉴权闸门）
-      # 注意：secrets 上下文不能用在 if 条件中（if 在静态求值阶段解析，此时 secrets 尚未可用，
-      #       仅 vars 可用），故改为在 run 内用 shell 判断 secret 值非空才写入，避免把空值写进
-      #       Cloudflare secret 导致 MCP_AUTH_TOKEN 为空、端点鉴权被整体跳过而全开。
-      # 警告：若未配置 MCP_AUTH_TOKEN，MCP worker 仍会照常部署但端点全开，存在安全风险，
-      #       务必在仓库 Secrets 中配置该值后再合并/部署。
-      - name: Set MCP Worker secrets
+      # MCP 鉴权采用「调用时采集秘钥」模型：客户端在 Authorization: Bearer 中携带目标应用的
+      # 采集秘钥，MCP worker 用生产 D1 库校验 sha256 并解析 app_id 后锁定。整个流程不依赖任何
+      # 部署期密钥，因此无需 `wrangler secret put`，CI 也不需要在仓库 Secrets 中配置 MCP_*。
+      # （MCP worker 的 D1 绑定与 MCP_DATASOURCE_KIND 等均已写在 wrangler.jsonc 的 vars 中。）
+      - name: Verify MCP Worker has no required secrets
         run: |
-          if [ -n "${{ secrets.MCP_API_KEY }}" ]; then
-            echo "${{ secrets.MCP_API_KEY }}" | pnpm exec wrangler secret put MCP_API_KEY --config apps/mcp/wrangler.jsonc
-          else
-            echo "::warning::MCP_API_KEY 未配置，跳过写入（rest 数据源将使用空 apiKey 调用后端）"
-          fi
-          if [ -n "${{ secrets.MCP_AUTH_TOKEN }}" ]; then
-            echo "${{ secrets.MCP_AUTH_TOKEN }}" | pnpm exec wrangler secret put MCP_AUTH_TOKEN --config apps/mcp/wrangler.jsonc
-          else
-            echo "::warning::MCP_AUTH_TOKEN 未配置，跳过写入（MCP 端点将全开，存在安全风险！请到仓库 Secrets 配置）"
-          fi
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          echo "MCP 鉴权改为调用时采集秘钥模型，部署无需任何 Secrets（MCP_API_KEY / MCP_AUTH_TOKEN 已废弃）。"
+          echo "如需本地调试密钥，可在 apps/mcp/.dev.vars 中设置，不影响 CI。"

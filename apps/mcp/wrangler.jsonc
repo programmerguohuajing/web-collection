@@ -18,11 +18,14 @@
   ],
 
   // MCP 服务配置入口。
-  // BACKEND_BASE_URL：被包装的后端 REST 基地址（Plan A 调用 /api/*）。
+  // 鉴权模型（call-time collect key，无需任何部署密钥 / Actions Secrets）：
+  //   MCP 客户端在 Authorization: Bearer 中携带目标应用的「采集秘钥」(collectKey)。
+  //   MCP worker 用同一个生产 D1 库校验 sha256(collectKey) == applications.collect_key_hash，
+  //   解析出 app_id 并锁定——本连接只能访问该应用数据（天然多应用隔离，凭证与 SDK 写入同源）。
+  // BACKEND_BASE_URL：被包装的后端 REST 基地址（Plan A 调用 /api/*，采集秘钥会透传为 x-app-key）。
   // MCP_DATASOURCE_KIND：数据源类型，"rest"（默认，包装现有 /api/*）或 "d1"（直连本 worker 的 DB 绑定）。
-  // Secrets（部署时 `wrangler secret put` 设置，--config apps/mcp/wrangler.jsonc）：
-  //   MCP_API_KEY     —— "rest" 模式调用后端 /api/* 时作为 x-app-key 鉴权（即现有 appKey / collectKey）
-  //   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务必须携带的 Bearer token（保护 MCP 端点本身）
+  //   两种模式都在数据源层「锁定」鉴权解析出的 app_id，忽略客户端传入的 appId，杜绝跨应用读取。
+  // MCP_APP_ID（可选）：仅当 D1 解析失败时的兜底默认应用，正常流程由采集秘钥解析覆盖。
   "vars": {
     "BACKEND_BASE_URL": "https://web-collection.jingguohua.cc.cd",
     "MCP_DATASOURCE_KIND": "rest"

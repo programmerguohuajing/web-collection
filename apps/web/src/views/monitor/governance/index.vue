@@ -111,6 +111,44 @@ async function resetKey(row) {
   }
 }
 
+// ---- MCP 接入（调用时采集秘钥）----
+// MCP 客户端使用本应用的「采集秘钥」作为 Authorization: Bearer 鉴权，无需任何额外配置。
+// 端点为独立的 MCP worker（web-collection-mcp），鉴权后仅能访问该应用数据（按 app_id 锁定）。
+const MCP_ENDPOINT = 'https://web-collection-mcp.jingguohua.workers.dev/mcp'
+const mcpDialog = ref(false)
+const mcpAppId = ref('')
+const mcpCollectKey = ref('')
+function openMcp(row) {
+  mcpAppId.value = row.app_id || row.appId || ''
+  mcpCollectKey.value = ''
+  mcpDialog.value = true
+}
+async function resetAndFillKey() {
+  if (!mcpAppId.value) return
+  try {
+    mcpCollectKey.value = (await rotateCollectKey(mcpAppId.value)).collectKey
+    ElMessage.success('已生成新采集秘钥并填入')
+  } catch (error) {
+    ElMessage.error(error.message || '采集密钥生成失败')
+  }
+}
+const mcpConfigJson = () => JSON.stringify({
+  mcpServers: {
+    'web-collection': {
+      url: MCP_ENDPOINT,
+      headers: { Authorization: `Bearer ${mcpCollectKey.value || '<采集秘钥>'}` },
+    },
+  },
+}, null, 2)
+async function copyMcpConfig() {
+  try {
+    await navigator.clipboard.writeText(mcpConfigJson())
+    ElMessage.success('MCP 配置已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
 async function submitSettings() {
   await saveGovernanceSettings(settings)
   ElMessage.success('治理策略已保存')
@@ -201,7 +239,7 @@ onMounted(load)
         <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ formatRate(row.replay_sample_rate ?? row.replaySampleRate) }}</template></el-table-column>
         <el-table-column label="版本数" width="90"><template #default="{ row }">{{ row.release_count ?? row.releaseCount ?? 0 }}</template></el-table-column>
         <el-table-column label="状态" width="100" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="270"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
+        <el-table-column label="操作" width="330"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="success" @click="openMcp(row)">MCP 接入</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
       </el-table>
       <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="appPager.page" :page-size="appPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="appPager.total" @current-change="value => { appPager.page = value; load() }" @size-change="value => { appPager.page = 1; appPager.pageSize = value; load() }" />
     </el-card>
@@ -253,6 +291,25 @@ onMounted(load)
     <template #footer><el-button @click="appDialog=false">取消</el-button><el-button type="primary" @click="submitApp">保存</el-button></template>
   </el-dialog>
   <el-dialog v-model="collectKeyDialog" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input :model-value="newCollectKey" readonly style="margin-top:12px" /></el-dialog>
+
+  <el-dialog v-model="mcpDialog" title="MCP 接入（调用时采集秘钥）" width="720px">
+    <el-alert type="info" :closable="false" title="MCP 客户端直接用本应用的「采集秘钥」作为 Authorization: Bearer 鉴权，无需任何额外配置；鉴权后仅能访问该应用数据。" />
+    <div style="margin:12px 0">应用 App ID：<code>{{ mcpAppId }}</code></div>
+    <el-form label-width="100px">
+      <el-form-item label="采集秘钥">
+        <el-input v-model="mcpCollectKey" placeholder="粘贴本应用采集秘钥，或点右侧按钮重置并填入" style="max-width:420px" />
+        <el-button style="margin-left:8px" @click="resetAndFillKey">重置并填入</el-button>
+      </el-form-item>
+    </el-form>
+    <el-divider>Claude Desktop / Cursor MCP 配置</el-divider>
+    <pre style="background:#0f1420;color:#e6e6e6;padding:12px;border-radius:8px;overflow:auto;font-size:12px">{{ mcpConfigJson() }}</pre>
+    <el-button type="primary" @click="copyMcpConfig">复制配置</el-button>
+    <el-divider>端点信息</el-divider>
+    <div style="line-height:1.9">
+      <div>URL：<code>{{ MCP_ENDPOINT }}</code></div>
+      <div>Header：<code>Authorization: Bearer &lt;采集秘钥&gt;</code></div>
+    </div>
+  </el-dialog>
 
   <el-dialog v-model="releaseDialog" :title="`${activeAppId} 版本管理`" width="620px">
     <el-form inline @submit.prevent="submitRelease">

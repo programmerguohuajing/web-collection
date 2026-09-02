@@ -21,11 +21,13 @@ function maskPhone(v?: string): string {
 
 interface FilterResult { where: string; values: unknown[] }
 
-// 对齐 worker.js eventFilters()，但直接用 ListParams 的字段（appId -> app_id 等）
-function eventFilters(p: ListParams, forcedType?: string, fixed: string[] = [], fixedValues: unknown[] = []): FilterResult {
+// 对齐 worker.js eventFilters()，但直接用 ListParams 的字段（appId -> app_id 等）。
+// appId 为「锁定」的应用（来自采集秘钥鉴权解析），始终注入 app_id=? 过滤，
+// 忽略客户端传入的 appId，确保连接只能读取自身应用数据。
+function eventFilters(p: ListParams, forcedType?: string, fixed: string[] = [], fixedValues: unknown[] = [], appId?: string): FilterResult {
   const parts = [...fixed]
   const values = [...fixedValues]
-  if (p.appId) { parts.push('app_id=?'); values.push(p.appId) }
+  if (appId) { parts.push('app_id=?'); values.push(appId) }
   if (p.release) { parts.push('release_name=?'); values.push(p.release) }
   const type = forcedType ?? p.type
   if (type) {
@@ -44,10 +46,10 @@ function eventFilters(p: ListParams, forcedType?: string, fixed: string[] = [], 
   return { where: parts.length ? `where ${parts.join(' and ')}` : '', values }
 }
 
-function issueFilters(p: ListParams): FilterResult {
+function issueFilters(p: ListParams, appId?: string): FilterResult {
   const parts: string[] = []
   const values: unknown[] = []
-  if (p.appId) { parts.push('app_id=?'); values.push(p.appId) }
+  if (appId) { parts.push('app_id=?'); values.push(appId) }
   if (p.release) { parts.push('release_name=?'); values.push(p.release) }
   if (p.status) { parts.push('status=?'); values.push(p.status) }
   if (p.path) { parts.push('url like ?'); values.push(`%${p.path}%`) }
@@ -57,10 +59,10 @@ function issueFilters(p: ListParams): FilterResult {
   return { where: parts.length ? `where ${parts.join(' and ')}` : '', values }
 }
 
-function replayFilters(p: ListParams): FilterResult {
+function replayFilters(p: ListParams, appId?: string): FilterResult {
   const parts: string[] = []
   const values: unknown[] = []
-  if (p.appId) { parts.push('app_id=?'); values.push(p.appId) }
+  if (appId) { parts.push('app_id=?'); values.push(appId) }
   if (p.release) { parts.push('release_name=?'); values.push(p.release) }
   if (p.userId) { parts.push('user_id=?'); values.push(p.userId) }
   if (p.sessionId) { parts.push('session_id=?'); values.push(p.sessionId) }
@@ -73,10 +75,10 @@ function replayFilters(p: ListParams): FilterResult {
   return { where: parts.length ? `where ${parts.join(' and ')}` : '', values }
 }
 
-function alertFilters(p: ListParams): FilterResult {
+function alertFilters(p: ListParams, appId?: string): FilterResult {
   const parts: string[] = []
   const values: unknown[] = []
-  if (p.appId) { parts.push('app_id=?'); values.push(p.appId) }
+  if (appId) { parts.push('app_id=?'); values.push(appId) }
   if (p.status) { parts.push('status=?'); values.push(p.status) }
   if (p.startTime) { parts.push('created_at>=?'); values.push(Number(p.startTime)) }
   if (p.endTime) { parts.push('created_at<=?'); values.push(Number(p.endTime)) }
@@ -151,41 +153,47 @@ export class D1DataSource implements DataSource {
   }
 
   listEvents(p: ListParams): Promise<PagedResult> {
-    const { where, values } = eventFilters(p)
+    const { where, values } = eventFilters(p, undefined, undefined, undefined, this.defaultAppId)
     return this.paged(`select * from events ${where} order by ts desc`, `select count(*) count from events ${where}`, values, p, mapEvent)
   }
 
   listLogs(p: ListParams): Promise<PagedResult> {
-    const { where, values } = eventFilters(p, 'log')
+    const { where, values } = eventFilters(p, 'log', undefined, undefined, this.defaultAppId)
     return this.paged(`select * from events ${where} order by ts desc`, `select count(*) count from events ${where}`, values, p, mapEvent)
   }
 
   listIssues(p: ListParams): Promise<PagedResult> {
-    const { where, values } = issueFilters(p)
+    const { where, values } = issueFilters(p, this.defaultAppId)
     return this.paged(`select * from issues ${where} order by last_seen desc`, `select count(*) count from issues ${where}`, values, p, mapIssue)
   }
 
   listReplays(p: ListParams): Promise<PagedResult> {
-    const { where, values } = replayFilters(p)
+    const { where, values } = replayFilters(p, this.defaultAppId)
     const q = `select session_id replayId,session_id,max(user_id) userId,max(user_name) userName,max(user_phone) userPhone,min(created_at) firstSeen,max(created_at) lastSeen,max(url) url,max(release_name) release,max(end_reason) endReason,max(user_agent) userAgent,count(*) eventCount from replays ${where} group by app_id,session_id order by lastSeen desc`
     const c = `select count(*) count from (select 1 from replays ${where} group by app_id,session_id)`
     return this.paged(q, c, values, p, (r) => ({ ...r, userPhone: maskPhone(r.userPhone as string) }))
   }
 
   listAlerts(p: ListParams): Promise<PagedResult> {
-    const { where, values } = alertFilters(p)
+    const { where, values } = alertFilters(p, this.defaultAppId)
     return this.paged(`select * from alert_history ${where} order by created_at desc`, `select count(*) count from alert_history ${where}`, values, p, mapAlert)
   }
 
   async listAlertChannels(p: ListParams): Promise<unknown> {
     const { page, pageSize, offset } = paginate(p)
-    const rows = await this.db.prepare(`select * from alert_channels order by updated_at desc limit ? offset ?`).bind(pageSize, offset).all() as { results?: Record<string, unknown>[] }
-    const totalRow = await this.db.prepare(`select count(*) count from alert_channels`).first() as { count?: number } | null
+    const appId = this.defaultAppId
+    // 仅返回与本应用绑定（app_ids_json 含本 app_id）或全局（null/空）的告警渠道，避免跨应用暴露。
+    const rows = await this.db.prepare(
+      `select * from alert_channels where (? = '' or app_ids_json is null or exists (select 1 from json_each(app_ids_json) where json_each.value = ?)) order by updated_at desc limit ? offset ?`,
+    ).bind(appId, appId, pageSize, offset).all() as { results?: Record<string, unknown>[] }
+    const totalRow = await this.db.prepare(
+      `select count(*) count from alert_channels where (? = '' or app_ids_json is null or exists (select 1 from json_each(app_ids_json) where json_each.value = ?))`,
+    ).bind(appId, appId).first() as { count?: number } | null
     return { items: (rows.results || []).map(publicChannel), total: Number(totalRow?.count || 0), page, pageSize }
   }
 
   async listTraces(p: ListParams): Promise<unknown> {
-    const { where, values } = eventFilters(p, undefined, ["trace_id<>''"])
+    const { where, values } = eventFilters(p, undefined, ["trace_id<>''"], undefined, this.defaultAppId)
     const { page, pageSize, offset } = paginate(p)
     const rows = await this.db.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values, pageSize, offset).all() as { results?: Record<string, unknown>[] }
     const totalRow = await this.db.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first() as { count?: number } | null
@@ -194,17 +202,17 @@ export class D1DataSource implements DataSource {
 
   async getAnalyticsLive(p: ListParams): Promise<unknown> {
     const since = Date.now() - 300000
-    const { where, values } = eventFilters(p, undefined, ['ts>=?'], [since])
+    const { where, values } = eventFilters(p, undefined, ['ts>=?'], [since], this.defaultAppId)
     const row = await this.db.prepare(`select count(distinct session_id) sessions,count(distinct coalesce(nullif(user_id,''),device_id)) users,count(*) events from events ${where}`).bind(...values).first() as Record<string, unknown> | null
     return { since, ...(row || {}) }
   }
 
   async getSummary(p: ListParams): Promise<unknown> {
-    const { where, values } = eventFilters(p)
+    const { where, values } = eventFilters(p, undefined, undefined, undefined, this.defaultAppId)
     const [totalRow, byTypeRows, issueRow] = await Promise.all([
       this.db.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values).first() as Promise<Record<string, unknown> | null>,
       this.db.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values).all() as Promise<{ results?: Record<string, unknown>[] }>,
-      this.db.prepare(`select count(*) issue_count from issues ${issueFilters(p).where || 'where 1=1'}`).bind(...issueFilters(p).values).first() as Promise<Record<string, unknown> | null>,
+      this.db.prepare(`select count(*) issue_count from issues ${issueFilters(p, this.defaultAppId).where || 'where 1=1'}`).bind(...issueFilters(p, this.defaultAppId).values).first() as Promise<Record<string, unknown> | null>,
     ])
     const byType: Record<string, number> = {}
     for (const r of byTypeRows.results || []) byType[String(r.type)] = Number(r.count)
@@ -217,7 +225,7 @@ export class D1DataSource implements DataSource {
   }
 
   async getAnalyticsSessions(p: ListParams): Promise<unknown> {
-    const { where, values } = eventFilters(p, undefined, ["session_id<>''"])
+    const { where, values } = eventFilters(p, undefined, ["session_id<>''"], undefined, this.defaultAppId)
     const { page, pageSize, offset } = paginate(p)
     const rows = await this.db.prepare(`select session_id,max(user_id) user_id,max(user_name) user_name,max(device_id) device_id,min(ts) started_at,max(ts) ended_at,count(*) event_count,sum(case when type='error' then 1 else 0 end) error_count,group_concat(distinct path) paths from events ${where} group by session_id order by ended_at desc limit ? offset ?`).bind(...values, pageSize, offset).all() as { results?: Record<string, unknown>[] }
     const totalRow = await this.db.prepare(`select count(*) count from (select 1 from events ${where} group by session_id)`).bind(...values).first() as { count?: number } | null
@@ -225,7 +233,7 @@ export class D1DataSource implements DataSource {
   }
 
   async getAnalyticsPaths(p: ListParams): Promise<unknown> {
-    const { where, values } = eventFilters(p, 'behavior', [`name in ('pv','pushState','replaceState','popstate','hashchange')`])
+    const { where, values } = eventFilters(p, 'behavior', [`name in ('pv','pushState','replaceState','popstate','hashchange')`], undefined, this.defaultAppId)
     const rows = await this.db.prepare(`select session_id,path,ts,user_id,user_name from events ${where} order by session_id,ts limit 20000`).bind(...values).all() as { results?: Record<string, unknown>[] }
     const grouped = new Map<string, Record<string, unknown>[]>()
     for (const e of rows.results || []) {
@@ -248,7 +256,7 @@ export class D1DataSource implements DataSource {
   }
 
   async getAnalyticsClickPaths(p: ListParams): Promise<unknown> {
-    const { where, values } = eventFilters(p, 'behavior', ["name='click'"])
+    const { where, values } = eventFilters(p, 'behavior', ["name='click'"], undefined, this.defaultAppId)
     const rows = await this.db.prepare(`select session_id,ts,path,props_json from events ${where} order by session_id,ts limit 20000`).bind(...values).all() as { results?: Record<string, unknown>[] }
     const grouped = new Map<string, Record<string, unknown>[]>()
     for (const e of rows.results || []) {
@@ -283,7 +291,7 @@ export class D1DataSource implements DataSource {
   }
 
   async getAnalyticsHeatmap(p: ListParams): Promise<unknown> {
-    const { where, values } = eventFilters(p, undefined, ["type='behavior'", "name in ('click','scroll')"])
+    const { where, values } = eventFilters(p, undefined, ["type='behavior'", "name in ('click','scroll')"], undefined, this.defaultAppId)
     const rows = await this.db.prepare(`select ts,name,props_json,path,url from events ${where} order by ts desc limit 50000`).bind(...values).all() as { results?: Record<string, unknown>[] }
     const clickPoints: Record<string, unknown>[] = []
     const scrollAggregate = new Map<string, { path: string; count: number; totalDepth: number; maxDepth: number; scrollEvents: number }>()

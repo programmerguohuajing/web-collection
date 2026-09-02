@@ -29,7 +29,8 @@ export class RestDataSource implements DataSource {
 
   private buildQuery(params: ListParams): string {
     const q = new URLSearchParams()
-    const appId = params.appId ?? this.defaultAppId
+    // 锁定：忽略客户端传入的 appId，强制使用鉴权解析出的应用（防止跨应用越权读取）。
+    const appId = this.defaultAppId
     if (appId) q.set('appId', appId)
     for (const [key, name] of QUERY_MAP) {
       const v = params[key]
