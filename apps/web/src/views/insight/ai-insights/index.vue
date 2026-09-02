@@ -151,7 +151,7 @@ onMounted(load)
         <template #default="{ row }"><el-tag :type="STATUS_TYPE[row.status]" size="small">{{ STATUS_LABEL[row.status] }}</el-tag></template>
       </el-table-column>
       <el-table-column label="发现时间" width="170">
-        <template #default="{ row }">{{ new Date(row.createdAt).toLocaleString() }}</template>
+        <template #default="{ row }"><span style="white-space:nowrap">{{ new Date(row.createdAt).toLocaleString() }}</span></template>
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
