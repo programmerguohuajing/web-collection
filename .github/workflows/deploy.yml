@@ -80,10 +80,11 @@ jobs:
 
       # MCP 端点鉴权 secrets，需先在仓库 Settings → Secrets and variables → Actions → Secrets 配置：
       #   MCP_API_KEY     —— 调用后端 /api/* 的 x-app-key（即现有 appKey / collectKey）
-      #   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务携带的 Bearer token
-      # 两者均已配置时才写入 secret；否则沿用已手动设置的值（注意：未设 MCP_AUTH_TOKEN 时端点将全开）。
+      #   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务携带的 Bearer token（关键鉴权闸门）
+      # 当且仅当 MCP_AUTH_TOKEN 已配置时才写入 secret；否则跳过本步（沿用已手动设置的值）。
+      # 注意：未设 MCP_AUTH_TOKEN 时端点将全开，务必在仓库 Secrets 中配置该值。
       - name: Set MCP Worker secrets
-        if: secrets.MCP_API_KEY != '' && secrets.MCP_AUTH_TOKEN != ''
+        if: secrets.MCP_AUTH_TOKEN != ''
         run: |
           echo "${{ secrets.MCP_API_KEY }}" | pnpm exec wrangler secret put MCP_API_KEY --config apps/mcp/wrangler.jsonc
           echo "${{ secrets.MCP_AUTH_TOKEN }}" | pnpm exec wrangler secret put MCP_AUTH_TOKEN --config apps/mcp/wrangler.jsonc
