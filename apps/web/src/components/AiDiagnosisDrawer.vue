@@ -6,6 +6,13 @@ import { MagicStick, RefreshRight } from '@element-plus/icons-vue'
 import { api } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
+import { marked } from 'marked'
+
+// 配置 marked：关闭 sanitize（内部工具，AI 生成内容可信），开启 GFM
+marked.setOptions({
+  gfm: true,
+  breaks: true
+})
 
 const props = defineProps({ modelValue: Boolean })
 const emit = defineEmits(['update:modelValue'])
@@ -131,6 +138,13 @@ function rediagnose() {
   if (result.value?.refId) diagnose({ traceId: result.value.refId })
 }
 
+/** 将 AI 返回的 Markdown 文本渲染为 HTML */
+const renderedReport = computed(() => {
+  const text = result.value?.summary || ''
+  if (!text.trim()) return ''
+  try { return marked.parse(text) } catch { return text.replace(/</g, '&lt;').replace(/>/g, '&gt;') }
+})
+
 /** 溯源跳转：优先 chunk id，兜底 source 维度 */
 const router = useRouter()
 function openKnowledge(k) {
@@ -220,8 +234,8 @@ defineExpose({ open })
     <!-- 结果态 -->
     <template v-if="result && !result.degraded">
       <section v-if="result.summary" class="result-block">
-        <h4>根因摘要</h4>
-        <p class="summary">{{ result.summary }}</p>
+        <h4>诊断报告</h4>
+        <div class="md-body" v-html="renderedReport"></div>
       </section>
 
       <section v-if="result.hypotheses?.length" class="result-block">
@@ -318,6 +332,20 @@ defineExpose({ open })
 .result-block { margin-top: 16px; }
 .result-block h4 { margin: 0 0 8px; font-size: 14px; }
 .summary { margin: 0; }
+/* AI 诊断报告 Markdown 渲染样式 */
+.md-body { font-size: 13.5px; line-height: 1.7; color: var(--el-text-color-primary); word-wrap: break-word; }
+.md-body :deep(h3), .md-body :deep(h4) { margin: 16px 0 8px; padding-bottom: 4px; font-weight: 600; }
+.md-body :deep(h3) { font-size: 15px; color: var(--el-color-primary); border-bottom: 1px solid var(--el-border-color-lighter); }
+.md-body :deep(h4) { font-size: 13.5px; }
+.md-body :deep(p) { margin: 6px 0; }
+.md-body :deep(ul), .md-body :deep(ol) { padding-left: 20px; margin: 6px 0; }
+.md-body :deep(li) { margin: 3px 0; }
+.md-body :deep(li > ul), .md-body :deep(li > ol) { margin-top: 2px; }
+.md-body :deep(strong) { color: var(--el-text-color-primary); }
+.md-body :deep(code) { background: var(--el-fill-color); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.md-body :deep(pre) { background: var(--el-fill-color-dark); padding: 10px 14px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+.md-body :deep(pre code) { background: none; padding: 0; font-size: 12px; line-height: 1.6; }
+.md-body :deep(blockquote) { border-left: 3px solid var(--el-border-color); margin: 8px 0; padding: 4px 12px; color: var(--el-text-color-secondary); }
 .hypothesis { padding: 8px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
 .hypo-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .hypothesis strong { font-size: 13px; }
