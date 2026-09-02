@@ -69,3 +69,24 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # MCP 服务（apps/mcp）：独立 worker web-collection-mcp，与主/ai worker 三独立部署。
+      # 数据源默认 rest（包装现有 /api/*），运行时经 MCP_DATASOURCE_KIND 可切到 d1 直连。
+      - name: Deploy MCP Worker
+        run: pnpm exec wrangler deploy --config apps/mcp/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+      # MCP 端点鉴权 secrets，需先在仓库 Settings → Secrets and variables → Actions → Secrets 配置：
+      #   MCP_API_KEY     —— 调用后端 /api/* 的 x-app-key（即现有 appKey / collectKey）
+      #   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务携带的 Bearer token
+      # 两者均已配置时才写入 secret；否则沿用已手动设置的值（注意：未设 MCP_AUTH_TOKEN 时端点将全开）。
+      - name: Set MCP Worker secrets
+        if: ${{ secrets.MCP_API_KEY != '' && secrets.MCP_AUTH_TOKEN != '' }}
+        run: |
+          echo "${{ secrets.MCP_API_KEY }}" | pnpm exec wrangler secret put MCP_API_KEY --config apps/mcp/wrangler.jsonc
+          echo "${{ secrets.MCP_AUTH_TOKEN }}" | pnpm exec wrangler secret put MCP_AUTH_TOKEN --config apps/mcp/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
