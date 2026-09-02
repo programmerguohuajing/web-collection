@@ -83,7 +83,7 @@ jobs:
       #   MCP_AUTH_TOKEN  —— MCP 客户端访问本服务携带的 Bearer token
       # 两者均已配置时才写入 secret；否则沿用已手动设置的值（注意：未设 MCP_AUTH_TOKEN 时端点将全开）。
       - name: Set MCP Worker secrets
-        if: ${{ secrets.MCP_API_KEY != '' && secrets.MCP_AUTH_TOKEN != '' }}
+        if: "${{ secrets.MCP_API_KEY != '' && secrets.MCP_AUTH_TOKEN != '' }}"
         run: |
           echo "${{ secrets.MCP_API_KEY }}" | pnpm exec wrangler secret put MCP_API_KEY --config apps/mcp/wrangler.jsonc
           echo "${{ secrets.MCP_AUTH_TOKEN }}" | pnpm exec wrangler secret put MCP_AUTH_TOKEN --config apps/mcp/wrangler.jsonc
