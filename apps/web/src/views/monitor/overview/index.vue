@@ -46,7 +46,12 @@ async function loadIngestionHealth() {
     ingestionError.value = true
   }
 }
-onMounted(() => { loadIngestionHealth(); ingestionTimer = setInterval(loadIngestionHealth, 30000) })
+// 自动刷新开关：0 = 暂停（暂为缓解 D1 行读爆量），恢复时改回 30000
+const INGESTION_REFRESH_MS = 0
+onMounted(() => {
+  loadIngestionHealth()
+  if (INGESTION_REFRESH_MS > 0) ingestionTimer = setInterval(loadIngestionHealth, INGESTION_REFRESH_MS)
+})
 onUnmounted(() => { if (ingestionTimer) clearInterval(ingestionTimer) })
 
 const ingestionStatusType = computed(() => {
