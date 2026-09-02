@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, pageLoading, queryFromFilters, toList } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
+import OverflowTip from '../../../components/OverflowTip.vue'
 
 const store = useFilterStore()
 const loading = ref(false)
@@ -191,7 +192,11 @@ onMounted(load)
             <span class="health" :class="row.health"><span class="dot" />{{ ({ healthy: '🟢 健康', fluctuating: '🟡 波动', incomplete: '🟠 字段缺失', stalled: '🔴 停滞' })[row.health] || row.health }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="verdict" label="判定" min-width="200" show-overflow-tooltip />
+        <el-table-column label="判定" min-width="200">
+          <template #default="{ row }">
+            <OverflowTip :text="row.verdict" />
+          </template>
+        </el-table-column>
       </el-table>
       <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="pager.page" :page-size="pager.pageSize" :page-sizes="[20, 50, 100]" :total="pager.total" @current-change="value => { pager.page = value; load() }" @size-change="value => { pager.page = 1; pager.pageSize = value; load() }" />
     </el-card>
