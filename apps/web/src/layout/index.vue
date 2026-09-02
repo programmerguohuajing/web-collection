@@ -56,8 +56,11 @@ const groups = [
     { title: '采集治理', path: '/governance', icon: Operation },
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
-    { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
-    { title: '知识库', path: '/knowledge', icon: Collection }
+    { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound }
+  ] },
+  { label: '知识中枢', items: [
+    { title: '治理台', path: '/knowledge', icon: Collection },
+    { title: '帮助中心', path: '/help', icon: Reading }
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },
