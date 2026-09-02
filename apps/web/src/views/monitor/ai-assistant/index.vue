@@ -4,6 +4,13 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound, Promotion, Plus, BellFilled } from '@element-plus/icons-vue'
 import { api } from '../../../dashboard.js'
+import { marked } from 'marked'
+
+// 配置 marked：开启 GFM，与 AiDiagnosisDrawer 保持一致（内容来自自有 AI worker，可信）
+marked.setOptions({
+  gfm: true,
+  breaks: true
+})
 
 const route = useRoute()
 const conversations = ref([])
@@ -78,6 +85,16 @@ async function scrollBottom() {
   if (scrollRef.value) scrollRef.value.scrollTop = scrollRef.value.scrollHeight
 }
 
+/** 将 AI 返回的 Markdown 文本渲染为 HTML（仅 assistant 消息走此路径，user 消息保持原样） */
+function renderMd(text) {
+  if (!text || !text.trim()) return ''
+  try {
+    return marked.parse(text)
+  } catch {
+    return String(text).replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+}
+
 const SCOPE_LABEL = {
   'error-cluster': '错误簇', 'release-regression': '发布回归',
   'perf-regression': '性能退化', 'metric-drop': '指标骤降'
@@ -110,7 +127,8 @@ onMounted(() => { pushPrefill(); loadConversations(); loadInsights() })
       <div ref="scrollRef" class="chat-scroll">
         <p v-if="!messages.length" class="empty">向 AI 助手提问，例如：「为什么今天 iOS 支付转化率掉了？」「上周三的崩溃高峰是什么？」</p>
         <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
-          <div class="bubble">{{ m.content }}</div>
+          <div v-if="m.role === 'assistant'" class="bubble md-body" v-html="renderMd(m.content)"></div>
+          <div v-else class="bubble">{{ m.content }}</div>
         </div>
       </div>
       <div class="chat-input">
@@ -152,6 +170,18 @@ onMounted(() => { pushPrefill(); loadConversations(); loadInsights() })
 .bubble { max-width: 78%; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .msg.user .bubble { background: var(--el-color-primary); color: #fff; }
 .msg.assistant .bubble { background: var(--el-fill-color-light); }
+/* AI 助手返回的 Markdown 渲染样式（仅 assistant 气泡使用 .md-body） */
+.md-body { white-space: normal; word-wrap: break-word; }
+.md-body :deep(h1), .md-body :deep(h2), .md-body :deep(h3), .md-body :deep(h4) { margin: 10px 0 6px; font-weight: 600; }
+.md-body :deep(h3) { font-size: 14px; color: var(--el-color-primary); border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 4px; }
+.md-body :deep(p) { margin: 6px 0; }
+.md-body :deep(ul), .md-body :deep(ol) { padding-left: 20px; margin: 6px 0; }
+.md-body :deep(li) { margin: 3px 0; }
+.md-body :deep(strong) { color: var(--el-color-primary); }
+.md-body :deep(code) { background: var(--el-fill-color); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.md-body :deep(pre) { background: var(--el-fill-color-dark); padding: 10px 14px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+.md-body :deep(pre code) { background: none; padding: 0; }
+.md-body :deep(blockquote) { border-left: 3px solid var(--el-border-color); margin: 8px 0; padding: 4px 12px; color: var(--el-text-color-secondary); }
 .chat-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--el-border-color-lighter); }
 .insight-item { padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 8px; border: 1px solid var(--el-border-color-lighter); }
 .insight-item:hover { border-color: var(--el-color-primary); }
