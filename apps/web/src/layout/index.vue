@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
-  Histogram, House, Lock, Menu, Monitor, Operation, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled
+  Histogram, House, Lock, Menu, Monitor, Operation, Reading, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled
 } from '@element-plus/icons-vue'
 import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
