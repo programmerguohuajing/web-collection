@@ -19,6 +19,7 @@ import { getDictionaryDetail, listDictionary, registerEvent } from './services/d
 import { compareReleases, getReleaseQuality } from './services/quality-service.js'
 import { collectConfigStats, listCollectConfigHistory, previewCollectConfig, rollbackCollectConfig, saveCollectConfig } from './services/collect-config-service.js'
 import { getEngagementDetail, listEngagement } from './services/engagement-service.js'
+import { listRetention } from './services/retention-service.js'
 import { currentAccessLevel, listDataAccessAudit, listMembers, saveMember, saveMemberLevel } from './services/access-service.js'
 import { resolveCollectConfig } from '../../../packages/collect-config.js'
 import { applyAccessLevel } from '../../../packages/access-level.js'
@@ -374,6 +375,10 @@ app.get('/api/funnels/:id/report', async (req, res, next) => {
 // PRD 06 页面参与度
 app.get('/api/analytics/engagement', async (req, res, next) => {
   try { res.json(await listEngagement({ ...filters(req.query), q: req.query.q })) } catch (err) { next(err) }
+})
+// Next Horizon A1 留存 / 同期群分析
+app.get('/api/analytics/retention', async (req, res, next) => {
+  try { res.json(await listRetention({ ...filters(req.query), offsets: req.query.offsets })) } catch (err) { next(err) }
 })
 app.get('/api/analytics/engagement/detail', async (req, res, next) => {
   try {

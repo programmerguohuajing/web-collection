@@ -32,6 +32,7 @@ export const router = createRouter({
       { path: 'paths', component: () => import('../pages/PathsPage.vue'), meta: { title: '用户路径' } },
       { path: 'journey', component: () => import('../views/insight/journey/index.vue'), meta: { title: '用户链路' } },
       { path: 'funnels', component: () => import('../views/insight/funnels/index.vue'), meta: { title: '漏斗分析' } },
+      { path: 'retention', component: () => import('../views/insight/retention/index.vue'), meta: { title: '留存分析' } },
       { path: 'dictionary', component: () => import('../views/governance/dictionary/index.vue'), meta: { title: '事件字典' } },
       { path: 'access-levels', component: () => import('../views/settings/access-levels/index.vue'), meta: { title: '成员与数据等级' } }
       ]
