@@ -446,6 +446,83 @@ export async function ensureSchema() {
     updated_at bigint
   )`)
 
+  // 知识中枢：Article 主表（可编辑 source of truth）
+  await run(`create table if not exists ai_kb_articles (
+    id varchar(128) primary key,
+    slug varchar(160),
+    title text not null,
+    type varchar(16) not null,
+    body text,
+    visibility varchar(16) not null default 'internal',
+    status varchar(16) not null default 'published',
+    tags_json jsonb,
+    linked_errors_json jsonb,
+    app_scope varchar(64) not null default 'global',
+    owner varchar(64),
+    source_json jsonb,
+    version integer not null default 1,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create index if not exists idx_kb_article_type on ai_kb_articles(type)`)
+  await run(`create index if not exists idx_kb_article_vis on ai_kb_articles(visibility)`)
+  await run(`create index if not exists idx_kb_article_status on ai_kb_articles(status)`)
+  await run(`create index if not exists idx_kb_article_app on ai_kb_articles(app_scope)`)
+
+  // 质量指标
+  await run(`create table if not exists ai_kb_quality (
+    article_id varchar(128) primary key,
+    ai_citations integer not null default 0,
+    up_count integer not null default 0,
+    down_count integer not null default 0,
+    useful_rate double precision,
+    feedback_count integer not null default 0,
+    last_cited_at bigint
+  )`)
+  await run(`create index if not exists idx_kb_quality_cite on ai_kb_quality(ai_citations)`)
+
+  // 编辑版本历史
+  await run(`create table if not exists ai_kb_history (
+    id varchar(160) primary key,
+    article_id varchar(128) not null,
+    version integer not null,
+    editor varchar(64),
+    note text,
+    snapshot_json text,
+    created_at bigint not null
+  )`)
+  await run(`create index if not exists idx_kb_hist_article on ai_kb_history(article_id, version)`)
+
+  // ==================== AI 洞察流（与 Cloudflare D1 ai_findings 双后端对齐，D8） ====================
+  // 主动诊断扫描落库（错误簇/发布回归/性能退化/指标骤降/基线偏离），供 /api/ai/scan 与 /api/ai/findings 使用。
+  await run(`create table if not exists ai_findings (
+    id varchar(64) primary key,
+    scope varchar(32) not null,
+    object text not null,
+    app_id varchar(64),
+    summary text,
+    evidence_json text,
+    detail_json text,
+    confidence double precision,
+    status varchar(16) not null default 'open',
+    created_at bigint not null,
+    updated_at bigint
+  )`)
+  await run(`create index if not exists idx_findings_scope_obj on ai_findings(scope, object)`)
+  await run(`create index if not exists idx_findings_app_created on ai_findings(app_id, created_at)`)
+
+  // 基线指标日聚合（baseline-deviation 检测器权威源；governance 定时任务 EOD 写入，P0 未建 writer 时降级 events）
+  await run(`create table if not exists metric_daily_stats (
+    app_id varchar(64) not null,
+    metric varchar(32) not null,
+    day integer not null,
+    value double precision not null,
+    samples integer not null default 0,
+    primary key (app_id, metric, day)
+  )`)
+  await run(`create index if not exists idx_metric_daily_app_metric_day on metric_daily_stats(app_id, metric, day)`)
+  await run(`create index if not exists idx_metric_daily_app_day on metric_daily_stats(app_id, day)`)
+
   // ==================== PRD 集合：洞察/治理层 ====================
   // PRD 02 事件字典：人工登记含义（统计本身走 events 聚合，此处只存登记元数据）
   await run(`create table if not exists event_dictionary (

@@ -20,6 +20,8 @@ import { sedimentFeedback } from '../../../packages/ai/feedback.js'
 import { all, run } from './db.js'
 import { vectorStore } from './vector-store.js'
 import { settingsRouter } from './ai-settings-service.js'
+import { runScan, createFindingsRepo } from '../../../packages/ai/findings.js'
+import { loadPushChannels, deliverFinding } from '../../../packages/ai/notify.js'
 
 let nodeEmbedder = null
 async function getEmbedder() {
@@ -123,13 +125,75 @@ export function createAiRouter(opts = {}) {
   router.post('/kb/ingest', wrap(async req => {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
-    return ingestResolvedIssues({ db, kb, embedder: await getEmbedder(), vectorStore: vectorReady ? vectorStore : null, force: !!(req.body && req.body.force) })
+    const types = Array.isArray(req.body?.types) && req.body.types.length ? req.body.types : null
+    const issueRes = await ingestResolvedIssues({ db, kb, embedder: await getEmbedder(), vectorStore: vectorReady ? vectorStore : null, force: !!(req.body && req.body.force) })
+    const rebuildRes = await kb.rebuildAll({ types })
+    const byType = { ...(rebuildRes.byType || {}) }
+    if (issueRes.ingested) byType.issue = (byType.issue || 0) + issueRes.ingested
+    return { ok: true, ingested: (issueRes.ingested || 0) + (rebuildRes.ingested || 0), indexed: (issueRes.indexed || 0) + (rebuildRes.indexed || 0), byType, skipped: issueRes.skipped || 0 }
   }))
 
   router.get('/kb/search', wrap(async req => {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
-    return { results: await kb.search(String(req.query.q || ''), { appId: String(req.query.appId || ''), topK: 8 }) }
+    const publicOnly = req.query.publicOnly === '1' || req.query.publicOnly === 'true'
+    return { results: await kb.search(String(req.query.q || ''), { appId: String(req.query.appId || ''), topK: 8, publicOnly }) }
+  }))
+
+  // 知识中枢：Article 模型（治理台写 / 帮助中心只读）
+  router.get('/kb/articles', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.listArticles({
+      page: String(req.query.page || 1),
+      pageSize: String(req.query.pageSize || 200),
+      type: String(req.query.type || ''),
+      visibility: String(req.query.visibility || ''),
+      status: String(req.query.status || ''),
+      appScope: String(req.query.appScope || ''),
+      publicOnly: req.query.publicOnly === '1' || req.query.publicOnly === 'true',
+      searchTerm: String(req.query.q || '')
+    })
+  }))
+
+  router.post('/kb/article', wrap(async req => {
+    const { title, body } = req.body || {}
+    if (!title || !body) { const err = new Error('title 与 body 必填'); err.statusCode = 400; throw err }
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.createArticle({
+      title, type: String(req.body.type || 'runbook'), body,
+      visibility: String(req.body.visibility || 'internal'), status: String(req.body.status || 'published'),
+      tags: req.body.tags || [], linkedErrors: req.body.linkedErrors || [], appScope: req.body.appScope || 'global',
+      owner: req.body.owner || '', source: req.body.source || null
+    })
+  }))
+
+  router.get('/kb/article/:id', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    const a = await kb.getArticle(String(req.params.id))
+    if (!a) { const err = new Error('知识不存在'); err.statusCode = 404; throw err }
+    return a
+  }))
+
+  router.put('/kb/article/:id', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.editArticle(String(req.params.id), req.body || {})
+  }))
+
+  router.delete('/kb/article/:id', wrap(async req => {
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.deleteArticle(String(req.params.id))
+  }))
+
+  router.post('/kb/article/:id/feedback', wrap(async req => {
+    const { helpful, note, deposit } = req.body || {}
+    const vectorReady = await vectorStore.ready()
+    const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    return kb.recordFeedback(String(req.params.id), { helpful: helpful !== false, note: String(note || ''), deposit: !!deposit })
   }))
 
   router.delete('/kb/source', wrap(async req => {
@@ -194,6 +258,41 @@ export function createAiRouter(opts = {}) {
       const err = new Error('title 与 text（或 url）必填'); err.statusCode = 400; throw err
     }
     return kb.ingestRunbook({ title: String(title).trim(), text: String(text).trim(), appId: String(appId || ''), sourceType })
+  }))
+
+  // ==================== 洞察流：扫描 + 列表 + 状态 + 推送（与 Cloudflare D1 ai-worker 行为对齐，D8 双后端一致） ====================
+  // 复用 packages/ai/findings.js 同一套 runScan / createFindingsRepo（db 经 createPgAdapter 统一接口，双端无感）。
+  router.post('/scan', wrap(async req => {
+    const { appId, sinceHours, scopes } = req.body || {}
+    return runScan(db, {
+      appId: appId || undefined,
+      sinceHours: Number(sinceHours) || 24,
+      scopes: Array.isArray(scopes) && scopes.length ? scopes : undefined
+    })
+  }))
+
+  router.get('/findings', wrap(async req => {
+    const list = await createFindingsRepo(db).list({
+      appId: req.query.appId || undefined,
+      scope: req.query.scope || undefined,
+      status: req.query.status || undefined,
+      limit: Number(req.query.limit) || 50
+    })
+    return { items: list, total: list.length }
+  }))
+
+  router.post('/findings/:id/status', wrap(async req => {
+    const status = req.body?.status
+    if (!['open', 'ack', 'resolved', 'ignored'].includes(status)) throw Object.assign(new Error('非法 status'), { status: 400 })
+    return createFindingsRepo(db).updateStatus(req.params.id, status)
+  }))
+
+  router.post('/findings/:id/notify', wrap(async req => {
+    const finding = await createFindingsRepo(db).get(req.params.id)
+    if (!finding) throw Object.assign(new Error('finding 不存在'), { status: 404 })
+    const channels = await loadPushChannels(db)
+    const results = await deliverFinding(finding, { channels })
+    return { ok: results.every(r => r.ok), results }
   }))
 
   // settings 管理面（GET/PUT/test/models），与 CF worker 行为对齐

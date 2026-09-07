@@ -12,6 +12,7 @@
  */
 import { hash } from './db-adapter.js'
 import { getErrorClusters, getReleaseList, getReleaseStats, getPerfWindow, getVolumeWindow } from './queries.js'
+import { detectBaselineDeviations } from './baseline.js'
 
 const HOUR = 3600 * 1000
 const FINDING_TTL = 7 * 24 * HOUR // 同类 open 洞察去重窗口
@@ -181,12 +182,13 @@ export async function runScan(db, { appId, sinceHours = 24, scopes } = {}) {
   // 指定了 scopes 时只跑选中的检测器；否则扫全部四类
   const enabled = Array.isArray(scopes) && scopes.length
     ? scopes
-    : ['error-cluster', 'release-regression', 'perf-regression', 'metric-drop']
+    : ['error-cluster', 'release-regression', 'perf-regression', 'metric-drop', 'baseline-deviation']
   const candidates = [
     ...(enabled.includes('error-cluster') ? await detectErrorClusters(db, { appId, sinceTs }) : []),
     ...(enabled.includes('release-regression') ? await detectReleaseRegressions(db, { appId }) : []),
     ...(enabled.includes('perf-regression') ? await detectPerfRegressions(db, { appId }) : []),
-    ...(enabled.includes('metric-drop') ? await detectMetricDrops(db, { appId }) : [])
+    ...(enabled.includes('metric-drop') ? await detectMetricDrops(db, { appId }) : []),
+    ...(enabled.includes('baseline-deviation') ? await detectBaselineDeviations(db, { appId, sinceHours }) : [])
   ]
 
   const inserted = []
