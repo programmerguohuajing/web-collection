@@ -10,13 +10,19 @@ const items = ref([])
 const loading = ref(false)
 const scanning = ref(false)
 const detail = reactive({ open: false, finding: null, diagnosis: null, diagnosing: false, pushing: false })
-const scanScopes = ref(['error-cluster', 'release-regression', 'perf-regression', 'metric-drop'])
+const scanScopes = ref(['error-cluster', 'release-regression', 'perf-regression', 'metric-drop', 'baseline-deviation'])
 const scanSinceHours = ref(24)
 
 const SCOPE_LABEL = {
   'error-cluster': '错误簇', 'release-regression': '发布回归',
-  'perf-regression': '性能退化', 'metric-drop': '指标骤降'
+  'perf-regression': '性能退化', 'metric-drop': '指标骤降',
+  'baseline-deviation': '基线偏离'
 }
+// 基线偏离用紫色系，与错误簇(红)/性能退化(橙)/指标骤降(蓝)/发布回归(青)区分
+const SCOPE_STYLE = {
+  'baseline-deviation': { background: '#f3e8ff', color: '#7c3aed', borderColor: '#e9d5ff' }
+}
+function scopeStyle(scope) { return SCOPE_STYLE[scope] || {} }
 const SCOPE_OPTIONS = Object.entries(SCOPE_LABEL).map(([value, label]) => ({ value, label }))
 const SINCE_OPTIONS = [
   { value: 6, label: '近 6 小时' },
@@ -122,7 +128,7 @@ onMounted(load)
     <div class="page-head">
       <div>
         <h2><el-icon><BellFilled /></el-icon> AI 洞察流</h2>
-        <p class="sub">系统主动扫描发现的错误簇 / 发布回归 / 性能退化 / 指标骤降，无需点开错误即可发现。</p>
+        <p class="sub">系统主动扫描发现的错误簇 / 发布回归 / 性能退化 / 指标骤降 / 基线偏离，无需点开错误即可发现。</p>
       </div>
       <div class="actions">
         <el-select v-model="scanScopes" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" placeholder="扫描类别" style="width: 260px" aria-label="选择扫描类别">
@@ -138,7 +144,7 @@ onMounted(load)
 
     <el-table :data="items" v-loading="loading" empty-text="暂无洞察，点击「立即扫描」开始">
       <el-table-column label="类型" width="120">
-        <template #default="{ row }"><el-tag size="small">{{ SCOPE_LABEL[row.scope] || row.scope }}</el-tag></template>
+        <template #default="{ row }"><el-tag size="small" :style="scopeStyle(row.scope)">{{ SCOPE_LABEL[row.scope] || row.scope }}</el-tag></template>
       </el-table-column>
       <el-table-column label="对象" prop="object" width="160" />
       <el-table-column label="结论" min-width="280">
@@ -169,6 +175,13 @@ onMounted(load)
           <el-descriptions-item label="对象">{{ detail.finding.object }}</el-descriptions-item>
           <el-descriptions-item label="置信度">{{ pct(detail.finding.confidence) }}</el-descriptions-item>
           <el-descriptions-item label="结论">{{ detail.finding.summary }}</el-descriptions-item>
+          <template v-if="detail.finding.scope === 'baseline-deviation' && detail.finding.detail">
+            <el-descriptions-item label="基线值">{{ detail.finding.detail.baseline }}</el-descriptions-item>
+            <el-descriptions-item label="实测值">{{ detail.finding.detail.observed }}</el-descriptions-item>
+            <el-descriptions-item label="偏离 σ">{{ detail.finding.detail.z }}</el-descriptions-item>
+            <el-descriptions-item label="对比窗口">{{ detail.finding.detail.window }} 天</el-descriptions-item>
+            <el-descriptions-item label="算法">{{ detail.finding.detail.method }}</el-descriptions-item>
+          </template>
         </el-descriptions>
 
         <h4>证据</h4>
