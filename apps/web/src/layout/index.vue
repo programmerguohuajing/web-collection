@@ -48,6 +48,7 @@ const groups = [
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Aim },
     { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
+    { title: '留存分析', path: '/retention', icon: Grid },
     { title: '发布管理', path: '/releases', icon: Operation },
     { title: 'AI 洞察', path: '/ai-insights', icon: BellFilled }
   ] },
