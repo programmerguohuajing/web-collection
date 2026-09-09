@@ -3,11 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
-<<<<<<< e4f6683
-  Histogram, House, Lock, Menu, Monitor, Operation, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled, Share, SetUp, Stamp, Coin, Brush
-=======
-  Histogram, House, Lock, Menu, Monitor, Operation, Reading, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled
->>>>>>> origin/main
+  Histogram, House, Lock, Menu, Monitor, Operation, Reading, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled, Share, SetUp, Stamp, Coin, Brush
 } from '@element-plus/icons-vue'
 import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
@@ -72,17 +68,12 @@ const baseGroups = [
     { title: '采集治理', path: '/governance', icon: Operation },
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
-<<<<<<< e4f6683
     { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
-    { title: '知识库', path: '/knowledge', icon: Collection },
     { title: '合规 DSR', path: '/dsr', icon: Stamp, cap: 'dsr' }
-=======
-    { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound }
   ] },
   { label: '知识中枢', items: [
     { title: '治理台', path: '/knowledge', icon: Collection },
     { title: '帮助中心', path: '/help', icon: Reading }
->>>>>>> origin/main
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },

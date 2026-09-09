@@ -497,7 +497,6 @@ export async function ensureSchema() {
   )`)
   await run(`create index if not exists idx_kb_hist_article on ai_kb_history(article_id, version)`)
 
-<<<<<<< e4f6683
   // ==================== AI 洞察流（与 Cloudflare D1 ai_findings 双后端对齐，D8） ====================
   // 主动诊断扫描落库（错误簇/发布回归/性能退化/指标骤降/基线偏离），供 /api/ai/scan 与 /api/ai/findings 使用。
   await run(`create table if not exists ai_findings (
@@ -528,8 +527,6 @@ export async function ensureSchema() {
   await run(`create index if not exists idx_metric_daily_app_metric_day on metric_daily_stats(app_id, metric, day)`)
   await run(`create index if not exists idx_metric_daily_app_day on metric_daily_stats(app_id, day)`)
 
-=======
->>>>>>> origin/main
   // ==================== PRD 集合：洞察/治理层 ====================
   // PRD 02 事件字典：人工登记含义（统计本身走 events 聚合，此处只存登记元数据）
   await run(`create table if not exists event_dictionary (
