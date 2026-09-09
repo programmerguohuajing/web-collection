@@ -825,6 +825,40 @@ export async function ensureSchema() {
   // replay_events 此前仅有 session_id 侧索引，重算与去重点查按 base_session_id 扫描会退化为全表扫，故补索引。
   await run(`create index if not exists idx_replay_events_base_session on replay_events(base_session_id)`)
   await run(`create index if not exists idx_replay_events_app_session_ts on replay_events(app_id, session_id, created_at)`)
+
+  // ==================== Next Horizon E4/E1：SDK 端交付自监控 + SDK 体积开销 ====================
+  // 与 Cloudflare D1（migrations 0036/0037）同构；ensureSchema 幂等创建，自托管后端开箱即用。
+  await run(`create table if not exists sdk_monitoring (
+    id serial primary key,
+    app_id varchar(64) not null,
+    sdk_version varchar(32),
+    session_id varchar(64),
+    ts bigint not null,
+    sent integer not null default 0,
+    dropped integer not null default 0,
+    retried integer not null default 0,
+    timeouts integer not null default 0,
+    rate_limited integer not null default 0,
+    queue_full integer not null default 0,
+    storage_quota integer not null default 0,
+    health varchar(16),
+    payload text
+  )`)
+  await run(`create index if not exists idx_sdk_monitoring_app_ts on sdk_monitoring(app_id, ts)`)
+  await run(`create index if not exists idx_sdk_monitoring_ts on sdk_monitoring(ts)`)
+
+  await run(`create table if not exists sdk_size (
+    id serial primary key,
+    version varchar(32) not null,
+    gz_bytes bigint,
+    raw_bytes bigint,
+    min_bytes bigint,
+    runtime_mem text,
+    reported_at bigint not null,
+    ci_run varchar(64)
+  )`)
+  await run(`create index if not exists idx_sdk_size_version on sdk_size(version)`)
+  await run(`create index if not exists idx_sdk_size_reported on sdk_size(reported_at)`)
 }
 
 /**
