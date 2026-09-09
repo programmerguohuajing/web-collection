@@ -131,12 +131,25 @@ async function route(request, env, url, path) {
   }
   if (path === '/api/ai/kb/ingest' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}))
-    return json(await ingestResolvedIssues({ db, kb, embedder, vectorStore, force: !!body.force }))
+    const types = Array.isArray(body.types) && body.types.length ? body.types : null
+    const issueRes = await ingestResolvedIssues({ db, kb, embedder, vectorStore, force: !!body.force })
+    // 全量重建：覆盖 issue/doc/runbook/faq/feedback 全部类型（旧版仅 issue），重嵌所有 chunk 向量
+    const rebuildRes = await kb.rebuildAll({ types })
+    const byType = { ...(rebuildRes.byType || {}) }
+    if (issueRes.ingested) byType.issue = (byType.issue || 0) + issueRes.ingested
+    return json({
+      ok: true,
+      ingested: (issueRes.ingested || 0) + (rebuildRes.ingested || 0),
+      indexed: (issueRes.indexed || 0) + (rebuildRes.indexed || 0),
+      byType,
+      skipped: issueRes.skipped || 0
+    })
   }
   if (path === '/api/ai/kb/search' && request.method === 'GET') {
     const q = url.searchParams.get('q') || ''
     const appId = url.searchParams.get('appId') || ''
-    return json({ results: await kb.search(q, { appId, topK: 8 }) })
+    const publicOnly = url.searchParams.get('publicOnly') === '1' || url.searchParams.get('publicOnly') === 'true'
+    return json({ results: await kb.search(q, { appId, topK: 8, publicOnly }) })
   }
   if (path === '/api/ai/kb/source' && request.method === 'DELETE') {
     const type = url.searchParams.get('type') || ''
@@ -200,6 +213,55 @@ async function route(request, env, url, path) {
     const text = String(body?.text || '').trim()
     if (!title || !text) throw Object.assign(new Error('title 与 text（或 url）必填'), { status: 400 })
     return json(await kb.ingestRunbook({ title, text, appId: String(body?.appId || ''), sourceType }))
+  }
+
+  // ---- 知识中枢：Article 模型（治理台写 / 帮助中心只读） ----
+  // 列表：治理台全量 / 帮助中心 publicOnly=1（脱敏只读，仅 public 文章）
+  if (path === '/api/ai/kb/articles' && request.method === 'GET') {
+    const list = await kb.listArticles({
+      page: url.searchParams.get('page') || 1,
+      pageSize: url.searchParams.get('pageSize') || 200,
+      type: url.searchParams.get('type') || '',
+      visibility: url.searchParams.get('visibility') || '',
+      status: url.searchParams.get('status') || '',
+      appScope: url.searchParams.get('appScope') || '',
+      publicOnly: url.searchParams.get('publicOnly') === '1' || url.searchParams.get('publicOnly') === 'true',
+      searchTerm: url.searchParams.get('q') || ''
+    })
+    return json(list)
+  }
+  const articleFeedback = path.match(/^\/api\/ai\/kb\/article\/([^/]+)\/feedback$/)
+  if (articleFeedback && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}))
+    return json(await kb.recordFeedback(decodeURIComponent(articleFeedback[1]), {
+      helpful: body.helpful !== false, note: String(body.note || ''), deposit: !!body.deposit
+    }))
+  }
+  const articleId = path.match(/^\/api\/ai\/kb\/article\/([^/]+)$/)
+  if (articleId) {
+    const id = decodeURIComponent(articleId[1])
+    if (request.method === 'GET') {
+      const a = await kb.getArticle(id)
+      if (!a) throw Object.assign(new Error('知识不存在'), { status: 404 })
+      return json(a)
+    }
+    if (request.method === 'PUT') {
+      const body = await request.json().catch(() => ({}))
+      return json(await kb.editArticle(id, body))
+    }
+    if (request.method === 'DELETE') {
+      return json(await kb.deleteArticle(id))
+    }
+  }
+  if (path === '/api/ai/kb/article' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}))
+    if (!body.title || !body.body) throw Object.assign(new Error('title 与 body 必填'), { status: 400 })
+    return json(await kb.createArticle({
+      title: body.title, type: body.type || 'runbook', body: body.body,
+      visibility: body.visibility || 'internal', status: body.status || 'published',
+      tags: body.tags || [], linkedErrors: body.linkedErrors || [], appScope: body.appScope || 'global',
+      owner: body.owner || '', source: body.source || null
+    }))
   }
 
   // ---- P1 主动诊断 · 洞察流 ----

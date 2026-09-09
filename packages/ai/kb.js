@@ -16,6 +16,9 @@
  */
 export const KB_TABLE = 'ai_kb_chunks'
 export const META_TABLE = 'ai_kb_meta'
+export const ARTICLE_TABLE = 'ai_kb_articles'
+export const QUALITY_TABLE = 'ai_kb_quality'
+export const HISTORY_TABLE = 'ai_kb_history'
 export const KB_ELEMS = { table: KB_TABLE }
 
 import { hash } from './db-adapter.js'
@@ -104,16 +107,6 @@ export function createKb({ db, vectorStore, embedder }) {
         order by m.updated_at desc limit ? offset ?`
     ).bind(...params, size, offset).all()) || []
     return { items: rows, total: Number(totalRow?.n ?? rows.length), page: Number(page) || 1, pageSize: size }
-  }
-
-  /** 统计概览：总数 + 按 source_type 计数 + 最近更新时间 */
-  async function stats() {
-    const rows = (await db.prepare(`select source_type, count(*) as n from ${META_TABLE} group by source_type`).all()) || []
-    const byType = {}
-    let total = 0
-    for (const r of rows) { byType[r.source_type] = Number(r.n); total += Number(r.n) }
-    const latest = await db.prepare(`select max(updated_at) as latest from ${META_TABLE}`).first()
-    return { total, byType, latestUpdated: Number(latest?.latest ?? 0) || null }
   }
 
   /**
@@ -225,7 +218,7 @@ export function createKb({ db, vectorStore, embedder }) {
     return ingestRunbook({ title: finalTitle, text: text.trim(), appId, sourceId: sid, sourceType: st })
   }
 
-  function kbErr(status, message) { return Object.assign(new Error(message), { status }) }
+  function kbErr(status, message) { const e = Object.assign(new Error(message), { status }); e.statusCode = status; return e }
 
   /** SSRF 防护：拒绝内网/回环/链路本地地址 */
   function assertPublicHost(hostname) {
@@ -376,5 +369,290 @@ export function createKb({ db, vectorStore, embedder }) {
     ).bind(`${sourceType}:${sourceId}`, sourceType, sourceId, contentHash, version || null, now).run()
   }
 
-  return { search, upsertChunk, removeBySource, getMeta, upsertMeta, getChunk, getFirstChunkBySource, listMeta, stats, ingestRunbook, ingestRunbookFromUrl }
+  /* ============ Article 模型（知识中枢 source of truth） ============ */
+  // 概念：以 Article 为主对象，body 为可编辑权威正文；chunk 由其自动派生并向量化，
+  // diagnoser 仍走 ai_kb_chunks。遗留来源（无 article 行）在列表/详情中合成，编辑即「升级」为可治理 Article。
+
+  function parseJsonArr(x) { try { return x ? JSON.parse(x) : [] } catch { return [] } }
+  function safeParse(x) { try { return x ? JSON.parse(x) : null } catch { return null } }
+  function toVersion(v) { return 'v' + (Number(v) || 1) }
+
+  async function getArticleRow(id) {
+    return db.prepare(`select * from ${ARTICLE_TABLE} where id=?`).bind(id).first()
+  }
+  async function metaTypeOf(id) {
+    const r = await db.prepare(`select source_type from ${META_TABLE} where source_id=? limit 1`).bind(id).first()
+    return r?.source_type || null
+  }
+
+  /**
+   * 列表（治理台全量 / 帮助中心 publicOnly）。
+   * 合并「已治理 Article」与「遗留来源（无 article 行）」，统一字段形态供前端；
+   * publicOnly=true 时仅返回 visibility=public 的 Article（帮助中心脱敏只读）。
+   */
+  async function listArticles({ page = 1, pageSize = 50, type = '', visibility = '', status = '', appScope = '', publicOnly = false, searchTerm = '' } = {}) {
+    const where = []
+    const params = []
+    if (type) { where.push('a.type=?'); params.push(type) }
+    if (publicOnly) { where.push('a.visibility=?'); params.push('public') }
+    else if (visibility) { where.push('a.visibility=?'); params.push(visibility) }
+    if (status) { where.push('a.status=?'); params.push(status) }
+    if (appScope) { where.push('a.app_scope=?'); params.push(appScope) }
+    if (searchTerm) { where.push('(a.title like ? or a.body like ?)'); params.push(`%${searchTerm}%`, `%${searchTerm}%`) }
+    const clause = where.length ? 'where ' + where.join(' and ') : ''
+    const totalRow = await db.prepare(`select count(*) as n from ${ARTICLE_TABLE} a ${clause}`).bind(...params).first()
+    const size = Math.max(1, Math.min(Number(pageSize) || 50, 200))
+    const offset = (Math.max(1, Number(page) || 1) - 1) * size
+    const rows = (await db.prepare(
+      `select a.id,a.title,a.type,a.visibility,a.status,a.app_scope,a.version,a.updated_at,a.tags_json,a.linked_errors_json,
+              coalesce(q.ai_citations,0) as ai_citations, q.useful_rate, coalesce(q.feedback_count,0) as feedback_count
+         from ${ARTICLE_TABLE} a left join ${QUALITY_TABLE} q on q.article_id=a.id
+         ${clause} order by a.updated_at desc limit ? offset ?`
+    ).bind(...params, size, offset).all()) || []
+    const items = rows.map(a => ({
+      id: a.id, chunkId: null, source_type: a.type, source_id: a.id, app: a.app_scope,
+      title: a.title, excerpt: String(a.body || '').slice(0, 120), updatedAt: Number(a.updated_at || 0),
+      visibility: a.visibility, status: a.status, version: toVersion(a.version),
+      quality: { aiCitations: Number(a.ai_citations || 0), helpfulRate: a.useful_rate ?? null, feedbackCount: Number(a.feedback_count || 0) },
+      linkedErrors: parseJsonArr(a.linked_errors_json), body: null, legacy: false
+    }))
+    let legacy = []
+    if (!publicOnly) legacy = await listLegacySources({ type, appScope, searchTerm })
+    return { items: items.concat(legacy), total: Number(totalRow?.n ?? 0) + legacy.length, page: Number(page) || 1, pageSize: size }
+  }
+
+  async function listLegacySources({ type = '', appScope = '', searchTerm = '' } = {}) {
+    const where = ["not exists (select 1 from ai_kb_articles a where a.id = m.source_id)"]
+    const params = []
+    if (type) { where.push('m.source_type=?'); params.push(type) }
+    if (appScope) { where.push('c.app_id=?'); params.push(appScope) }
+    if (searchTerm) { where.push('m.source_id like ?'); params.push(`%${searchTerm}%`) }
+    const titleExpr = db.dialect === 'postgres'
+      ? `max(c.metadata_json ->> 'title') as title`
+      : `max(coalesce(json_extract(c.metadata_json, '$.title'), null)) as title`
+    const rows = (await db.prepare(
+      `select m.source_type, m.source_id, m.version, m.updated_at, max(c.app_id) as app_id, ${titleExpr}, max(substr(c.text,1,120)) as excerpt
+         from ${META_TABLE} m left join ${KB_TABLE} c on c.source_type=m.source_type and c.source_id=m.source_id
+         where ${where.join(' and ')} group by m.source_type, m.source_id, m.version, m.updated_at`
+    ).bind(...params).all()) || []
+    return rows.map(r => ({
+      id: r.source_id, chunkId: null, source_type: r.source_type, source_id: r.source_id, app: r.app_id || 'global',
+      title: r.title || r.source_id, excerpt: r.excerpt || '', updatedAt: Number(r.updated_at || 0),
+      visibility: 'internal', status: 'published', version: toVersion(r.version || 1),
+      quality: { aiCitations: null, helpfulRate: null, feedbackCount: 0 }, linkedErrors: [], body: null, legacy: true
+    }))
+  }
+
+  /** 详情：优先 article 行；无则按遗留来源合成（body 由 chunk 拼接，保留被治理前的可读性） */
+  async function getArticle(id) {
+    const row = await getArticleRow(id)
+    if (row) {
+      const q = await db.prepare(`select * from ${QUALITY_TABLE} where article_id=?`).bind(id).first()
+      const hist = (await db.prepare(`select version,editor,note,created_at from ${HISTORY_TABLE} where article_id=? order by version desc limit 10`).bind(id).all()) || []
+      return {
+        id: row.id, slug: row.slug, title: row.title, type: row.type, body: row.body || '',
+        visibility: row.visibility, status: row.status, appScope: row.app_scope, owner: row.owner,
+        tags: parseJsonArr(row.tags_json), linkedErrors: parseJsonArr(row.linked_errors_json),
+        source: safeParse(row.source_json), version: row.version, createdAt: row.created_at, updatedAt: row.updated_at,
+        quality: q ? { aiCitations: q.ai_citations || 0, upCount: q.up_count || 0, downCount: q.down_count || 0, usefulRate: q.useful_rate, feedbackCount: q.feedback_count || 0, lastCitedAt: q.last_cited_at } : null,
+        history: hist, legacy: false, chunkId: null
+      }
+    }
+    const meta = await db.prepare(`select source_type, source_id from ${META_TABLE} where source_id=? limit 1`).bind(id).first()
+    if (!meta) return null
+    const chunks = (await db.prepare(`select id, text, chunk_idx, metadata_json, app_id from ${KB_TABLE} where source_type=? and source_id=? order by chunk_idx`).bind(meta.source_type, meta.source_id).all()) || []
+    const body = chunks.map(c => c.text).join('\n\n')
+    let title = meta.source_id
+    try { const m = chunks[0]?.metadata_json ? JSON.parse(chunks[0].metadata_json) : null; if (m?.title) title = m.title } catch {}
+    return {
+      id, slug: null, title, type: meta.source_type, body,
+      visibility: 'internal', status: 'published', appScope: chunks[0]?.app_id || 'global', owner: '',
+      tags: [], linkedErrors: [], source: { kind: 'legacy' }, version: 1, createdAt: 0, updatedAt: 0,
+      quality: null, history: [], legacy: true, chunkId: chunks[0]?.id || null
+    }
+  }
+
+  /** 新建 Article：写主表 → 初始化质量行 → body 重切分落 chunks + 重嵌 → 记 meta */
+  async function createArticle({ title, type, body, visibility = 'internal', status = 'published', tags = [], linkedErrors = [], appScope = 'global', owner = '', source = null } = {}) {
+    const t = String(type || 'runbook')
+    const id = `art:${hash(`${title}|${t}|${Date.now()}`).slice(0, 12)}`
+    const now = Date.now()
+    await db.prepare(
+      `insert into ${ARTICLE_TABLE} (id,slug,title,type,body,visibility,status,tags_json,linked_errors_json,app_scope,owner,source_json,version,created_at,updated_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(id, null, String(title).trim(), t, String(body || ''), visibility, status,
+      JSON.stringify(tags || []), JSON.stringify(linkedErrors || []), appScope || 'global', owner || '',
+      source ? JSON.stringify(source) : null, 1, now, now).run()
+    await db.prepare(`insert into ${QUALITY_TABLE} (article_id,ai_citations,up_count,down_count,useful_rate,feedback_count,last_cited_at) values (?,0,0,0,null,0,null) on conflict(article_id) do nothing`).bind(id).run()
+    const chunks = deriveChunks(String(body || ''), id, t, appScope || 'global', String(title).trim())
+    await putChunks(chunks)
+    await indexChunkVectors(chunks)
+    await upsertMeta({ sourceType: t, sourceId: id, contentHash: hash(body || ''), version: '1' })
+    return { id, type: t, visibility, status, version: 1 }
+  }
+
+  /**
+   * 编辑 Article（★替代只能删不能改）：清旧 chunks+meta+向量 → 重切分+重嵌 →
+   * 更新主表 + 版本 +1 + 历史快照。无 article 行的遗留来源会被「升级」为可治理 Article。
+   */
+  async function editArticle(id, patch = {}) {
+    const existing = await getArticleRow(id)
+    const upgraded = !existing
+    const prevType = existing?.type || patch.type || (await metaTypeOf(id)) || 'runbook'
+    const type = String(patch.type || prevType)
+    const appScope = patch.appScope || existing?.app_scope || 'global'
+    const prev = existing
+      ? { title: existing.title, type: existing.type, visibility: existing.visibility, status: existing.status, body: existing.body || '', tags: parseJsonArr(existing.tags_json), linkedErrors: parseJsonArr(existing.linked_errors_json) }
+      : { title: patch.title, type: prevType, visibility: patch.visibility || 'internal', status: patch.status || 'published', body: patch.body || '', tags: [], linkedErrors: [] }
+    const newVersion = (existing?.version || 1) + 1
+    const now = Date.now()
+    await removeBySource(type, id)
+    const chunks = deriveChunks(String(patch.body || ''), id, type, appScope, String(patch.title).trim())
+    await putChunks(chunks)
+    await indexChunkVectors(chunks)
+    await upsertMeta({ sourceType: type, sourceId: id, contentHash: hash(patch.body || ''), version: String(newVersion) })
+    if (existing) {
+      await db.prepare(
+        `update ${ARTICLE_TABLE} set title=?,type=?,visibility=?,status=?,body=?,tags_json=?,linked_errors_json=?,app_scope=?,version=?,updated_at=? where id=?`
+      ).bind(String(patch.title).trim(), type, patch.visibility || existing.visibility, patch.status || existing.status,
+        String(patch.body || ''), JSON.stringify(patch.tags || parseJsonArr(existing.tags_json) || []),
+        JSON.stringify(patch.linkedErrors || parseJsonArr(existing.linked_errors_json) || []),
+        appScope, newVersion, now, id).run()
+    } else {
+      await db.prepare(
+        `insert into ${ARTICLE_TABLE} (id,slug,title,type,body,visibility,status,tags_json,linked_errors_json,app_scope,owner,source_json,version,created_at,updated_at)
+         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(id, null, String(patch.title).trim(), type, String(patch.body || ''), patch.visibility || 'internal', patch.status || 'published',
+        JSON.stringify(patch.tags || []), JSON.stringify(patch.linkedErrors || []), appScope, '',
+        JSON.stringify({ kind: 'manual' }), newVersion, now, now).run()
+      await db.prepare(`insert into ${QUALITY_TABLE} (article_id,ai_citations,up_count,down_count,useful_rate,feedback_count,last_cited_at) values (?,0,0,0,null,0,null) on conflict(article_id) do nothing`).bind(id).run()
+    }
+    await db.prepare(
+      `insert into ${HISTORY_TABLE} (id,article_id,version,editor,note,snapshot_json,created_at) values (?,?,?,?,?,?,?)`
+    ).bind(`hist:${id}:${newVersion}`, id, newVersion - 1, patch.editor || '', upgraded ? '从来源升级为可编辑知识' : '编辑更新', JSON.stringify(prev), now).run()
+    return { id, type, version: newVersion, upgraded }
+  }
+
+  /** 删除 Article：清 chunks+meta+向量 + 主表/质量/历史；遗留来源则仅清 chunks */
+  async function deleteArticle(id) {
+    const row = await getArticleRow(id)
+    let type = row?.type
+    if (!row) {
+      const meta = await db.prepare(`select source_type from ${META_TABLE} where source_id=? limit 1`).bind(id).first()
+      if (!meta) throw kbErr(404, '知识不存在')
+      type = meta.source_type
+    }
+    await removeBySource(type, id)
+    await db.prepare(`delete from ${ARTICLE_TABLE} where id=?`).bind(id).run()
+    await db.prepare(`delete from ${QUALITY_TABLE} where article_id=?`).bind(id).run()
+    await db.prepare(`delete from ${HISTORY_TABLE} where article_id=?`).bind(id).run()
+    return { ok: true }
+  }
+
+  /** 有用反馈：更新有用率；「没用 + 补充解法」沉淀为 feedback 草稿待审核（PRD R11） */
+  async function recordFeedback(articleId, { helpful = true, note = '', deposit = false } = {}) {
+    const q = await db.prepare(`select * from ${QUALITY_TABLE} where article_id=?`).bind(articleId).first()
+    let up = q?.up_count || 0, down = q?.down_count || 0
+    if (helpful) up++; else down++
+    const n = up + down
+    const rate = n ? up / n : null
+    await db.prepare(
+      `insert into ${QUALITY_TABLE} (article_id,ai_citations,up_count,down_count,useful_rate,feedback_count,last_cited_at)
+       values (?,0,?,?,?,1,?)
+       on conflict(article_id) do update set up_count=excluded.up_count, down_count=excluded.down_count, useful_rate=excluded.useful_rate, feedback_count=feedback_count+1`
+    ).bind(articleId, up, down, rate, Date.now()).run()
+    let depositId = null
+    if (deposit && !helpful && String(note || '').trim()) {
+      const art = await getArticle(articleId)
+      const title = art?.title ? `反馈补充：${art.title}` : '反馈补充知识'
+      const created = await createArticle({ title, type: 'feedback', body: String(note).trim(), visibility: 'internal', status: 'draft', tags: [], linkedErrors: [], appScope: art?.appScope || 'global', owner: '', source: { kind: 'feedback', ref: articleId } })
+      depositId = created.id
+    }
+    return { ok: true, usefulRate: rate, depositId }
+  }
+
+  /** 被 AI 诊断引用计数（best-effort，写质量表；遗留来源自动建质量行但不污染列表） */
+  async function recordCitations(ids) {
+    const list = (ids || []).filter(Boolean)
+    if (!list.length) return 0
+    const now = Date.now()
+    const stmts = list.map(id => ({
+      sql: `insert into ${QUALITY_TABLE} (article_id,ai_citations,up_count,down_count,useful_rate,feedback_count,last_cited_at)
+            values (?,1,0,0,null,0,?)
+            on conflict(article_id) do update set ai_citations=ai_citations+1, last_cited_at=excluded.last_cited_at`,
+      values: [id, now]
+    }))
+    if (typeof db.batch === 'function') { await db.batch(stmts); return list.length }
+    for (const s of stmts) await db.prepare(s.sql).bind(...s.values).run()
+    return list.length
+  }
+
+  /** 全量重建：遍历所有 chunk 重新向量化（真正覆盖全部 source_type，而非仅 issue） */
+  async function rebuildAll({ types = null } = {}) {
+    const typeParams = (types && types.length) ? types : []
+    const whereSql = typeParams.length ? `where source_type in (${typeParams.map(() => '?').join(',')})` : ''
+    const rows = (await db.prepare(`select id, source_type, app_id, text, metadata_json from ${KB_TABLE} ${whereSql}`).bind(...typeParams).all()) || []
+    if (!rows.length) return { ingested: 0, indexed: 0, byType: {} }
+    const byType = {}
+    const items = rows.map(r => { byType[r.source_type] = (byType[r.source_type] || 0) + 1; return { id: r.id, text: r.text, metadata: { app_id: r.app_id || '', source_type: r.source_type } } })
+    let indexed = 0
+    if (vectorStore && embedder && typeof embedder.embedBatch === 'function') {
+      try {
+        const vecs = await embedder.embedBatch(items.map(it => it.text))
+        if (Array.isArray(vecs) && vecs.length === items.length) {
+          await vectorStore.upsert(items.map((it, i) => ({ id: it.id, values: vecs[i], metadata: it.metadata })))
+          indexed = items.length
+        }
+      } catch { indexed = 0 }
+    }
+    return { ingested: rows.length, indexed, byType }
+  }
+
+  function deriveChunks(text, id, type, appId, title) {
+    const chunks = splitMarkdown(String(text || ''))
+    if (!chunks.length) chunks.push({ title, text: String(text || '').trim() })
+    return chunks.map((c, i) => ({
+      id: `${id}:${hash(c.text).slice(0, 12)}:${i}`,
+      sourceType: type, sourceId: id, appId: appId || 'global', chunkIdx: i,
+      text: `# ${c.title || title}\n\n${c.text}`,
+      metadata: { title: c.title || title, file: title }
+    }))
+  }
+
+  /* stats 增强：合并 Article 与遗留来源；新增 byVisibility / publicCount / internalCount / aiCitations / feedbackCount */
+  async function stats() {
+    const aType = (await db.prepare(`select type, count(*) n from ${ARTICLE_TABLE} group by type`).all()) || []
+    const aVis = (await db.prepare(`select visibility, count(*) n from ${ARTICLE_TABLE} group by visibility`).all()) || []
+    const aLatest = await db.prepare(`select max(updated_at) latest from ${ARTICLE_TABLE}`).first()
+    const qSum = await db.prepare(`select coalesce(sum(ai_citations),0) c, coalesce(sum(feedback_count),0) f from ${QUALITY_TABLE}`).first()
+    const lType = (await db.prepare(`select source_type, count(*) n from ${META_TABLE} where not exists (select 1 from ${ARTICLE_TABLE} a where a.id=m.source_id) group by source_type`).all()) || []
+    const lLatest = await db.prepare(`select max(updated_at) latest from ${META_TABLE} where not exists (select 1 from ${ARTICLE_TABLE} a where a.id=m.source_id)`).first()
+    const byType = {}
+    let total = 0
+    for (const r of aType) { byType[r.type] = (byType[r.type] || 0) + Number(r.n); total += Number(r.n) }
+    for (const r of lType) { byType[r.source_type] = (byType[r.source_type] || 0) + Number(r.n); total += Number(r.n) }
+    const byVisibility = {}
+    for (const r of aVis) byVisibility[r.visibility] = Number(r.n)
+    return {
+      total, byType, byVisibility,
+      publicCount: byVisibility.public || 0,
+      internalCount: byVisibility.internal || 0,
+      aiCitations: Number(qSum?.c || 0),
+      feedbackCount: Number(qSum?.f || 0),
+      latestUpdated: Math.max(Number(aLatest?.latest || 0), Number(lLatest?.latest || 0)) || null
+    }
+  }
+
+  // search 支持 publicOnly：仅保留 source_id 属于 public Article 的命中（帮助中心防泄露）
+  const _search = search
+  search = async function (query, { appId, topK = 8, limit = 5, publicOnly = false } = {}) {
+    const matches = await _search(query, { appId, topK, limit })
+    if (!publicOnly || !matches.length) return matches
+    const pub = (await db.prepare(`select id from ${ARTICLE_TABLE} where visibility='public'`).all()) || []
+    const pubSet = new Set(pub.map(r => r.id))
+    return matches.filter(r => pubSet.has(r.source_id))
+  }
+
+  return { search, upsertChunk, removeBySource, getMeta, upsertMeta, getChunk, getFirstChunkBySource, listMeta, stats, ingestRunbook, ingestRunbookFromUrl,
+    listArticles, getArticle, createArticle, editArticle, deleteArticle, recordFeedback, recordCitations, rebuildAll }
 }

@@ -216,7 +216,6 @@ function changeTab(name) {
 }
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 
-<<<<<<< e4f6683
 /**
  * B4 分析 → 回放：带过滤条件打开回放列表（而非只播单条会话）。
  * 按该会话的 userId / userName 过滤，二者均为回放查询 API 支持的真实参数。
@@ -225,8 +224,6 @@ function replayList(row = {}) {
   router.push({ path: '/replays', query: buildReplayQuery({ userId: row.user_id, userName: row.user_name }) })
 }
 
-onMounted(() => { timer = window.setInterval(async () => { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) }, 30000) })
-=======
 // 自动刷新开关：0 = 暂停（暂为缓解 D1 行读爆量），恢复时改回 30000
 const LIVE_REFRESH_MS = 0
 onMounted(async () => {
@@ -236,7 +233,6 @@ onMounted(async () => {
     live.value = await api(`/api/analytics/live?${queryFromFilters()}`)
   }, LIVE_REFRESH_MS)
 })
->>>>>>> origin/main
 onBeforeUnmount(() => clearInterval(timer))
 watch(() => route.query.tab, value => { if (value) tab.value = value }, { immediate: true })
 watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true })

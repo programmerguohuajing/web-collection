@@ -12,6 +12,7 @@ export const useFilterStore = defineStore('filters', {
     // 采集环境（prod/staging/trial/dev）。默认空：不写死“生产环境”，
     // 后续由全局上下文从真实应用配置或聚合查询填充；为空时顶栏不展示环境药丸。
     environment: '',
-    range: []
+    // 默认最近 7 天，避免监控页默认“全部时间”触发 events 全表扫描（曾导致 D1 读取行数激增）。
+    range: [Date.now() - 7 * 86400000, Date.now()]
   })
 })

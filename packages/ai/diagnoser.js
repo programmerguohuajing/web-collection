@@ -110,6 +110,8 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const parsed = parseModelOutput(content)
     const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
     const kbHits = mapKbHits(kbResults)
+    // 质量闭环：best-effort 记录 AI 引用（仅统计已治理 Article，不阻塞诊断）
+    try { if (kb.recordCitations) await kb.recordCitations(kbHits.map(h => h.sourceId)) } catch {}
     await store(refType, traceId, appId, { traceId, scope }, { ...asResult(parsed.response), kbHits, model, provider, confidence, degraded: parsed.degraded })
     return { ...asResult(parsed.response), kbHits, model, provider, confidence, refId: traceId, degraded: parsed.degraded }
   }
@@ -129,6 +131,8 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const parsed = parseModelOutput(content)
     const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
     const kbHits = mapKbHits(kbResults)
+    // 质量闭环：best-effort 记录 AI 引用（仅统计已治理 Article，不阻塞诊断）
+    try { if (kb.recordCitations) await kb.recordCitations(kbHits.map(h => h.sourceId)) } catch {}
     await store('session', sessionId, appId, { sessionId }, { ...asResult(parsed.response), kbHits, model, provider, confidence, degraded: parsed.degraded })
     return { ...asResult(parsed.response), kbHits, model, provider, confidence, refId: sessionId, degraded: parsed.degraded }
   }
@@ -150,6 +154,8 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const parsed = parseModelOutput(content)
     const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
     const kbHits = mapKbHits(kbResults)
+    // 质量闭环：best-effort 记录 AI 引用（仅统计已治理 Article，不阻塞诊断）
+    try { if (kb.recordCitations) await kb.recordCitations(kbHits.map(h => h.sourceId)) } catch {}
     await store('release', releaseName, appId, { releaseName }, { ...asResult(parsed.response), kbHits, model, provider, confidence, degraded: parsed.degraded })
     return { ...asResult(parsed.response), kbHits, model, provider, confidence, refId: releaseName, degraded: parsed.degraded }
   }
@@ -175,6 +181,8 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     const parsed = parseModelOutput(content)
     const confidence = parsed.degraded ? null : avgConfidence(parsed.response)
     const kbHits = mapKbHits(kbResults)
+    // 质量闭环：best-effort 记录 AI 引用（仅统计已治理 Article，不阻塞诊断）
+    try { if (kb.recordCitations) await kb.recordCitations(kbHits.map(h => h.sourceId)) } catch {}
     await store('error', String(refId), appId, { issueId, errorText: errorText?.slice(0, 500) }, { ...asResult(parsed.response), kbHits, model, provider, confidence, degraded: parsed.degraded })
     const out = { ...asResult(parsed.response), kbHits, model, provider, confidence, refId: String(refId), degraded: parsed.degraded }
     if (issue) out.issue = issue.fingerprint
