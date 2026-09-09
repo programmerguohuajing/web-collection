@@ -563,6 +563,11 @@ test('FE 一致性：路由 / 导航 / 页面文件 / 后端接口 四方对齐'
   assert.ok(/views\/insight\/retention\/index\.vue/.test(router), '路由组件需指向留存页面')
   assert.ok(/path:\s*'\/retention'/.test(layout), '侧边导航需含 /retention')
   assert.ok(/app\.get\('\/api\/analytics\/retention'/.test(apiIndex), '后端需注册 /api/analytics/retention')
+  // 生产域名指向 Cloudflare Worker/D1：worker 缺路由会直接返回 404 'not found'（本次线上缺陷根因），
+  // 故双端必须同路径注册，聚合逻辑同源 packages/retention.js。
+  const worker = read('cloudflare/worker.js')
+  assert.ok(/path === '\/api\/analytics\/retention'/.test(worker), 'Cloudflare Worker 需注册 /api/analytics/retention')
+  assert.ok(/packages\/retention\.js/.test(worker), 'Worker 需复用 packages/retention.js，避免双端口径漂移')
 
   const page = read('apps/web/src/views/insight/retention/index.vue')
   assert.ok(page.includes('/api/analytics/retention'), '页面请求路径需与后端一致')

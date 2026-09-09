@@ -13,6 +13,8 @@ import { computeGoodRatio, computeBurnRate, sloStatus, evaluateMultiWindowBurnRa
 import { evaluateProbe, normalizeCheckInput, validateProbeUrl, BODY_SNIPPET_LIMIT, TICK_BATCH_LIMIT } from '../packages/synthetic.js'
 import { mapSentryIssue, mapSentryIssues } from '../packages/sentry-import.js'
 import { keyFieldsOf } from '../packages/event-keyfields.js'
+// Next Horizon A1：留存/同期群聚合逻辑与 Node/PostgreSQL 端同源（纯函数，无运行时依赖）
+import { buildRetentionReport, RETENTION_DAY_MS } from '../packages/retention.js'
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
@@ -722,6 +724,9 @@ async function adminApi(request, env, url) {
   // PRD 06 页面参与度
   if (path === '/api/analytics/engagement') return engagementList(env, url)
   if (path === '/api/analytics/engagement/detail') return engagementDetail(env, url, auth)
+  // Next Horizon A1 · 留存 / 同期群分析（镜像 apps/api services/retention-service.js：
+  // 同路径、同 JSON 契约，聚合逻辑同源 packages/retention.js，仅取数 SQL 用 D1/SQLite 方言）
+  if (path === '/api/analytics/retention') return retentionList(env, url)
   if (path === '/api/analytics/api-health') return apiHealth(env, url)
   // PRD 07 数据访问等级
   // PRD 07 数据访问等级（D2 FR-9 扩展：已登录取 auth.level，匿名回落全局等级，前端不破）
@@ -3347,6 +3352,31 @@ async function engagementDetail(env,url,auth){
     compare={a:aggEngage(((await fetchLeaveRows(env,url.searchParams.get('appId')||'',Number(url.searchParams.get('compareStart')),Number(url.searchParams.get('compareEnd')))).results).filter(r=>(r.path||'/')===path)),b:aggEngage(rows)}
   }
   return json(lvl(env,{path,sampleSize:rows.length,sufficientSample:rows.length>=30,distribution,scrollFunnel,summary:aggEngage(rows),compare},auth))
+}
+
+// Next Horizon A1 · 留存 / 同期群分析（D1 版本）
+// 与 Node/PostgreSQL 端语义一致（同口径、同响应结构），差异仅两处：
+//   1. 日切表达式：PG 的 (ts / 86400000)::integer → D1 的 cast(ts / 86400000 as integer)
+//      （SQLite 整数除法对非负 ts 等价于 floor，与 PG integer 除法同结果）。
+//   2. (uid, day) 去重下推到 SQL group by：把「每次 PV 一行」压成「每用户每日一行」，
+//      显著减少 D1 返回行数；buildRetentionReport 对重复行幂等，聚合结果不变。
+// 聚合本身不在此处实现，统一走 packages/retention.js，保证两端数字零漂移。
+function fetchRetentionRows(env,appId,start,end){
+  const parts=["type='behavior'","name='pv'",'ts>=?','ts<=?'],values=[start,end]
+  if(appId){parts.push('app_id=?');values.push(appId)}
+  return env.DB.prepare(`select coalesce(nullif(user_id,''), nullif(device_id,''), session_id) as uid,
+    cast(ts / ${RETENTION_DAY_MS} as integer) as day
+    from events where ${parts.join(' and ')} group by uid, day`).bind(...values).all()
+}
+function retentionList(env,url){
+  const p=url.searchParams,now=Date.now()
+  // 参数语义对齐 Node filters()：非法/缺省回落最近 30 天
+  const start=Number(p.get('startTime'))||now-30*RETENTION_DAY_MS,end=Number(p.get('endTime'))||now
+  const appId=clip(p.get('appId')||'',64)
+  // 分页默认值对齐 Node filters()（page=1、pageSize=10；上限同为 100）
+  return fetchRetentionRows(env,appId,start,end).then(res=>json(buildRetentionReport(res.results||[],{
+    startTime:start,endTime:end,appId,offsets:p.get('offsets')||'',page:p.get('page')||1,pageSize:p.get('pageSize')||10
+  })))
 }
 
 // PRD 07 成员管理
