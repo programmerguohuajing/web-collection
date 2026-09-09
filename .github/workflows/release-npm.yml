@@ -30,8 +30,11 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install pnpm v7
-        run: npm install -g pnpm@7
+      # 必须与仓库 packageManager(pnpm@11.7.0) 对齐：lockfile 为 v9 格式，
+      # pnpm@7(v6) 无法正确校验改过依赖的包（如 sdk-react-native 的 ^0.5.0），
+      # frozen-lockfile 安装会报 ERR_PNPM_OUTDATED_LOCKFILE。
+      - name: Install pnpm (match packageManager 11.7.0)
+        run: npm install -g pnpm@11.7.0
 
       - name: Install SDK dependencies (package-only)
         run: pnpm --filter @web-collection/sdk install --workspace-root=false
