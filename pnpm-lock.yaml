@@ -113,6 +113,13 @@ importers:
       '@web-collection/sdk':
         specifier: '>=0.3.0'
         version: 0.4.0(react@19.2.8)
+    devDependencies:
+      terser:
+        specifier: ^5.49.0
+        version: 5.49.0
+      vite:
+        specifier: ^6.3.5
+        version: 6.4.3(@types/node@26.1.0)(terser@5.49.0)
 
   packages/sdk-react-native:
     dependencies:
