@@ -23,7 +23,7 @@
   },
   "dependencies": {},
   "peerDependencies": {
-    "@web-collection/sdk": "^0.4.0",
+    "@web-collection/sdk": "^0.5.0",
     "react-native": ">=0.72.0",
     "react": ">=16.8.0",
     "@react-native-async-storage/async-storage": ">=1.17.0",
