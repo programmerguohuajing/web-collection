@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api, pageLoading, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 import KpiGrid from '../../../components/KpiGrid.vue'
@@ -10,12 +10,11 @@ import MiniLineChart from '../../../components/MiniLineChart.vue'
 /**
  * API 健康视图（Next Horizon E2）。
  * 数据源复用已有 fetch/xhr 性能事件（/api/analytics/api-health），不新增任何采集。
+ * 时间范围统一沿用顶部全局筛选（store.range），页面内不再提供第二套时间选择器。
  * 表格列溢出一律使用 OverflowTip（禁用原生 show-overflow-tooltip）。
  */
 const store = useFilterStore()
 
-const RANGE_PRESETS = [1, 6, 24, 168, 720]
-const rangeHours = ref(24)
 const endpoints = ref([])
 const total = ref(0)
 const loading = ref(false)
@@ -26,19 +25,12 @@ const activeEndpoint = ref('')
 const series = ref([])
 const seriesLoading = ref(false)
 
-/** 当前全局时间范围对应的小时数；0 表示未限定时间（全部时间）。 */
-function currentHours() {
+/** 当前全局时间范围的可读描述（仅展示，页面内不提供独立时间选择器）。 */
+const rangeLabel = computed(() => {
   const [start, end] = store.range || []
-  return start && end ? Math.max(1, Math.round((end - start) / 3600000)) : 0
-}
-
-const rangeOptions = computed(() => {
-  const hours = currentHours()
-  const values = new Set([0, ...RANGE_PRESETS, hours])
-  return [...values].sort((a, b) => a - b).map(value => ({
-    value,
-    label: value === 0 ? '全部时间' : value < 24 ? `近 ${value} 小时` : `近 ${Math.round(value / 24)} 天`
-  }))
+  if (!start || !end) return '全部时间'
+  const hours = Math.max(1, Math.round((end - start) / 3600000))
+  return hours < 24 ? `近 ${hours} 小时` : `近 ${Math.round(hours / 24)} 天`
 })
 
 const filtered = computed(() => {
@@ -127,12 +119,6 @@ async function openDetail(row) {
   }
 }
 
-function applyRange(hours) {
-  rangeHours.value = hours
-  store.range = hours ? [Date.now() - hours * 3600000, Date.now()] : []
-  load()
-}
-
 /** 状态码分布对象 → 按次数降序的标签数组（0 视为未采集）。 */
 function statusList(row) {
   const codes = row?.statusCodes || {}
@@ -161,20 +147,15 @@ function errorRateType(rate) {
   return 'success'
 }
 
-onMounted(() => {
-  rangeHours.value = currentHours()
-})
-
+// 顶部全局条件（含时间范围）切换时 refreshVersion 自增，统一在此重载。
 watch(refreshVersion, () => load(), { immediate: true })
 </script>
 
 <template>
   <div class="api-health-toolbar">
-    <el-select v-model="rangeHours" size="small" class="api-health-range" aria-label="时间范围" @change="applyRange">
-      <el-option v-for="option in rangeOptions" :key="option.value" :label="option.label" :value="option.value" />
-    </el-select>
     <el-input v-model="keyword" size="small" clearable placeholder="按端点关键字过滤" class="api-health-keyword" />
     <el-button size="small" type="primary" :loading="loading" @click="load">刷新</el-button>
+    <span class="api-health-range-hint">时间范围沿用顶部全局筛选 · {{ rangeLabel }}</span>
   </div>
 
   <el-alert v-if="loadError" class="table-error" type="error" :title="loadError" show-icon :closable="false">
@@ -266,8 +247,8 @@ watch(refreshVersion, () => load(), { immediate: true })
 
 <style scoped>
 .api-health-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
-.api-health-range { width: 140px; }
 .api-health-keyword { width: 240px; }
+.api-health-range-hint { color: var(--c-text-muted); font-size: 12px; }
 .table-error { margin-bottom: 12px; }
 .endpoint-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .status-cell { display: flex; flex-wrap: wrap; gap: 5px; }
