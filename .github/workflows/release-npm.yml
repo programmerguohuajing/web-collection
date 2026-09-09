@@ -11,6 +11,8 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  # 允许在 Actions 标签页手动触发「Run workflow」，作为 tag 重建不一定重跑时的兜底。
+  workflow_dispatch:
 
 permissions:
   contents: write   # 创建 GitHub Release / 上传 asset 需要写权限
@@ -27,12 +29,14 @@ jobs:
       - name: Setup Node and pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'   # pnpm@11.7.0 要求 Node >=22.13 且依赖 node:sqlite；Node 20 会直接崩溃
           registry-url: 'https://registry.npmjs.org'
 
       # 必须与仓库 packageManager(pnpm@11.7.0) 对齐：lockfile 为 v9 格式，
       # pnpm@7(v6) 无法正确校验改过依赖的包（如 sdk-react-native 的 ^0.5.0），
       # frozen-lockfile 安装会报 ERR_PNPM_OUTDATED_LOCKFILE。
+      # 同时 Node 必须 >=22.13（见上方 node-version），否则 pnpm 启动即报
+      # ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite。
       - name: Install pnpm (match packageManager 11.7.0)
         run: npm install -g pnpm@11.7.0
 
