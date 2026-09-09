@@ -248,6 +248,8 @@ watch(refreshVersion, () => load(), { immediate: true })
 <style scoped>
 .api-health-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
 .api-health-keyword { width: 240px; }
+.api-health-keyword :deep(.el-input__wrapper) { height: 32px; padding: 0 11px; }
+.api-health-keyword :deep(.el-input__inner) { height: 30px; line-height: 30px; }
 .api-health-range-hint { color: var(--c-text-muted); font-size: 12px; }
 .table-error { margin-bottom: 12px; }
 .endpoint-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
