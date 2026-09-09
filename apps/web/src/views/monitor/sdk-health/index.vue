@@ -465,6 +465,8 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
 .sdk-health-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
 .sdk-health-toolbar small { font-size: 12px; }
 .sdk-health-version { width: 260px; }
+.sdk-health-version :deep(.el-select__wrapper) { min-height: 32px; padding: 0 11px; }
+.sdk-health-version :deep(.el-select__placeholder) { line-height: 30px; }
 .table-error { margin-bottom: 12px; }
 .ingestion-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 18px; }
 .metric { display: grid; gap: 4px; min-width: 0; }
