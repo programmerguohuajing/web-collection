@@ -146,6 +146,112 @@ async function diagnostics(request, env, url) {
   })
 }
 
+// ===== Next Horizon E4/E1 补齐：SDK 端交付自监控 + SDK 体积开销 =====
+// 这两块此前在 sdk-health 页只有「暂缺能力」占位：SelfMonitor 统计只存在浏览器内存（#1），
+// SDK 体积只有构建产物侧数据（#2）。这里补齐后端存储与查询，使前端可真实展示（无数据时优雅空态）。
+
+/** #1：SDK 端自监控快照上报（认证同 /api/collect：appId + x-app-key）。 */
+async function reportSdkMonitoring(request, env) {
+  const url = new URL(request.url)
+  const appId = clip(url.searchParams.get('appId') || '', 64)
+  if (!appId) return new Response('missing appId', { status: 400 })
+  const key = request.headers.get('x-app-key') || ''
+  const app = await env.DB.prepare('select collect_key_hash from applications where app_id=?').bind(appId).first().catch(() => null)
+  if (app?.collect_key_hash && await sha256(key) !== app.collect_key_hash) return new Response('bad app key', { status: 401 })
+  let body
+  try { body = await request.json() } catch { return new Response('invalid json', { status: 400 }) }
+  if (!body || typeof body !== 'object') return new Response('invalid body', { status: 400 })
+  const now = Date.now()
+  const num = v => (Number.isFinite(Number(v)) ? Math.max(0, Math.floor(Number(v))) : 0)
+  const sessionId = clip(String(body.sessionId || ''), 64)
+  const sdkVersion = clip(String(body.sdkVersion || ''), 32)
+  const health = clip(String(body.health || ''), 16)
+  const payload = typeof body.payload === 'object' && body.payload ? JSON.stringify(body.payload).slice(0, 4000) : null
+  await env.DB.prepare(
+    'insert into sdk_monitoring(app_id,sdk_version,session_id,ts,sent,dropped,retried,timeouts,rate_limited,queue_full,storage_quota,health,payload) values(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+  ).bind(
+    appId, sdkVersion || null, sessionId || null, now,
+    num(body.sent), num(body.dropped), num(body.retried), num(body.timeouts),
+    num(body.rateLimited), num(body.queueFull), num(body.storageQuota),
+    health || null, payload
+  ).run().catch(err => { throw err })
+  return json({ ok: true, ts: now })
+}
+
+/** #1：读取某 appId 在窗口内的自监控聚合（无数据时返回空聚合，前端据此显示「待 SDK 上报」）。 */
+async function getSdkMonitoring(env, url) {
+  const appId = clip(url.searchParams.get('appId') || '', 64)
+  const hours = Math.max(1, Math.min(720, Number(url.searchParams.get('hours') || 24) || 24))
+  const since = Date.now() - hours * 3600 * 1000
+  if (!appId) return json({ appId: '', windowHours: hours, since, hasData: false, totals: {}, latest: null, samples: 0 })
+  const agg = await env.DB.prepare(
+    `select count(*) as samples,
+            coalesce(sum(sent),0) as sent, coalesce(sum(dropped),0) as dropped,
+            coalesce(sum(retried),0) as retried, coalesce(sum(timeouts),0) as timeouts,
+            coalesce(sum(rate_limited),0) as rate_limited, coalesce(sum(queue_full),0) as queue_full,
+            coalesce(sum(storage_quota),0) as storage_quota, max(ts) as last_ts
+     from sdk_monitoring where app_id=? and ts>=?`
+  ).bind(appId, since).first().catch(() => null)
+  if (!agg || Number(agg.samples) === 0) {
+    return json({ appId, windowHours: hours, since, hasData: false, totals: {}, latest: null, samples: 0 })
+  }
+  const latest = await env.DB.prepare(
+    'select sdk_version, health, ts from sdk_monitoring where app_id=? and ts>=? order by ts desc limit 1'
+  ).bind(appId, since).first().catch(() => null)
+  return json({
+    appId,
+    windowHours: hours,
+    since,
+    hasData: true,
+    samples: Number(agg.samples),
+    totals: {
+      sent: Number(agg.sent), dropped: Number(agg.dropped), retried: Number(agg.retried),
+      timeouts: Number(agg.timeouts), rateLimited: Number(agg.rate_limited),
+      queueFull: Number(agg.queue_full), storageQuota: Number(agg.storage_quota)
+    },
+    latest: latest ? { sdkVersion: latest.sdk_version, health: latest.health, ts: Number(latest.ts) } : null
+  })
+}
+
+/** #2：SDK 体积开销上报（CI 在发版步骤调用；体积数据非敏感，仅做轻量 CI token 校验）。 */
+async function reportSdkSize(request, env) {
+  const ciToken = request.headers.get('x-ci-token') || ''
+  const expect = env.CI_REPORT_TOKEN || ''
+  if (expect && ciToken !== expect) return new Response('bad ci token', { status: 401 })
+  let body
+  try { body = await request.json() } catch { return new Response('invalid json', { status: 400 }) }
+  if (!body || typeof body !== 'object' || !body.version) return new Response('missing version', { status: 400 })
+  const num = v => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : null)
+  const version = clip(String(body.version), 32)
+  const runtimeMem = typeof body.runtimeMem === 'object' && body.runtimeMem ? JSON.stringify(body.runtimeMem).slice(0, 2000) : null
+  await env.DB.prepare(
+    'insert into sdk_size(version,gz_bytes,raw_bytes,min_bytes,runtime_mem,reported_at,ci_run) values(?,?,?,?,?,?,?)'
+  ).bind(
+    version, num(body.gzBytes), num(body.rawBytes), num(body.minBytes), runtimeMem, Date.now(), clip(String(body.ciRun || ''), 64) || null
+  ).run().catch(err => { throw err })
+  return json({ ok: true })
+}
+
+/** #2：读取体积开销（按版本；不传 version 返回各版本最新一条）。 */
+async function getSdkSize(env, url) {
+  const version = clip(url.searchParams.get('version') || '', 32)
+  const rows = version
+    ? await env.DB.prepare('select version,gz_bytes,raw_bytes,min_bytes,runtime_mem,reported_at,ci_run from sdk_size where version=? order by reported_at desc limit 1').bind(version).all().catch(() => null)
+    : await env.DB.prepare('select version,gz_bytes,raw_bytes,min_bytes,runtime_mem,reported_at,ci_run from sdk_size order by reported_at desc').all().catch(() => null)
+  const list = (rows?.results || []).map(r => ({
+    version: r.version,
+    gzBytes: r.gz_bytes != null ? Number(r.gz_bytes) : null,
+    rawBytes: r.raw_bytes != null ? Number(r.raw_bytes) : null,
+    minBytes: r.min_bytes != null ? Number(r.min_bytes) : null,
+    runtimeMem: r.runtime_mem ? safeParse(r.runtime_mem) : null,
+    reportedAt: Number(r.reported_at),
+    ciRun: r.ci_run || null
+  }))
+  return json({ hasData: list.length > 0, list })
+}
+
+function safeParse(s) { try { return JSON.parse(s) } catch { return null } }
+
 // 入库失败自动告警：复用 alert_history，使失败在现有告警 UI / 渠道可见（防静默）。
 // 同隔离内 60s 仅写一次，避免失败风暴刷爆 alert_history / D1；跨隔离靠 D1 cooldown 去重。
 let ingestionAlertedAt = 0
@@ -178,6 +284,10 @@ export default {
       else if (url.pathname === '/api/collect.gif') response = await collectGif(url, env)
       else if (url.pathname === '/api/monitoring/ingestion') response = json(await ingestionMonitorSnapshot(env))
       else if (url.pathname === '/api/diagnostics') response = await diagnostics(request, env, url)
+      else if (url.pathname === '/api/monitoring/sdk' && request.method === 'POST') response = await reportSdkMonitoring(request, env)
+      else if (url.pathname === '/api/monitoring/sdk') response = await getSdkMonitoring(env, url)
+      else if (url.pathname === '/api/sdk-size' && request.method === 'POST') response = await reportSdkSize(request, env)
+      else if (url.pathname === '/api/sdk-size') response = await getSdkSize(env, url)
       else if (url.pathname.startsWith('/api/dashboards/shared/')) response = await publicDashboard(request, env, url)
       else if (url.pathname.startsWith('/api/ai/')) response = await proxyAi(request, env, url)
       else if (url.pathname.startsWith('/api/')) response = await adminApi(request, env, url)

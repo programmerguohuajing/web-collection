@@ -23,6 +23,7 @@ import { listRetention } from './services/retention-service.js'
 import { listDataAccessAudit, listMembers, resolveAccessLevel, saveMember, saveMemberLevel } from './services/access-service.js'
 import { changePassword, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
 import { listSessions, revokeSession } from './services/session-service.js'
+import { getSdkMonitoring, getSdkSize, reportSdkMonitoring, reportSdkSize } from './services/sdk-health-service.js'
 import { acceptInvitationService, assignApplication, changeMemberLevel, changeMemberRole, createInvitation, createTeam, getTeam, listInvitations, listTeamAudit, listTeamMembers, migrateMembersToDefaultTeam, removeMember, revokeInvitation, updateTeam } from './services/team-service.js'
 import { identityMiddleware, isAccountsEnabled } from './auth-middleware.js'
 import { resolveCollectConfig } from '../../../packages/collect-config.js'
@@ -414,6 +415,32 @@ app.get('/api/synthetic/:id/stats', async (req, res, next) => {
 })
 app.get('/api/synthetic/:id', async (req, res, next) => { guardSynthetic(res, next, async () => { res.json(await getCheck(req.params.id, req.auth)) }) })
 app.delete('/api/synthetic/:id', async (req, res, next) => { guardSynthetic(res, next, async () => { res.json(await deleteCheck(req.params.id, req.auth)) }) })
+
+// ==================== Next Horizon E4/E1 · SDK 端交付自监控 + SDK 体积开销（与 Worker 同构） ====================
+app.post('/api/monitoring/sdk', async (req, res, next) => {
+  try {
+    const appId = String(req.query.appId || '').slice(0, 64)
+    res.json(await reportSdkMonitoring({ appId, appKey: req.headers['x-app-key'] || '', body: req.body }))
+  } catch (e) { next(e) }
+})
+app.get('/api/monitoring/sdk', async (req, res, next) => {
+  try {
+    const appId = String(req.query.appId || '').slice(0, 64)
+    const hours = Number(req.query.hours) || 24
+    res.json(await getSdkMonitoring({ appId, hours }))
+  } catch (e) { next(e) }
+})
+app.post('/api/sdk-size', async (req, res, next) => {
+  try {
+    res.json(await reportSdkSize({ ciToken: req.headers['x-ci-token'] || '', expectToken: process.env.CI_REPORT_TOKEN || '', body: req.body }))
+  } catch (e) { next(e) }
+})
+app.get('/api/sdk-size', async (req, res, next) => {
+  try {
+    const version = String(req.query.version || '').slice(0, 32)
+    res.json(await getSdkSize({ version }))
+  } catch (e) { next(e) }
+})
 
 // ==================== D1 · 数据主体权利 DSR（查询/导出/擦除，PRD 13） ====================
 // 能力位门禁：dsr=false 返回 503（Node 恒 true，Worker 走 DSR_ENABLED=1 env 门禁）；

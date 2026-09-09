@@ -39,6 +39,37 @@ jobs:
       - name: Build SDK
         run: pnpm --filter @web-collection/sdk build
 
+      # Next Horizon E4/E1 补齐：发版时把 SDK 体积（gzip / raw / min）上报到 /api/sdk-size，
+      # 使 sdk-health 页「SDK 体积开销」卡片在发版后自动有真实数据。
+      # 幂等且 best-effort：失败不阻断发版；worker 未配置 CI_REPORT_TOKEN 时该接口开放写入。
+      - name: Report SDK size to monitoring endpoint
+        if: always()
+        continue-on-error: true
+        env:
+          SDK_SIZE_ENDPOINT: https://web-collection.jingguohua.cc.cd/api/sdk-size
+          SDK_SIZE_REPORT_TOKEN: ${{ secrets.SDK_SIZE_REPORT_TOKEN }}
+        shell: bash
+        run: |
+          export VERSION="${{ steps.target.outputs.package_version }}"
+          node -e '
+            const fs=require("fs"); const zlib=require("zlib"); const path=require("path");
+            const dir="packages/sdk/dist";
+            const files=fs.readdirSync(dir);
+            const iife=files.find(f=>f.endsWith(".iife.js") && !f.endsWith(".min.js"));
+            if(!iife){ console.log("no iife bundle found, skip"); process.exit(0); }
+            const raw=fs.readFileSync(path.join(dir,iife));
+            const gz=zlib.gzipSync(raw).length;
+            const minName=files.find(f=>f.endsWith(".iife.min.js"));
+            const min=minName?fs.readFileSync(path.join(dir,minName)).length:null;
+            const body=JSON.stringify({ version:process.env.VERSION, gzBytes:gz, rawBytes:raw.length, minBytes:min, ciRun:process.env.GITHUB_RUN_ID });
+            const token=process.env.SDK_SIZE_REPORT_TOKEN||"";
+            const headers={"content-type":"application/json"};
+            if(token) headers["x-ci-token"]=token;
+            fetch(process.env.SDK_SIZE_ENDPOINT,{method:"POST",headers,body})
+              .then(r=>console.log("reported SDK size, http",r.status))
+              .catch(e=>{ console.log("report failed:",e.message); process.exit(0); });
+          '
+
       # tag 必须携带版本号（vX.Y.Z），且必须与 package.json 的 version 一致。
       - name: Verify tag matches package version
         id: target

@@ -714,6 +714,44 @@ export function createEys(options = {}) {
     const pollMs = Math.max(5000, Math.min(cfg.diagnosticsPollMs, 300000))
     diagnosticTimer = setInterval(pollServerDiagnostics, pollMs)
   }
+  // E4/E1 补齐：周期上报 SelfMonitor 快照到 /api/monitoring/sdk，使 sdk-health 页「SDK 端交付指标」真实展示。
+  // 与 pollServerDiagnostics 同生命周期：仅浏览器、限频、失败静默（不污染主流程、不放大流量）。
+  const MONITORING_REPORT_MS = 300000
+  let monitoringTimer = null
+  async function reportSdkMonitoring() {
+    if (disposed || !fetchImpl || !cfg.appId) return
+    const base = String(cfg.endpoint || '').replace(/\/$/, '')
+    if (!base) return
+    const snap = selfMonitor.snapshot()
+    try {
+      const ctrl = new AbortController()
+      const to = setTimeout(() => ctrl.abort(), 8000)
+      await fetchImpl(`${base}/api/monitoring/sdk?appId=${encodeURIComponent(cfg.appId)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-app-key': cfg.collectKey || '' },
+        body: JSON.stringify({
+          sdkVersion: SDK_VERSION,
+          sessionId: snap.sessionId || undefined,
+          sent: snap.sent,
+          dropped: snap.dropped,
+          retried: snap.retried,
+          timeouts: snap.timeouts,
+          rateLimited: snap.rateLimited,
+          queueFull: snap.queueFull,
+          storageQuota: snap.storageQuota,
+          health: snap.health,
+          payload: { since: snap.since }
+        }),
+        signal: ctrl.signal
+      }).catch(() => null)
+      clearTimeout(to)
+    } catch (_) {
+      // 上报失败不影响主流程（断网/服务端不可用时静默）。
+    }
+  }
+  if (fetchImpl && typeof window !== 'undefined') {
+    monitoringTimer = setInterval(reportSdkMonitoring, MONITORING_REPORT_MS)
+  }
   addEventListener('pagehide', () => {
     finalizePerformance()
     currentSegmentEndReason = 'page_unload'
@@ -1467,6 +1505,7 @@ export function createEys(options = {}) {
     disposed = true
     clearInterval(timer)
     if (diagnosticTimer) clearInterval(diagnosticTimer)
+    if (monitoringTimer) clearInterval(monitoringTimer)
     clearTimeout(replayStartTimer)
     clearTimeout(throttleTimer)
     throttleTimer = null

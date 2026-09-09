@@ -10,13 +10,13 @@ import OverflowTip from '../../../components/OverflowTip.vue'
  *
  * 回答两个问题：① 我的 SDK 注入是否健康？② 采集是否丢数据？
  *
- * 数据来源（全部为后端真实已有接口，无任何模拟数据）：
- * - `/api/monitoring/ingestion`：服务端采集健康（仅 Cloudflare Worker 提供，Node API 尚无该路由）。
- * - `/api/releases/quality?dim=sdk`：按 SDK 版本维度的接入健康（会话/错误/最后上报/上报延迟）。
+ * 数据来源（全部为后端真实接口，无模拟数据）：
+ * - `/api/monitoring/ingestion`：服务端采集健康（仅 Cloudflare Worker 提供）。
+ * - `/api/releases/quality?dim=sdk`：按 SDK 版本维度的接入健康。
  * - `/api/collect-config`（命中预览）+ `/api/collect-config/stats`：采集配置与配置版本分布。
- *
- * 后端没有的数据（SDK 端 sent/dropped/retried、SDK 体积开销）不编造，
- * 在「暂缺能力」区块显式标注并说明补齐成本。
+ * - `/api/diagnostics`：真实入库事实（派生「接入配置有效性」）。
+ * - `/api/monitoring/sdk`：SDK 端交付自监控聚合（需 SDK 发版后才有数据，无数据时优雅空态）。
+ * - `/api/sdk-size`：SDK 体积开销（需 CI 发版上报后才有数据，无数据时优雅空态）。
  * 表格列溢出一律使用 OverflowTip（禁用原生 show-overflow-tooltip）。
  */
 const store = useFilterStore()
@@ -34,6 +34,15 @@ const ingestionError = ref('')
 const configPreview = ref(null)
 const configError = ref('')
 const configStats = ref(null)
+/** #1 SDK 端交付自监控聚合（Worker /api/monitoring/sdk，需 SDK 发版后才有数据）。 */
+const sdkMonitoring = ref(null)
+const sdkMonitoringError = ref('')
+/** #2 SDK 体积开销（Worker /api/sdk-size，需 CI 发版上报后才有数据）。 */
+const sdkSize = ref(null)
+const sdkSizeError = ref('')
+/** #3 接入配置有效性（复用 Worker /api/diagnostics 真实入库事实派生）。 */
+const configValidity = ref(null)
+const configValidityError = ref('')
 const selectedVersion = ref('')
 /** 顶部未选应用时的只读兜底（不反写全局筛选，避免污染顶栏）。 */
 const fallbackAppId = ref('')
@@ -255,6 +264,48 @@ async function loadConfigStats() {
   configStats.value = await api('/api/collect-config/stats', { requestKey: 'sdk-health:config-stats' })
 }
 
+/** #1：读取 SDK 端交付自监控聚合（无数据时 hasData=false，前端显示「待 SDK 上报」）。 */
+async function loadSdkMonitoring() {
+  const appId = activeAppId.value
+  if (!appId) { sdkMonitoring.value = null; return }
+  const data = await api(`/api/monitoring/sdk?appId=${encodeURIComponent(appId)}&hours=24`, { requestKey: 'sdk-health:sdk-monitoring' })
+  sdkMonitoring.value = data && typeof data === 'object' ? data : null
+}
+
+/** #2：读取 SDK 体积开销（无数据时 hasData=false，前端显示「CI 未上报」）。 */
+async function loadSdkSize() {
+  const data = await api('/api/sdk-size', { requestKey: 'sdk-health:sdk-size' })
+  sdkSize.value = data && typeof data === 'object' ? data : null
+}
+
+/** #3：接入配置有效性——复用 /api/diagnostics 的真实入库事实派生（无需独立校验接口）。 */
+async function loadConfigValidity() {
+  const appId = activeAppId.value
+  if (!appId) { configValidity.value = null; return }
+  const data = await api(`/api/diagnostics?appId=${encodeURIComponent(appId)}`, { requestKey: 'sdk-health:config-validity' })
+  configValidity.value = data && typeof data === 'object' ? data : null
+}
+
+/** 相对时间（距现在），用于「最后上报 / 体积上报时间」。 */
+function relTime(ts) {
+  if (ts == null) return '—'
+  const diff = Date.now() - Number(ts)
+  if (diff < 0) return '刚刚'
+  const m = Math.floor(diff / 60000)
+  if (m < 1) return '刚刚'
+  if (m < 60) return `${m} 分钟前`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} 小时前`
+  return `${Math.floor(h / 24)} 天前`
+}
+
+function formatBytes(n) {
+  if (n == null) return '—'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(2)} MB`
+}
+
 async function load() {
   loading.value = true
   pageLoading.value = true
@@ -263,7 +314,10 @@ async function load() {
     await Promise.all([
       safe(loadQuality, message => { qualityError.value = message; sdkRows.value = [] }, 'SDK 版本健康数据加载失败'),
       safe(loadConfig, message => { configError.value = message; configPreview.value = null }, '采集配置加载失败'),
-      safe(loadConfigStats, () => { configStats.value = null }, '配置版本分布加载失败')
+      safe(loadConfigStats, () => { configStats.value = null }, '配置版本分布加载失败'),
+      safe(loadSdkMonitoring, message => { sdkMonitoringError.value = message; sdkMonitoring.value = null }, 'SDK 交付指标加载失败'),
+      safe(loadSdkSize, message => { sdkSizeError.value = message; sdkSize.value = null }, 'SDK 体积加载失败'),
+      safe(loadConfigValidity, message => { configValidityError.value = message; configValidity.value = null }, '接入有效性加载失败')
     ])
     await safe(loadIngestion, message => { ingestionError.value = message; ingestion.value = null }, '采集健康接口暂不可达')
   } finally {
@@ -434,29 +488,74 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
 
   <el-card shadow="never" class="panel section">
     <template #header>
-      <div class="panel-head"><div><h2>暂缺能力（未做占位数据）</h2><small>需 SDK / 后端补齐后才会真实展示</small></div></div>
+      <div class="panel-head">
+        <div><h2>接入配置有效性</h2><small>基于真实入库事实派生（复用 /api/diagnostics）</small></div>
+      </div>
     </template>
-    <el-alert class="note" type="warning" :closable="false" show-icon title="以下指标后端当前没有任何数据，页面不做数字占位">
-      <template #default>
-        <ul class="gap-list">
-          <li>
-            <b>SDK 端交付指标（sent / dropped / retried / timeout / queueFull）</b>：
-            由 <code>packages/sdk/src/transport/self-monitor.js</code> 的 <code>SelfMonitor</code> 统计，但只存在于浏览器内存
-            （<code>sdk.monitoring()</code> / <code>window.__EYS_MONITOR__</code>），<b>未上报后端</b>，后端无存储也无查询接口。
-            补齐约 1.5 人日：SDK 新增自监控事件上报并限频（0.5d）+ 后端表/查询接口（0.5d）+ 本页接入（0.5d），
-            另需评估自监控事件自身的采样与流量放大。
-          </li>
-          <li>
-            <b>SDK 体积开销（包体 / gzip / 运行时内存）</b>：属于构建产物侧数据，后端无任何采集与存储。
-            补齐约 1.5 人日：CI 产出 size 报告并上报（1d）+ 本页展示（0.5d）。
-          </li>
-          <li>
-            <b>接入配置强校验（appId / collectKey 合法性、SDK 与平台匹配）</b>：后端仅在 <code>/api/collect</code> 时校验并返回 401，
-            没有独立的校验接口与健康记录，因此本区块展示的是「当前命中的远程采集配置」这一真实替代数据。
-            严格校验补齐约 0.5 人日（新增校验接口或聚合 collect 401 计数）。
-          </li>
-        </ul>
-      </template>
+    <el-alert v-if="configValidityError" class="table-error" type="warning" show-icon :closable="false" :title="configValidityError" />
+    <template v-else-if="configValidity">
+      <div class="config-summary">
+        <span>应用：<b>{{ activeAppId || '-' }}</b></span>
+        <span>状态：
+          <el-tag :type="configValidity.status === 'healthy' ? 'success' : configValidity.status === 'critical' ? 'danger' : 'warning'" effect="dark">{{ { healthy: '正常入库', degraded: '降级', critical: '异常' }[configValidity.status] || configValidity.status }}</el-tag>
+        </span>
+        <span>最后入库：<b>{{ relTime(configValidity.lastEventTs) }}</b></span>
+        <span>近 1h 事件：<b>{{ configValidity.receivedLast1h ?? 0 }}</b></span>
+        <span>近 1h 入库告警：<b>{{ configValidity.ingestErrorCount ?? 0 }}</b></span>
+      </div>
+      <small class="validity-note">该判定与服务端 /api/diagnostics 一致：最后入库 &gt; 15 分钟或近 1h 有入库告警即判异常；这比「配置能否拉到」更能反映 appId / collectKey 是否真正打通。</small>
+    </template>
+    <div v-else class="empty">未选择应用，无法派生接入有效性</div>
+  </el-card>
+
+  <el-card shadow="never" class="panel section">
+    <template #header>
+      <div class="panel-head">
+        <div><h2>SDK 端交付指标</h2><small>sent / dropped / retried / timeout / queueFull（SelfMonitor 快照上报）</small></div>
+      </div>
+    </template>
+    <el-alert v-if="sdkMonitoringError" class="table-error" type="warning" show-icon :closable="false" :title="sdkMonitoringError" />
+    <template v-else-if="sdkMonitoring && sdkMonitoring.hasData">
+      <div class="config-summary">
+        <span>应用：<b>{{ sdkMonitoring.appId }}</b></span>
+        <span>统计窗口：<b>近 {{ sdkMonitoring.windowHours }} 小时</b></span>
+        <span>上报样本：<b>{{ sdkMonitoring.samples }}</b></span>
+        <span v-if="sdkMonitoring.latest">最近上报：<b>{{ relTime(sdkMonitoring.latest.ts) }}</b>（{{ sdkMonitoring.latest.sdkVersion || '未知版本' }} / {{ { healthy: '健康', degraded: '降级', critical: '严重' }[sdkMonitoring.latest.health] || sdkMonitoring.latest.health }}）</span>
+      </div>
+      <div class="ingestion-metrics">
+        <div class="metric"><span class="metric-k">成功交付 sent</span><span class="metric-v">{{ sdkMonitoring.totals.sent }}</span></div>
+        <div class="metric"><span class="metric-k">永久丢弃 dropped</span><span class="metric-v" :class="sdkMonitoring.totals.dropped > 0 ? 'danger' : ''">{{ sdkMonitoring.totals.dropped }}</span></div>
+        <div class="metric"><span class="metric-k">重试中 retried</span><span class="metric-v">{{ sdkMonitoring.totals.retried }}</span></div>
+        <div class="metric"><span class="metric-k">超时 timeouts</span><span class="metric-v" :class="sdkMonitoring.totals.timeouts > 0 ? 'danger' : ''">{{ sdkMonitoring.totals.timeouts }}</span></div>
+        <div class="metric"><span class="metric-k">限流 429 rateLimited</span><span class="metric-v" :class="sdkMonitoring.totals.rateLimited > 0 ? 'danger' : ''">{{ sdkMonitoring.totals.rateLimited }}</span></div>
+        <div class="metric"><span class="metric-k">队列溢出 queueFull</span><span class="metric-v" :class="sdkMonitoring.totals.queueFull > 0 ? 'danger' : ''">{{ sdkMonitoring.totals.queueFull }}</span></div>
+        <div class="metric"><span class="metric-k">存储配额失败 storageQuota</span><span class="metric-v" :class="sdkMonitoring.totals.storageQuota > 0 ? 'danger' : ''">{{ sdkMonitoring.totals.storageQuota }}</span></div>
+      </div>
+    </template>
+    <el-alert v-else class="note" type="info" :closable="false" show-icon title="待 SDK 上报">
+      <template #default>SDK 端 SelfMonitor 已统计 sent/dropped/retried 等指标，但需随下一次 SDK 发版（内置周期 beacon 上报至 <code>/api/monitoring/sdk</code>）后，此处才会显示真实数据。</template>
+    </el-alert>
+  </el-card>
+
+  <el-card shadow="never" class="panel section">
+    <template #header>
+      <div class="panel-head">
+        <div><h2>SDK 体积开销</h2><small>包体 / gzip / 运行时内存（CI 发版时上报）</small></div>
+      </div>
+    </template>
+    <el-alert v-if="sdkSizeError" class="table-error" type="warning" show-icon :closable="false" :title="sdkSizeError" />
+    <template v-else-if="sdkSize && sdkSize.hasData && sdkSize.list && sdkSize.list.length">
+      <el-table :data="sdkSize.list" size="small" border>
+        <el-table-column prop="version" label="SDK 版本" min-width="140" />
+        <el-table-column label="gzip" width="120" align="right"><template #default="{ row }"><OverflowTip :text="formatBytes(row.gzBytes)" /></template></el-table-column>
+        <el-table-column label="raw" width="120" align="right"><template #default="{ row }"><OverflowTip :text="formatBytes(row.rawBytes)" /></template></el-table-column>
+        <el-table-column label="min" width="120" align="right"><template #default="{ row }"><OverflowTip :text="formatBytes(row.minBytes)" /></template></el-table-column>
+        <el-table-column label="上报时间" width="140"><template #default="{ row }"><OverflowTip :text="relTime(row.reportedAt)" /></template></el-table-column>
+        <el-table-column label="CI 运行" min-width="160"><template #default="{ row }"><OverflowTip :text="row.ciRun || '-'" /></template></el-table-column>
+      </el-table>
+    </template>
+    <el-alert v-else class="note" type="info" :closable="false" show-icon title="CI 未上报">
+      <template #default>SDK 体积是构建产物侧数据，需发版 CI 步骤构建后上报至 <code>/api/sdk-size</code>，此处才会显示。当前无历史上报记录。</template>
     </el-alert>
   </el-card>
 </template>
@@ -484,6 +583,7 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
 .config-sub h3 { margin: 0; font-size: 14px; }
 .config-sub small { font-size: 12px; }
 .empty { padding: 12px 0; color: var(--c-text-muted); font-size: 13px; }
+.validity-note { display: block; margin-top: 10px; color: var(--c-text-muted); }
 .gap-list { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: 13px; line-height: 1.7; }
 .gap-list code { padding: 1px 4px; border-radius: 3px; background: #f2f4f7; font-size: 12px; }
 </style>
