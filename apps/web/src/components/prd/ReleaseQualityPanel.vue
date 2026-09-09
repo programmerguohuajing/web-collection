@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, queryFromFilters } from '../../dashboard.js'
 import { useFilterStore } from '../../stores/filters.js'
+import OverflowTip from '../OverflowTip.vue'
 
 const store = useFilterStore()
 const loading = ref(false)
@@ -167,7 +168,9 @@ defineExpose({ reload: load })
         <template v-if="compareResult">
           <h4 style="margin: 14px 0 8px; font-size: 13px">错误 Top10（A={{ compareForm.a }} / B={{ compareForm.b }}）</h4>
           <el-table :data="compareResult.errors" size="small" border empty-text="两版本均无错误记录">
-            <el-table-column prop="name" label="错误名" min-width="180" show-overflow-tooltip />
+            <el-table-column label="错误名" min-width="180">
+              <template #default="{ row }"><OverflowTip :text="row.name" /></template>
+            </el-table-column>
             <el-table-column label="A" width="80" align="right"><template #default="{ row }">{{ row.aCount }}</template></el-table-column>
             <el-table-column label="B" width="80" align="right"><template #default="{ row }">{{ row.bCount }}</template></el-table-column>
             <el-table-column label="差异" width="90"><template #default="{ row }"><el-tag :type="deltaTag(row).type" size="small">{{ deltaTag(row).text }}</el-tag></template></el-table-column>

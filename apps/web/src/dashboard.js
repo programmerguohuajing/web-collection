@@ -441,7 +441,9 @@ export async function api(path, options = {}) {
     }, Number(timeout))
   }
   try {
-    const res = await fetch(`${apiBase}${path}`, { ...fetchOptions, ...(signal ? { signal } : {}) })
+    // D2 账号体系：刷新令牌以 HttpOnly Cookie（eys_rt）携带，需随请求一并发送；
+    // 同源 SPA 始终携带，对既有 API Key 流程无副作用。
+    const res = await fetch(`${apiBase}${path}`, { ...fetchOptions, credentials: 'include', ...(signal ? { signal } : {}) })
     const text = await res.text()
     let body = {}
     if (text) {

@@ -543,3 +543,24 @@ button, input, textarea, select { font-family: inherit; }
 .h-top { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
 .h-act { font-weight: 650; } .h-time { color: var(--c-text-faint); font-size: 11.5px; }
 .h-diff { margin-top: 4px; padding: 8px 10px; border-radius: 8px; background: var(--c-surface-2); border: 1px solid var(--c-border-2); color: var(--c-text-muted); font-family: var(--font-mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* -------------------------------------------------------------------------
+   D4 · 白标运行时主题兜底（PRD 16）
+   以下 11 个 CSS 变量与「Style B」段完全一致的默认值。运行时 /brand.js 会通过
+   documentElement.style.setProperty 在 :root 同级（inline style）覆盖它们；当
+   /brand.js 缺失或能力位关闭时，此处兜底值确保默认主色（紫 #4f46e5）生效，
+   不会回落到 Style A 段的遗留蓝（--el-color-primary:#1769e0）。
+   ------------------------------------------------------------------------- */
+:root {
+  --c-primary: #4f46e5;
+  --c-primary-hover: #4338ca;
+  --c-primary-soft: #eef0fe;
+  --el-color-primary: var(--c-primary);
+  --el-color-primary-light-3: #818cf8;
+  --el-color-primary-light-5: #a5b4fc;
+  --el-color-primary-light-7: #c7d2fe;
+  --el-color-primary-light-8: #e0e7ff;
+  --el-color-primary-light-9: var(--c-primary-soft);
+  --el-color-primary-dark-2: var(--c-primary-hover);
+  --sh-focus: 0 0 0 3px rgba(79, 70, 229, .18);
+}

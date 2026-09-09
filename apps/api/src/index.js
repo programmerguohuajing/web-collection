@@ -13,20 +13,33 @@ import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
 import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings, updateAlertStatus } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
-import { deleteDashboard, deleteFunnel, deleteInsight, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, SPANS_HARD_LIMIT } from './services/analytics-service.js'
+import { deleteDashboard, deleteFunnel, deleteInsight, getApiHealth, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, getSharedDashboard, shareDashboard, unshareDashboard, SPANS_HARD_LIMIT } from './services/analytics-service.js'
 import { getJourneyTimeline, searchJourneySessions } from './services/journey-service.js'
 import { getDictionaryDetail, listDictionary, registerEvent } from './services/dictionary-service.js'
 import { compareReleases, getReleaseQuality } from './services/quality-service.js'
 import { collectConfigStats, listCollectConfigHistory, previewCollectConfig, rollbackCollectConfig, saveCollectConfig } from './services/collect-config-service.js'
 import { getEngagementDetail, listEngagement } from './services/engagement-service.js'
 import { listRetention } from './services/retention-service.js'
-import { currentAccessLevel, listDataAccessAudit, listMembers, saveMember, saveMemberLevel } from './services/access-service.js'
+import { listDataAccessAudit, listMembers, resolveAccessLevel, saveMember, saveMemberLevel } from './services/access-service.js'
+import { changePassword, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
+import { listSessions, revokeSession } from './services/session-service.js'
+import { acceptInvitationService, assignApplication, changeMemberLevel, changeMemberRole, createInvitation, createTeam, getTeam, listInvitations, listTeamAudit, listTeamMembers, migrateMembersToDefaultTeam, removeMember, revokeInvitation, updateTeam } from './services/team-service.js'
+import { identityMiddleware, isAccountsEnabled } from './auth-middleware.js'
 import { resolveCollectConfig } from '../../../packages/collect-config.js'
 import { applyAccessLevel } from '../../../packages/access-level.js'
 import { createMaskingMiddleware, MASK_SKIP_PREFIXES } from './privacy.js'
 import { badRequest } from './utils/http-error.js'
 import { buildCapabilities, NODE_CAPABILITIES } from '../../../packages/deployment-capabilities.js'
 import { createAiRouter } from './ai-service.js'
+import { startSloScheduler } from './slo-scheduler.js'
+import { createSlo, updateSloById, deleteSlo, listSlo, getSlo, computeBudget, computeTrend, listSloAlerts, computeSnapshot, evaluateAlerts, setAlertPolicy } from './services/slo-service.js'
+import { startSyntheticScheduler } from './synthetic-scheduler.js'
+import { saveCheck, listChecks, getCheck, deleteCheck, runProbeById, getTimeline, getStats } from './services/synthetic-service.js'
+import { createDsrRequest, listDsrRequests, getDsrRequest, submitDsrRequest, approveDsrRequest, executeDsrRequest, cancelDsrRequest, listDsrAudit } from './services/dsr-service.js'
+import { importSentryIssues, previewSentryIssue } from './services/sentry-service.js'
+import { saveExperiment, listExperiments, getExperiment, getExperimentReport, changeExperimentStatus, deleteExperiment, listRunningExperimentsForApp } from './services/experiment-service.js'
+import { getUsage, getDaily, getByApp, listPlans, getTeamPlan, putTeamPlan, listQuotaEvents } from './services/metering-service.js'
+import { getBrand, saveBrand, resetBrand, publicBrand, whiteLabelEnabled } from './services/branding-service.js'
 
 /** 服务监听端口 */
 const port = Number(process.env.PORT || 8787)
@@ -56,6 +69,10 @@ app.disable('x-powered-by')
 app.use(express.json({ limit: '20mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8') } }))
 app.use(corsMiddleware)
 
+// D2 身份中间件：在掩码/等级裁剪之前解析 req.auth（accounts=false 时透传，存量零破坏）。
+// 严格模式（ACCOUNTS_ENFORCE=1）下受控管理接口未登录返回 401（PRD FR-10，前端登录页就绪后开启）。
+app.use(identityMiddleware)
+
 // 查询侧隐私脱敏（mask-at-query，见 ADR-007）：默认对所有 /api 查询响应递归掩码
 // PII（邮箱/手机/身份证/银行卡/JWT）与凭据字段，作为 raw 模式全量采集的下游兜底，
 // 对 balanced 档（SDK 采集层已脱敏）则是幂等安全网。
@@ -75,7 +92,8 @@ app.use((req, res, next) => {
   const path = req.path
   if (!path.startsWith('/api/') || ACCESS_SKIP_PREFIXES.some(prefix => path.startsWith(prefix))) return next()
   const originalJson = res.json.bind(res)
-  const level = currentAccessLevel()
+  // D2 FR-9：已登录取 req.auth.level（团队成员等级），未登录/accounts=false 回落环境变量（fail-close L2）
+  const level = resolveAccessLevel(req)
   res.json = (body) => originalJson(applyAccessLevel(body, level))
   next()
 })
@@ -85,7 +103,8 @@ app.get('/health', (req, res) => {
   res.json({ ok: true })
 })
 app.get('/api/capabilities', (req, res) => {
-  res.json(buildCapabilities(NODE_CAPABILITIES))
+  // D2：accounts 为运行时开关（ACCOUNTS_ENABLED），开启才向前端暴露登录态/团队入口
+  res.json(buildCapabilities(NODE_CAPABILITIES, { accounts: isAccountsEnabled() }))
 })
 
 // AI 诊断（M2）：/api/ai/*（Node + PG + pgvector，复用 packages/ai 共享逻辑）
@@ -174,7 +193,15 @@ app.post('/api/issues/:id/resolve', async (req, res, next) => {
   }
 })
 app.get('/api/applications', async (req, res, next) => {
-  try { res.json(await listApplications(req.query)) } catch (err) { next(err) }
+  try {
+    // D2 FR-7：登录态按当前团队过滤（未归属应用全员可见便于认领；api_key/system 看全部）
+    const query = { ...req.query }
+    if (isAccountsEnabled() && req.auth?.via === 'session' && req.auth.teamId) {
+      query.teamId = req.auth.teamId
+      query.teamScope = 'member'
+    }
+    res.json(await listApplications(query))
+  } catch (err) { next(err) }
 })
 app.post('/api/applications', async (req, res, next) => {
   try { res.json(await saveApplication(req.body || {})) } catch (err) { next(err) }
@@ -229,6 +256,25 @@ app.delete('/api/alert-channels/:id', async (req, res, next) => {
 })
 app.post('/api/alert-channels/:id/test', async (req, res, next) => {
   try { res.json(await testAlertChannel(Number(req.params.id))) } catch (err) { next(err) }
+})
+// C2 集成市场：Sentry issue 导入（指纹与本栈采集事件对齐，命中即合并计数）
+app.post('/api/integrations/sentry/import', async (req, res, next) => {
+  try { res.json(await importSentryIssues(req.body || {})) } catch (err) {
+    const status = Number(err?.statusCode) || 500
+    if (status >= 400 && status < 500) return res.status(status).json({ error: err.message })
+    next(err)
+  }
+})
+app.post('/api/integrations/sentry/preview', async (req, res, next) => {
+  try {
+    const entry = req.body?.issue ?? req.body
+    if (!entry || typeof entry !== 'object') throw Object.assign(new Error('issue 必填'), { statusCode: 400 })
+    res.json(previewSentryIssue(entry))
+  } catch (err) {
+    const status = Number(err?.statusCode) || 500
+    if (status >= 400 && status < 500) return res.status(status).json({ error: err.message })
+    next(err)
+  }
 })
 app.get('/api/alert-deliveries', async (req, res, next) => {
   try { res.json(await listAlertDeliveries(req.query)) } catch (err) { next(err) }
@@ -307,6 +353,171 @@ app.get('/api/analytics/insights', async (req, res, next) => { try { res.json(aw
 app.post('/api/analytics/insights', async (req, res, next) => { try { res.json(await saveInsight(req.body || {})) } catch (err) { next(err) } })
 app.put('/api/analytics/insights/:id', async (req, res, next) => { try { res.json(await saveInsight(req.body || {}, Number(req.params.id))) } catch (err) { next(err) } })
 app.delete('/api/analytics/insights/:id', async (req, res, next) => { try { res.json(await deleteInsight(Number(req.params.id))) } catch (err) { next(err) } })
+// Next Horizon E2：API 健康视图——复用 fetch/xhr 性能事件聚合端点健康度（列表 / 单端点时序下钻）
+app.get('/api/analytics/api-health', async (req, res, next) => { try { res.json(await getApiHealth(filters(req.query), req.query.endpoint)) } catch (err) { next(err) } })
+// ==================== B2 · SLO / 错误预算 / 可用性看板 ====================
+// 能力位门禁：slo=false（默认 false 兜底 / Worker 未翻）返回 503，前端据此显式「当前部署不支持 SLO」。
+app.post('/api/slo', async (req, res, next) => { guardSlo(res, next, async () => { res.json(await createSlo(req.body || {}, req.auth)) }) })
+app.get('/api/slo', async (req, res, next) => {
+  guardSlo(res, next, async () => {
+    const query = { ...req.query }
+    if (isAccountsEnabled() && req.auth?.via === 'session' && req.auth.teamId) {
+      query.teamId = req.auth.teamId
+    }
+    res.json(await listSlo(query))
+  })
+})
+app.get('/api/slo/:id/budget', async (req, res, next) => {
+  guardSlo(res, next, async () => { res.json(await computeBudget(req.params.id, req.query.window, req.auth)) })
+})
+app.get('/api/slo/:id/trend', async (req, res, next) => {
+  guardSlo(res, next, async () => { res.json(await computeTrend(req.params.id, req.query.start, req.query.end, req.auth)) })
+})
+app.get('/api/slo/:id/alerts', async (req, res, next) => {
+  guardSlo(res, next, async () => { res.json(await listSloAlerts(req.params.id, req.query)) })
+})
+app.post('/api/slo/:id/alert-policy', async (req, res, next) => {
+  guardSlo(res, next, async () => { res.json(await setAlertPolicy(req.params.id, req.body || {}, req.auth)) })
+})
+app.post('/api/slo/:id/compute', async (req, res, next) => {
+  guardSlo(res, next, async () => {
+    const now = Date.now()
+    const snapshot = await computeSnapshot(req.params.id, now)
+    const result = await evaluateAlerts(req.params.id, snapshot)
+    res.json({ snapshot, breach: result.breach, alert: result.alert || null })
+  })
+})
+app.get('/api/slo/:id', async (req, res, next) => { guardSlo(res, next, async () => { res.json(await getSlo(req.params.id, req.auth)) }) })
+app.delete('/api/slo/:id', async (req, res, next) => { guardSlo(res, next, async () => { res.json(await deleteSlo(req.params.id, req.auth)) }) })
+
+// ==================== B3 · 合成监控（主动探针，双栈同构对齐 Worker /api/synthetic） ====================
+// 能力位门禁：synthetic=false 返回 503，前端显式「当前部署不支持合成监控」。
+// 注意顺序：/:id/run|timeline|stats 等多段路由先于 /:id 单段注册。
+app.post('/api/synthetic', async (req, res, next) => { guardSynthetic(res, next, async () => { res.json(await saveCheck(req.body || {}, req.auth)) }) })
+app.get('/api/synthetic', async (req, res, next) => {
+  guardSynthetic(res, next, async () => {
+    const query = { ...req.query }
+    if (isAccountsEnabled() && req.auth?.via === 'session' && req.auth.teamId) {
+      query.teamId = req.auth.teamId
+    }
+    res.json(await listChecks(query))
+  })
+})
+app.post('/api/synthetic/:id/run', async (req, res, next) => {
+  guardSynthetic(res, next, async () => { res.json({ result: await runProbeById(req.params.id, req.auth) }) })
+})
+app.get('/api/synthetic/:id/timeline', async (req, res, next) => {
+  guardSynthetic(res, next, async () => { res.json(await getTimeline(req.params.id, req.auth, req.query.limit)) })
+})
+app.get('/api/synthetic/:id/stats', async (req, res, next) => {
+  guardSynthetic(res, next, async () => { res.json(await getStats(req.params.id, req.auth, req.query.window)) })
+})
+app.get('/api/synthetic/:id', async (req, res, next) => { guardSynthetic(res, next, async () => { res.json(await getCheck(req.params.id, req.auth)) }) })
+app.delete('/api/synthetic/:id', async (req, res, next) => { guardSynthetic(res, next, async () => { res.json(await deleteCheck(req.params.id, req.auth)) }) })
+
+// ==================== D1 · 数据主体权利 DSR（查询/导出/擦除，PRD 13） ====================
+// 能力位门禁：dsr=false 返回 503（Node 恒 true，Worker 走 DSR_ENABLED=1 env 门禁）；
+// 权限：dsr:view/create/approve/execute（packages/rbac.js ROLE_MATRIX，全为 admin+，owner 恒允许）；
+// 审批制衡（审批人 ≠ 发起人）由 dsr-service 状态机服务端强制。
+// 注意顺序：/:id/submit|approve|execute|cancel|audit 多段路由先于 /:id 单段注册。
+app.post('/api/dsr/requests', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await createDsrRequest(req.body || {}, req.auth)) }) })
+app.get('/api/dsr/requests', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await listDsrRequests(req.query, req.auth)) }) })
+app.post('/api/dsr/requests/:id/submit', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await submitDsrRequest(req.params.id, req.auth)) }) })
+app.post('/api/dsr/requests/:id/approve', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await approveDsrRequest(req.params.id, req.body || {}, req.auth)) }) })
+app.post('/api/dsr/requests/:id/execute', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await executeDsrRequest(req.params.id, req.body || {}, req.auth)) }) })
+app.post('/api/dsr/requests/:id/cancel', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await cancelDsrRequest(req.params.id, req.auth)) }) })
+app.get('/api/dsr/requests/:id/audit', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await listDsrAudit(req.params.id, req.auth)) }) })
+app.get('/api/dsr/requests/:id', async (req, res, next) => { guardDsr(res, next, async () => { res.json(await getDsrRequest(req.params.id, req.auth)) }) })
+
+// ==================== A3 · 实验分析（PRD 14；查询/创建/更新/状态迁移/删除，Node 与 Worker 同路径同契约） ====================
+// 能力位门禁：experiments=false 返回 503（Node 恒 true，Worker 走 EXPERIMENTS_ENABLED=1 env 门禁）；
+// 权限点：expView / expCreate / expUpdate / expArchive（packages/rbac.js ROLE_MATRIX，owner 恒允许）；
+// accounts=false 时单租户全局可见（PRD P0-9）。注意顺序：/:id/report|status 多段路由先于 /:id 单段注册。
+app.post('/api/experiments', async (req, res, next) => {
+  guardExperiments(res, next, async () => { res.json(await saveExperiment(req.body || {}, req.auth)) })
+})
+app.get('/api/experiments', async (req, res, next) => {
+  guardExperiments(res, next, async () => {
+    const query = { ...req.query }
+    if (isAccountsEnabled() && req.auth?.via === 'session' && req.auth.teamId) {
+      query.teamId = req.auth.teamId
+    }
+    res.json(await listExperiments(query, req.auth))
+  })
+})
+app.get('/api/experiments/:id/report', async (req, res, next) => {
+  guardExperiments(res, next, async () => { res.json(await getExperimentReport(req.params.id, req.auth)) })
+})
+app.post('/api/experiments/:id/status', async (req, res, next) => {
+  guardExperiments(res, next, async () => { res.json(await changeExperimentStatus(req.params.id, req.body?.status, req.auth)) })
+})
+app.get('/api/experiments/:id', async (req, res, next) => {
+  guardExperiments(res, next, async () => { res.json(await getExperiment(req.params.id, req.auth)) })
+})
+app.delete('/api/experiments/:id', async (req, res, next) => {
+  guardExperiments(res, next, async () => { res.json(await deleteExperiment(req.params.id, req.auth)) })
+})
+
+// ==================== D3 · 用量计量 & 套餐/定价（PRD 15） ====================
+// 路径严格对齐 apps/web/src/api/metering.js（UI 已按此契约调用）；鉴权由 service 内部
+// requirePermission(meterView / meterManage) 强制，未授权抛错经 Express 错误处理返回 403/401。
+app.get('/api/metering/usage', async (req, res, next) => {
+  try { res.json(await getUsage(req.auth, req.query.period)) } catch (err) { next(err) }
+})
+app.get('/api/metering/usage/daily', async (req, res, next) => {
+  try { res.json(await getDaily(req.auth, req.query)) } catch (err) { next(err) }
+})
+app.get('/api/metering/usage/by-app', async (req, res, next) => {
+  try { res.json(await getByApp(req.auth, req.query.period)) } catch (err) { next(err) }
+})
+app.get('/api/metering/plans', async (req, res, next) => {
+  try { res.json(await listPlans(req.auth)) } catch (err) { next(err) }
+})
+app.get('/api/metering/plan', async (req, res, next) => {
+  try { res.json(await getTeamPlan(req.auth)) } catch (err) { next(err) }
+})
+app.get('/api/metering/quota-events', async (req, res, next) => {
+  try { res.json(await listQuotaEvents(req.auth, req.query.period)) } catch (err) { next(err) }
+})
+app.put('/api/metering/plan', async (req, res, next) => {
+  try { res.json(await putTeamPlan(req.auth, req.body || {})) } catch (err) { next(err) }
+})
+// 便捷端点：席位维度（service 无独立 seats reader，从当前档位生效配额抽取）。
+// 注：前端 getSeats 目前由 /api/metering/usage 的 metrics 派生，此端点为独立/前向兼容入口。
+app.get('/api/metering/seats', async (req, res, next) => {
+  try {
+    const plan = await getTeamPlan(req.auth)
+    res.json({ seats: Number(plan?.quota?.seats ?? 0) })
+  } catch (err) { next(err) }
+})
+
+// ==================== D4 · 白标 / 私有化交付（PRD 16） ====================
+// GET /api/brand 为公开端点（登录页未登录也要白标），auth-middleware 的 AUTH_PUBLIC_PREFIXES 已含 '/api/brand'；
+// 白标能力位关闭时返回 { enabled:false, brand:null }。PUT / POST 需登录 + whiteLabel 能力位（后端把关）。
+app.get('/api/brand', async (req, res, next) => {
+  try {
+    const brand = await getBrand(req.auth?.teamId || '')
+    if (!whiteLabelEnabled()) return res.json({ enabled: false, brand: null })
+    res.json({ enabled: true, brand: publicBrand(brand) })
+  } catch (err) { next(err) }
+})
+app.put('/api/brand', async (req, res, next) => {
+  try {
+    if (!req.auth) return res.status(401).json({ error: '未登录' })
+    if (!whiteLabelEnabled()) return res.status(403).json({ error: 'white-label disabled' })
+    const saved = await saveBrand(req.body || {}, req.auth?.email || 'admin', req.auth?.teamId || '')
+    res.json({ ok: true, brand: publicBrand(saved) })
+  } catch (err) { next(err) }
+})
+app.post('/api/brand/reset', async (req, res, next) => {
+  try {
+    if (!req.auth) return res.status(401).json({ error: '未登录' })
+    if (!whiteLabelEnabled()) return res.status(403).json({ error: 'white-label disabled' })
+    await resetBrand(req.auth?.email || 'admin', req.auth?.teamId || '')
+    res.json({ ok: true })
+  } catch (err) { next(err) }
+})
+
 app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels(filters(req.query))) } catch (err) { next(err) } })
 app.post('/api/funnels', async (req, res, next) => { try { res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
 app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await deleteFunnel(req.params.id)) } catch (err) { next(err) } })
@@ -391,9 +602,141 @@ app.get('/api/analytics/engagement/detail', async (req, res, next) => {
 })
 // PRD 07 数据访问等级
 app.get('/api/me/access-level', async (req, res) => {
-  res.json({ level: currentAccessLevel(), label: ({ L1: '只读统计', L2: '业务分析', L3: '运维诊断', L4: '完整数据' })[currentAccessLevel()] })
+  // D2：已登录扩展返回 role/teamId/userId（匿名仍返回全局等级，前端不破，PRD §4.2）
+  const level = resolveAccessLevel(req)
+  const base = { level, label: ({ L1: '只读统计', L2: '业务分析', L3: '运维诊断', L4: '完整数据' })[level] }
+  if (req.auth?.userId) Object.assign(base, { role: req.auth.role || null, teamId: req.auth.teamId || null, userId: req.auth.userId })
+  res.json(base)
 })
-app.get('/api/members', async (req, res, next) => { try { res.json(await listMembers()) } catch (err) { next(err) } })
+// D2 账号/团队/成员/邀请/审计（accounts=false 时除 capabilities 外均返回 503 提示）
+/** D2 守卫：账号体系未开启时统一 503（不暴露端点细节）；开启后执行处理器 */
+function guardAccounts(res, next, handler) {
+  if (!isAccountsEnabled()) {
+    res.status(503).json({ error: '账号体系未开启（需设置 ACCOUNTS_ENABLED=1 与 ACCOUNTS_JWT_SECRET）' })
+    return
+  }
+  Promise.resolve().then(handler).catch(err => next(err))
+}
+/** B2 守卫：SLO 能力未开启（NODE_CAPABILITIES.slo）时统一 503（不暴露端点细节）；开启后执行处理器 */
+function guardSlo(res, next, handler) {
+  if (!NODE_CAPABILITIES.slo) {
+    res.status(503).json({ error: 'SLO 能力未启用' })
+    return
+  }
+  Promise.resolve().then(handler).catch(err => next(err))
+}
+/** B3 守卫：合成监控能力未开启（NODE_CAPABILITIES.synthetic）时统一 503；开启后执行处理器 */
+function guardSynthetic(res, next, handler) {
+  if (!NODE_CAPABILITIES.synthetic) {
+    res.status(503).json({ error: '合成监控能力未启用' })
+    return
+  }
+  Promise.resolve().then(handler).catch(err => next(err))
+}
+/** D1 守卫：DSR 能力未开启（NODE_CAPABILITIES.dsr）时统一 503；开启后执行处理器（复刻 guardSlo 范式） */
+function guardDsr(res, next, handler) {
+  if (!NODE_CAPABILITIES.dsr) {
+    res.status(503).json({ error: 'DSR 能力未启用' })
+    return
+  }
+  Promise.resolve().then(handler).catch(err => next(err))
+}
+/** A3 守卫：实验分析能力未开启（NODE_CAPABILITIES.experiments）时统一 503；开启后执行处理器（复刻 guardDsr 范式） */
+function guardExperiments(res, next, handler) {
+  if (!NODE_CAPABILITIES.experiments) {
+    res.status(503).json({ error: '实验分析能力未启用' })
+    return
+  }
+  Promise.resolve().then(handler).catch(err => next(err))
+}
+/** 极简 cookie 解析（避免引入 cookie-parser 依赖） */
+function readCookie(req, name) {
+  const header = req.headers.cookie || ''
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=')
+    if (idx > 0 && part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim())
+  }
+  return null
+}
+app.post('/api/auth/register', async (req, res, next) => { guardAccounts(res, next, async () => {
+  const result = await register(req.body || {})
+  res.json(result)
+}) })
+app.post('/api/auth/login', async (req, res, next) => { guardAccounts(res, next, async () => {
+  const result = await login(req.body || {}, { ip: req.ip, userAgent: req.get('user-agent') })
+  res.cookie(REFRESH_COOKIE, result.refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/api/auth', maxAge: 7 * 24 * 60 * 60 * 1000 })
+  res.json({ accessToken: result.accessToken, expiresIn: result.expiresIn, user: result.user })
+}) })
+app.post('/api/auth/logout', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await logout(req.auth?.sessionId))
+}) })
+app.post('/api/auth/refresh', async (req, res, next) => { guardAccounts(res, next, async () => {
+  const token = readCookie(req, REFRESH_COOKIE)
+  res.json(await refresh(token, { ip: req.ip, userAgent: req.get('user-agent') }))
+}) })
+app.get('/api/me', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await getMe(req.auth))
+}) })
+app.post('/api/me/password', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await changePassword(req.auth?.userId, req.body || {}))
+}) })
+app.get('/api/me/sessions', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await listSessions(req.auth?.userId))
+}) })
+app.delete('/api/me/sessions/:sessionId', async (req, res, next) => { guardAccounts(res, next, async () => {
+  await revokeSession(req.params.sessionId)
+  res.json({ ok: true })
+}) })
+app.post('/api/teams', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await createTeam(req.auth, req.body || {}))
+}) })
+app.get('/api/teams/:teamId', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await getTeam(req.auth, req.params.teamId))
+}) })
+app.put('/api/teams/:teamId', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await updateTeam(req.auth, req.params.teamId, req.body || {}))
+}) })
+app.get('/api/teams/:teamId/members', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await listTeamMembers(req.auth, req.params.teamId))
+}) })
+app.put('/api/teams/:teamId/members/:userId/role', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await changeMemberRole(req.auth, req.params.teamId, req.params.userId, req.body || {}))
+}) })
+app.put('/api/teams/:teamId/members/:userId/access-level', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await changeMemberLevel(req.auth, req.params.teamId, req.params.userId, req.body || {}))
+}) })
+app.delete('/api/teams/:teamId/members/:userId', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await removeMember(req.auth, req.params.teamId, req.params.userId))
+}) })
+app.post('/api/teams/:teamId/invitations', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await createInvitation(req.auth, req.params.teamId, req.body || {}))
+}) })
+app.get('/api/teams/:teamId/invitations', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await listInvitations(req.auth, req.params.teamId))
+}) })
+app.delete('/api/teams/:teamId/invitations/:id', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await revokeInvitation(req.auth, req.params.teamId, req.params.id))
+}) })
+// 接受邀请（登录态；未注册走 register 携带 inviteToken）
+app.post('/api/invitations/:token/accept', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await acceptInvitationService(req.auth, req.params.token))
+}) })
+app.post('/api/teams/:teamId/applications', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await assignApplication(req.auth, req.params.teamId, req.body || {}))
+}) })
+app.get('/api/teams/:teamId/audit', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await listTeamAudit(req.auth, req.params.teamId))
+}) })
+app.post('/api/maintenance/migrate-members', async (req, res, next) => { guardAccounts(res, next, async () => {
+  // 一次性脚本入口（PRD FR-12 / D6）：members 登记项 → 默认团队，无邮箱标「待认领」
+  res.json(await migrateMembersToDefaultTeam())
+}) })
+app.get('/api/members', async (req, res, next) => {
+  // D2 D12：/api/members 标记 deprecated（保留只读兼容，一个大版本后移除）
+  res.set('Deprecation', 'true')
+  res.set('Sunset', 'accounts')
+  try { res.json(await listMembers()) } catch (err) { next(err) }
+})
 app.post('/api/members', async (req, res, next) => { try { res.json(await saveMember(req.body || {})) } catch (err) { next(err) } })
 app.put('/api/members/:id/level', async (req, res, next) => {
   try { res.json(await saveMemberLevel(req.params.id, req.body || {})) } catch (err) { next(err) }
@@ -402,6 +745,11 @@ app.get('/api/audit/data-access', async (req, res, next) => { try { res.json(awa
 app.get('/api/dashboards', async (req, res, next) => { try { res.json(await listDashboards()) } catch (err) { next(err) } })
 app.post('/api/dashboards', async (req, res, next) => { try { res.json(await saveDashboard(req.body || {})) } catch (err) { next(err) } })
 app.delete('/api/dashboards/:id', async (req, res, next) => { try { res.json(await deleteDashboard(req.params.id)) } catch (err) { next(err) } })
+// A2 · 自定义看板分享：分享（走现有鉴权通道，与 /api/dashboards 同口径）。
+app.post('/api/dashboards/:id/share', async (req, res, next) => { try { res.json(await shareDashboard(Number(req.params.id))) } catch (err) { next(err) } })
+app.delete('/api/dashboards/:id/share', async (req, res, next) => { try { await unshareDashboard(Number(req.params.id)); res.json({ ok: true }) } catch (err) { next(err) } })
+// A2 · 自定义看板分享：公开只读端点（免鉴权）。命中不到返回 404，不暴露是否存在，防枚举。
+app.get('/api/dashboards/shared/:token', async (req, res, next) => { try { const d = await getSharedDashboard(req.params.token); if (!d) return res.status(404).json({ error: 'not found' }); res.json(d) } catch (err) { next(err) } })
 app.post('/api/maintenance/cleanup', async (req, res, next) => {
   try { res.json(await cleanupExpiredData()) } catch (err) { next(err) }
 })
@@ -423,8 +771,9 @@ app.get('/sdk-config', async (req, res, next) => {
     // 旧 SDK 只发 sdk_version 且其中装的是应用版本 → 以「是否存在 release 参数」判定新旧，旧请求维持旧语义。
     const hasRelease = Object.prototype.hasOwnProperty.call(req.query, 'release')
     const legacyVersion = String(req.query.sdk_version || '').slice(0, 32)
+    const appId = String(req.query.app_id || '').slice(0, 64)
     const resolved = await previewCollectConfig({
-      appId: String(req.query.app_id || '').slice(0, 64),
+      appId,
       platform: String(req.query.platform || '').slice(0, 32),
       sdkVersion: hasRelease ? legacyVersion : '',
       appVersion: hasRelease ? String(req.query.release || '').slice(0, 32) : legacyVersion
@@ -436,9 +785,24 @@ app.get('/sdk-config', async (req, res, next) => {
       sampling: resolved.config.sampling,
       blocked_events: resolved.config.blocked_events,
       plugins: resolved.config.plugins,
-      rate_limits: resolved.config.rate_limits
+      rate_limits: resolved.config.rate_limits,
+      otlp: resolved.config.otlp
     }
-    const etag = `"cfg-${resolved.configVersion}"`
+    // A3 · 实验定义搭车下发（PRD 14 §6.1）：running 实验合并进 experiments 块（per-app 静态数据）。
+    // 能力关闭 → 不输出 experiments 字段（而非空块），旧 SDK 天然兼容；
+    // ETag 追加实验签名 expSig = `${running 数}-${max(updated_at)}`（无 running 为 0）：
+    // 实验定义稳定时 expSig 恒定 → 共享 304 缓存不受损；状态/定义变更 → 304 失效。
+    let expSig = '0'
+    if (NODE_CAPABILITIES.experiments) {
+      const runningExperiments = await listRunningExperimentsForApp(appId)
+      if (runningExperiments.length) {
+        payload.experiments = {
+          items: runningExperiments.map(item => ({ key: item.key, salt: item.salt, traffic_pct: item.traffic_pct, variants: item.variants }))
+        }
+        expSig = `${runningExperiments.length}-${Math.max(...runningExperiments.map(item => item.updated_at || 0))}`
+      }
+    }
+    const etag = `"cfg-${resolved.configVersion}-${expSig}"`
     if (req.get('if-none-match') === etag && resolved.configVersion > 0) return res.status(304).end()
     res.set('etag', etag).set('cache-control', 'public, max-age=60').json(payload)
   } catch (err) { next(err) }
@@ -485,6 +849,8 @@ app.use((err, req, res, next) => {
 })
 
 await initDatabase()
+startSloScheduler()
+startSyntheticScheduler()
 app.listen(port, () => {
   console.log(`Web Collection listening on http://127.0.0.1:${port}`)
 })

@@ -550,6 +550,31 @@ export async function saveDashboard(input) {
   return { id: Number(rows[0].id) }
 }
 
+// A2 · 自定义看板分享：生成唯一 token（crypto.randomUUID）并标记 shared=true，幂等（重生成令旧链接失效）。
+// Node 侧 widgets_json 为 jsonb，查询直接返回对象，无需 parse。
+export async function shareDashboard(id) {
+  const token = crypto.randomUUID()
+  await run('update dashboard_definitions set shared=true, share_token=$1, updated_at=$2 where id=$3', [token, Date.now(), id])
+  const row = await all('select id, name, widgets_json from dashboard_definitions where id=$1', [id])
+  if (!row.length) throw badRequest('仪表盘不存在', 'NOT_FOUND')
+  const r = row[0]
+  return { id: Number(r.id), shared: true, shareToken: token, name: r.name, widgets_json: r.widgets_json }
+}
+
+// A2 · 自定义看板分享：取消分享，清除 token 使旧链接立即失效。
+export async function unshareDashboard(id) {
+  await run('update dashboard_definitions set shared=false, share_token=null, updated_at=$1 where id=$2', [Date.now(), id])
+  return { ok: true }
+}
+
+// A2 · 自定义看板分享：公开只读端点数据获取（免鉴权）。命中不到返回 null，由路由层转 404（不暴露是否存在，防枚举）。
+export async function getSharedDashboard(token) {
+  const row = await all('select id, name, widgets_json from dashboard_definitions where shared=true and share_token=$1', [token])
+  if (!row.length) return null
+  const r = row[0]
+  return { id: Number(r.id), name: r.name, widgets_json: r.widgets_json }
+}
+
 /**
  * 按顺序匹配步骤，返回每一步首次达成时的时间戳数组（未达成步骤为 null）。
  * 当设置了 windowMs 时，相邻步骤的时间间隔不得超过该上限，否则不视为达成。
@@ -1099,4 +1124,119 @@ function computeCriticalPath(roots, spanMap) {
     dfs(root.id, [], 0, new Set(), maxPath)
   }
   return maxPath.path
+}
+
+/**
+ * API 健康视图聚合。
+ * 复用 events 性能表（type='perf' 且 metric in ('fetch','xhr')），按 method + url 归并前端请求，
+ * 输出每个端点的调用量 / 错误数 / 错误率 / P50 / P95 / 最大耗时 / 状态码分布。
+ * 不新增任何采集逻辑，仅对已上报的 fetch/xhr 事件做聚合。
+ *
+ * @param {object} filters - 全局过滤条件（应用 / 版本 / 时间范围 / 关键字等）
+ * @param {string} [endpoint] - 形如 "GET /api/x" 的端点标识；传入时返回该端点按小时的时序下钻
+ * @returns {Promise<{endpoints?: Array, endpoint?: string, series?: Array, total?: number}>}
+ */
+export async function getApiHealth(filters = {}, endpoint) {
+  const baseWhere = whereFor(filters, ["type='perf'", "metric in ('fetch','xhr')"])
+  if (endpoint) {
+    return getApiHealthSeries(baseWhere, endpoint)
+  }
+  return getApiHealthOverview(baseWhere)
+}
+
+/** 端点分组总览：单次聚合出调用量/耗时分位，再用一次聚合补齐状态码分布（避免 N+1）。 */
+async function getApiHealthOverview(baseWhere) {
+  const aggRows = await all(
+    `select
+       upper(coalesce(props_json->>'method', 'GET')) as method,
+       coalesce(nullif(props_json->>'url', ''), name) as url,
+       count(*)::integer as count,
+       sum(case when coalesce((props_json->>'status')::integer, 0) >= 400 then 1 else 0 end)::integer as error_count,
+       avg(value) as avg_duration,
+       percentile_cont(0.5) within group (order by value) as p50,
+       percentile_cont(0.95) within group (order by value) as p95,
+       max(value) as max_duration
+     from events ${baseWhere.where}
+     group by 1, 2
+     order by count desc
+     limit 200`,
+    baseWhere.params
+  )
+
+  const statusRows = await all(
+    `select
+       upper(coalesce(props_json->>'method', 'GET')) as method,
+       coalesce(nullif(props_json->>'url', ''), name) as url,
+       coalesce((props_json->>'status')::integer, 0) as status,
+       count(*)::integer as count
+     from events ${baseWhere.where}
+     group by 1, 2, 3`,
+    baseWhere.params
+  )
+  const statusByEndpoint = new Map()
+  for (const row of statusRows) {
+    const key = `${String(row.method || 'GET').toUpperCase()} ${row.url || ''}`
+    const bucket = statusByEndpoint.get(key) || {}
+    bucket[Number(row.status) || 0] = Number(row.count || 0)
+    statusByEndpoint.set(key, bucket)
+  }
+
+  const endpoints = aggRows.map(row => {
+    const method = String(row.method || 'GET').toUpperCase()
+    const url = String(row.url || '')
+    const count = Number(row.count || 0)
+    const errorCount = Number(row.error_count || 0)
+    return {
+      method,
+      url,
+      endpoint: `${method} ${url}`,
+      count,
+      errorCount,
+      errorRate: count ? errorCount / count : 0,
+      avgDuration: Math.round(Number(row.avg_duration) || 0),
+      p50: Math.round(Number(row.p50) || 0),
+      p95: Math.round(Number(row.p95) || 0),
+      maxDuration: Math.round(Number(row.max_duration) || 0),
+      statusCodes: statusByEndpoint.get(`${method} ${url}`) || {}
+    }
+  })
+
+  return { endpoints, total: endpoints.length }
+}
+
+/** 单端点时序下钻：按小时桶聚合调用量 / 错误率 / 平均耗时 / P95。 */
+async function getApiHealthSeries(baseWhere, endpoint) {
+  const [method, ...rest] = String(endpoint || '').split(' ')
+  const targetMethod = (method || 'GET').toUpperCase()
+  const targetUrl = rest.join(' ').trim()
+  const seriesRows = await all(
+    `select
+       -- 与 Worker 端保持一致的 UTC 小时桶：直接对毫秒时间戳向下取整到整小时，
+       -- 避免 date_trunc 依赖 PG session TimeZone 导致两端分桶不对齐。
+       floor(ts / 3600000) * 3600000 as bucket,
+       count(*)::integer as count,
+       sum(case when coalesce((props_json->>'status')::integer, 0) >= 400 then 1 else 0 end)::integer as error_count,
+       avg(value) as avg_duration,
+       percentile_cont(0.95) within group (order by value) as p95
+     from events ${baseWhere.where}
+     -- upper() 统一 method 大小写：SDK 按原样上报（可能小写），若不统一会导致
+     -- 下钻时 = 'GET' 匹配不到小写行，返回空 series（Worker 端已在 read() 统一大写）。
+     and upper(coalesce(props_json->>'method', 'GET')) = ? and coalesce(nullif(props_json->>'url', ''), name) = ?
+     group by 1
+     order by 1`,
+    [...baseWhere.params, targetMethod, targetUrl]
+  )
+  const series = seriesRows.map(row => {
+    const count = Number(row.count || 0)
+    const errorCount = Number(row.error_count || 0)
+    return {
+      bucket: Number(row.bucket) || 0,
+      count,
+      errorCount,
+      errorRate: count ? errorCount / count : 0,
+      avgDuration: Math.round(Number(row.avg_duration) || 0),
+      p95: Math.round(Number(row.p95) || 0)
+    }
+  })
+  return { endpoint: String(endpoint || ''), series }
 }

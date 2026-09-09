@@ -1,5 +1,5 @@
 <script setup>
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, ArrowRight, ArrowUp } from '@element-plus/icons-vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -7,10 +7,12 @@ import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoadi
 import KpiGrid from '../../../components/KpiGrid.vue'
 import AnalyticsChart from '../../../components/AnalyticsChart.vue'
 import FunnelChart from '../../../components/FunnelChart.vue'
+import DashboardWidgets from '../../../components/DashboardWidgets.vue'
 import EventInsightPanel from '../../../components/EventInsightPanel.vue'
 import PathInsightPanel from '../../../components/PathInsightPanel.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
+import { buildReplayQuery } from '../../../utils/replay-link.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,7 +28,6 @@ const funnelEventNames = ref([])
 const dashboards = ref([])
 const insights = ref([])
 const capabilities = ref({ insights: false, productAnalyticsV2: false, funnels: true, dashboards: true, paths: true, live: true, releases: true })
-const dashboardResults = ref({})
 const selectedDashboardId = ref(null)
 const sessionDrawerOpen = ref(false)
 const analyticsError = ref('')
@@ -69,14 +70,6 @@ const analyticsKpis = computed(() => [
   { label: '近 5 分钟事件', value: Number(live.value?.events || 0).toLocaleString(), delta: '实时事件流', valueClass: 'value-purple' },
   { label: '历史会话样本', value: Number(sessionPager.total || 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-danger' }
 ])
-const dashboardKpis = computed(() => {
-  const items = []
-  if (hasWidget('live')) items.push({ label: '在线用户', value: Number(live.value?.users || 0).toLocaleString(), delta: '实时', valueClass: 'value-success' })
-  if (hasWidget('sessions')) items.push({ label: '会话数', value: Number(sessionPager.total || 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-primary' })
-  if (hasWidget('errors')) items.push({ label: '当前页会话错误数', value: sessions.value.reduce((sum, item) => sum + (item.error_count || 0), 0).toLocaleString(), delta: '需关注', valueClass: 'value-danger' })
-  if (hasWidget('releases')) items.push({ label: '活跃版本', value: Number(releases.value.length || 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-purple' })
-  return items
-})
 const funnelOptions = computed(() => funnels.value.map(item => ({ label: item.name, value: `funnel:${item.id}` })))
 
 function setPaged(target, pager, data) {
@@ -97,7 +90,6 @@ async function loadInsights() {
 }
 async function refreshInsights() {
   await Promise.all([loadInsights(), api('/api/dashboards', { requestKey: 'analytics:dashboards' }).then(data => { dashboards.value = toList(data) })])
-  await loadDashboardResults()
 }
 async function load() {
   const requestId = ++loadRequestId
@@ -119,7 +111,6 @@ async function load() {
     dashboards.value = toList(dashboardData)
     insights.value = toList(insightData)
     if (!selectedDashboardId.value && dashboards.value[0]) selectedDashboardId.value = dashboards.value[0].id
-    await loadDashboardResults()
   } catch (error) {
     if (requestId === loadRequestId && error?.code !== 'ABORT_ERR') analyticsError.value = error.message || '分析数据加载失败'
   } finally {
@@ -146,6 +137,38 @@ async function removeDashboard() {
   await api(`/api/dashboards/${item.id}`, { method: 'DELETE' })
   selectedDashboardId.value = null
   await load()
+}
+
+// A2 看板分享：生成 shareToken → 公开只读链接 / iframe 嵌入；取消分享后旧链接 404。
+const shareDialogVisible = ref(false)
+const shareInfo = ref(null)
+async function openShare() {
+  const id = selectedDashboardId.value
+  if (!id) return
+  const data = await api(`/api/dashboards/${id}/share`, { method: 'POST' })
+  const origin = window.location.origin
+  shareInfo.value = {
+    token: data.shareToken,
+    url: `${origin}/embed/dashboard/${data.shareToken}`,
+    iframe: `<iframe src="${origin}/embed/dashboard/${data.shareToken}" width="100%" height="600" frameborder="0"></iframe>`
+  }
+  shareDialogVisible.value = true
+  await load()
+}
+async function unshareDashboard() {
+  const id = selectedDashboardId.value
+  if (!id) return
+  const confirmed = await ElMessageBox.confirm('取消分享后，已分发的链接与 iframe 将立即失效。确定取消吗？', '取消分享', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
+  await api(`/api/dashboards/${id}/share`, { method: 'DELETE' })
+  shareInfo.value = null
+  shareDialogVisible.value = false
+  ElMessage.success('已取消分享')
+  await load()
+}
+function copyText(text) {
+  navigator.clipboard?.writeText(text)
+  ElMessage.success('已复制到剪贴板')
 }
 function stepName(step) { return typeof step === 'string' ? step : step?.eventName || '-' }
 function presentValue(...values) {
@@ -177,37 +200,6 @@ function decodeWidget(widget) {
   const [type, id] = String(widget).split(':')
   return { type, id: Number(id) }
 }
-function hasWidget(name) { return (activeDashboard.value?.widgets_json || []).some(widget => widgetKey(widget) === name) }
-async function loadDashboardResults() {
-  const widgets = activeDashboard.value?.widgets_json || []
-  const results = {}
-  // 基础组件：live 数据已通过 load() 中 /api/analytics/live 端点加载到 live.value，无需额外请求
-  const stringWidgets = new Set(widgets.filter(widget => typeof widget === 'string'))
-  if (stringWidgets.size) results._basic = true
-  // 分析组件：从 API 加载
-  await Promise.all(widgets.filter(widget => typeof widget === 'object').map(async widget => {
-    const key = widgetKey(widget)
-    if (widget.type === 'funnel') {
-      // 方案 B：统一走 /report 端点（/run 已废弃）
-      const r = await api(`/api/funnels/${widget.id}/report?${queryFromFilters()}`)
-      results[key] = { steps: (r.steps || []).map((s, i, arr) => ({
-        step: s.event,
-        count: s.users,
-        rate: Math.round((s.rate || 0) * 100),
-        stepRate: i === 0 ? 100 : Math.round((s.users / (arr[i - 1].users || s.users)) * 100),
-        lost: s.lost
-      })) }
-    }
-    if (widget.type === 'insight') {
-      const insight = insights.value.find(item => item.id === widget.id)
-      if (insight) results[key] = await api(insight.kind === 'path' ? '/api/analytics/paths/query' : '/api/analytics/insights/query', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...insight.definition, ...Object.fromEntries(new URLSearchParams(queryFromFilters({}, ['appId', 'release', 'range']))) })
-      })
-    }
-  }))
-  dashboardResults.value = results
-}
 async function loadSessionEvents() {
   if (!activeSession.value?.session_id) return
   setPaged(sessionEvents, sessionEventPager, await api(`/api/analytics/sessions/${encodeURIComponent(activeSession.value.session_id)}?page=${sessionEventPager.page}&pageSize=${sessionEventPager.pageSize}`, { requestKey: `analytics:session-events:${activeSession.value.session_id}` }))
@@ -224,11 +216,18 @@ function changeTab(name) {
 }
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 
+/**
+ * B4 分析 → 回放：带过滤条件打开回放列表（而非只播单条会话）。
+ * 按该会话的 userId / userName 过滤，二者均为回放查询 API 支持的真实参数。
+ */
+function replayList(row = {}) {
+  router.push({ path: '/replays', query: buildReplayQuery({ userId: row.user_id, userName: row.user_name }) })
+}
+
 onMounted(() => { timer = window.setInterval(async () => { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) }, 30000) })
 onBeforeUnmount(() => clearInterval(timer))
 watch(() => route.query.tab, value => { if (value) tab.value = value }, { immediate: true })
 watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true })
-watch(selectedDashboardId, loadDashboardResults)
 </script>
 
 <template>
@@ -278,7 +277,7 @@ watch(selectedDashboardId, loadDashboardResults)
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="回放" width="80"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><span v-else>-</span></template></el-table-column>
+        <el-table-column label="回放" width="160"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><el-button v-if="row.user_id" link type="primary" @click="replayList(row)">查看回放</el-button><span v-if="!replayId(row) && !row.user_id">-</span></template></el-table-column>
       </el-table>
       <el-pagination v-if="sessionPager.total > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
     </el-tab-pane>
@@ -286,23 +285,31 @@ watch(selectedDashboardId, loadDashboardResults)
       <el-table :data="releases" border><el-table-column label="版本"><template #default="{ row }">{{ presentValue(row.release, row.release_name, row.releaseName, row.version) }}</template></el-table-column><el-table-column label="事件"><template #default="{ row }">{{ presentValue(row.events, row.event_count, row.eventCount) }}</template></el-table-column><el-table-column label="用户"><template #default="{ row }">{{ presentValue(row.users, row.user_count, row.userCount) }}</template></el-table-column><el-table-column label="错误"><template #default="{ row }">{{ presentValue(row.errors, row.error_count, row.errorCount) }}</template></el-table-column><el-table-column label="平均 LCP"><template #default="{ row }">{{ presentValue(row.lcp, row.avg_lcp, row.avgLcp, row.average_lcp, row.averageLcp) }}</template></el-table-column></el-table>
     </el-tab-pane>
     <el-tab-pane label="自定义仪表盘" name="dashboards">
-      <el-space class="section"><el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select><el-button type="danger" plain :disabled="!selectedDashboardId" @click="removeDashboard">删除仪表盘</el-button></el-space>
+      <el-space class="section"><el-select v-model="selectedDashboardId" clearable placeholder="选择仪表盘" style="width:240px"><el-option v-for="item in dashboards" :key="item.id" :label="item.name" :value="item.id" /></el-select><el-button type="danger" plain :disabled="!selectedDashboardId" @click="removeDashboard">删除仪表盘</el-button><el-button type="primary" plain :disabled="!selectedDashboardId" @click="openShare">分享</el-button></el-space>
       <el-form><el-form-item label="名称"><el-input v-model="dashboardForm.name" style="width:260px" /></el-form-item><el-form-item label="基础组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in ['live','sessions','errors','releases']" :key="item" :value="item">{{ widgetLabel(item) }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightOptions.length" label="分析组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in insightOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-form-item v-if="insightsSupported && funnelOptions.length" label="漏斗组件"><el-checkbox-group v-model="dashboardForm.widgets"><el-checkbox v-for="item in funnelOptions" :key="item.value" :value="item.value">{{ item.label }}</el-checkbox></el-checkbox-group></el-form-item><el-button type="primary" @click="saveDashboard">保存仪表盘</el-button></el-form>
       <el-alert v-if="activeDashboard" class="dashboard-current" :title="`当前仪表盘：${activeDashboard.name}（${activeDashboard.widgets_json?.map(widgetLabel).join('、')}）`" type="success" :closable="false" />
-      <KpiGrid v-if="activeDashboard" :items="dashboardKpis" />
-      <template v-for="widget in activeDashboard?.widgets_json || []" :key="widgetKey(widget)">
-        <el-card v-if="typeof widget === 'object' && dashboardResults[widgetKey(widget)]" class="section dashboard-insight" shadow="never">
-          <template #header><b>{{ widgetLabel(widget) }}</b></template>
-          <AnalyticsChart v-if="widget.type === 'insight'" :kind="insightById(widget.id)?.kind === 'path' ? 'path' : 'trend'" :result="dashboardResults[widgetKey(widget)]" />
-          <FunnelChart v-else :steps="dashboardResults[widgetKey(widget)].steps" />
-        </el-card>
-      </template>
+      <DashboardWidgets v-if="activeDashboard" :dashboard="activeDashboard" :read-only="true" />
     </el-tab-pane>
   </el-tabs>
   <el-drawer v-model="activeSession" size="65%" title="用户会话详情">
     <el-table :data="sessionEvents" border><el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column><el-table-column prop="type" label="类型" width="100" /><el-table-column label="名称" width="160"><template #default="{ row }">{{ row.name || row.metric }}</template></el-table-column><el-table-column label="内容" min-width="240"><template #default="{ row }"><OverflowTip :text="row.message" /></template></el-table-column><el-table-column prop="path" label="页面" min-width="220" /></el-table>
     <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionEventPager.page" :page-size="sessionEventPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionEventPager.total" @current-change="value => { sessionEventPager.page = value; loadSessionEvents() }" @size-change="value => { sessionEventPager.page = 1; sessionEventPager.pageSize = value; loadSessionEvents() }" />
   </el-drawer>
+  <el-dialog v-model="shareDialogVisible" title="分享仪表盘" width="560px">
+    <el-alert type="info" :closable="false" show-icon title="任何持有链接者均可只读查看该看板（仅看板定义与聚合数据，不含原始事件）；取消分享后链接立即失效。" class="share-note" />
+    <template v-if="shareInfo">
+      <div class="share-row">
+        <div class="share-link"><OverflowTip :text="shareInfo.url" /></div>
+        <el-button link type="primary" @click="copyText(shareInfo.url)">复制链接</el-button>
+      </div>
+      <div class="share-iframe-label">嵌入第三方页面（iframe）：</div>
+      <el-input :model-value="shareInfo.iframe" type="textarea" :rows="3" readonly />
+      <div class="share-actions">
+        <el-button link type="primary" @click="copyText(shareInfo.iframe)">复制 iframe 代码</el-button>
+        <el-button link type="danger" @click="unshareDashboard">取消分享</el-button>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -320,4 +327,9 @@ watch(selectedDashboardId, loadDashboardResults)
 .path-expand-body { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .dashboard-current { margin-top: 14px; }
 .dashboard-insight { margin-top: 14px; }
+.share-note { margin-bottom: 14px; }
+.share-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.share-link { flex: 1; min-width: 0; padding: 6px 10px; background: var(--el-fill-color-light); border-radius: 4px; }
+.share-iframe-label { margin: 12px 0 6px; font-size: 13px; color: var(--el-text-color-secondary); }
+.share-actions { margin-top: 10px; display: flex; justify-content: space-between; }
 </style>

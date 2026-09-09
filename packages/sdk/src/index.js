@@ -53,12 +53,15 @@ import { setupWebShareMonitor } from './behavior/web-share.js'
 import { setupClipboardMonitor } from './behavior/clipboard.js'
 // 链路追踪模块
 import { createTracer, Tracer, getCurrentSpan, Span, SpanKind, BatchSpanProcessor, WebCollectionSpanExporter } from './trace/index.js'
+// C1 · OpenTelemetry 导出：OTLP/HTTP + JSON（trace spans + RUM metrics）
+import { OtlpTraceExporter, OtlpMetricsExporter, RumMetricBatcher, DEFAULT_OTLP_SCOPE } from './trace/index.js'
 // Phase 6 · 确定性采样（U06 / SDK-208）：基于 traceId/sessionId 的一致性采样 + 优先级保留。
 import { createDeterministicSampler } from './sampling/index.js'
 // Reliable Transport v2：可替换、可测试的发送通道与持久化队列（SDK-207 / SDK-219）。
 import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, createDiagnosticSink, createMultiTabLock, SelfMonitor, MONITOR_HEALTH } from './transport/index.js'
 // PRD 04 · 远程采集配置：/sdk-config 拉取（ETag 304 + 失败安全沿用上次）。
 import { setupRemoteConfig } from './config/remote-config.js'
+import { createGetVariant } from './experiment/variant.js'
 
 /**
  * 由事件采集端点推导出 Span 接收端点。
@@ -77,6 +80,37 @@ function deriveSpansUrl(endpoint) {
   } catch {
     return endpoint
   }
+}
+
+/**
+ * 由 traces 端点推导 metrics 端点：路径以 `/traces` 结尾则替换为 `/metrics`，否则追加 `/v1/metrics`。
+ * @param {string} endpoint
+ * @returns {string}
+ */
+function deriveMetricsEndpoint(endpoint) {
+  try {
+    const url = new URL(endpoint, location.href)
+    if (/\/traces\/?$/.test(url.pathname)) {
+      url.pathname = url.pathname.replace(/\/traces\/?$/, '/metrics')
+      return url.toString()
+    }
+    url.pathname = url.pathname.replace(/\/$/, '') + '/v1/metrics'
+    return url.toString()
+  } catch {
+    return endpoint
+  }
+}
+
+/** OTLP 导出默认配置：默认关闭、http/json、全量采样。允许 options.otlp 仅携带变更字段。 */
+const OTLP_DEFAULT = {
+  enabled: false,
+  endpoint: '',
+  protocol: 'http/json',
+  headers: {},
+  samplingRate: 1,
+  metrics: true,
+  metricsEndpoint: '',
+  timeout: 10000
 }
 
 /**
@@ -186,6 +220,10 @@ export function createEys(options = {}) {
     spanExport: false,
     // baggage 静态业务属性，会透传到所有 span
     baggage: {},
+    // C1 · OpenTelemetry 导出（OTLP/HTTP + JSON）：默认关闭，必须显式开启（SDK 选项或 /sdk-config）。
+    // 开启后把 trace spans + RUM metrics 增量导出到客户自有可观测性栈（Grafana/Datadog/Prometheus），
+    // 不改动任何现有采集/落库逻辑。
+    otlp: OTLP_DEFAULT,
     // requests 控制是否开启请求性能采集。
     requests: true,
     // exposure 控制是否开启曝光采集。
@@ -285,6 +323,8 @@ export function createEys(options = {}) {
     beaconMaxBytes: 60 * 1024,
     ...options
   }
+  // OTLP 配置深合并：允许 options.otlp 仅携带变更字段，其余沿用 OTLP_DEFAULT。
+  cfg.otlp = { ...OTLP_DEFAULT, ...(cfg.otlp && typeof cfg.otlp === 'object' ? cfg.otlp : {}) }
   cfg.privacy ||= {}
   // Privacy v2 统一 sanitizer：默认模式 balanced（生产默认最小化采集）。
   const sanitizer = createSanitizer(cfg.privacy)
@@ -318,6 +358,8 @@ export function createEys(options = {}) {
       sampler.categorySampleRates = { ...sampler.categorySampleRates, performance: rates.performance }
     }
     if (Number.isFinite(rates.replay)) cfg.replaySampleRate = rates.replay
+    // C1 · 远程配置下发 OTLP 导出：仅当配置含 otlp 块时重新装配导出管线（失败安全：无则不改现状）。
+    if (config.otlp && typeof config.otlp === 'object') setupOtlpPipeline(config.otlp)
   }
 
   /** L2 插件开关映射：事件形状 → 配置插件键；未知类型不受开关控制。 */
@@ -472,6 +514,95 @@ export function createEys(options = {}) {
       console.warn('[web-collection] 初始化 Span 导出管线失败，已降级关闭：', err)
     }
   }
+  /** C1 · OTLP 导出管线（增量导出，独立于现有 /api/spans 落库）。
+   * 由 SDK 初始化选项或 /sdk-config 下发配置驱动；默认关闭。可在运行期被远程配置重新装配。 */
+  let otlpProcessor = null
+  let otlpMetricsBatcher = null
+
+  /**
+   * 拆除旧 OTLP 管线（远程配置变更或重装配时调用）。
+   * 保持同步：新管线必须同步挂到 tracer 上，否则当次会话的后续 Span 会漏采。
+   * metrics 拆卸走「先 flush 再 shutdown」的异步链（RumMetricBatcher.shutdown 内部也会冲刷，
+   * 此处显式前置 flush 作双保险），失败静默吞掉，不影响主流程。
+   */
+  function teardownOtlp() {
+    if (otlpProcessor) {
+      tracer?.removeSpanProcessor(otlpProcessor)
+      otlpProcessor = null
+    }
+    if (otlpMetricsBatcher) {
+      const batcher = otlpMetricsBatcher
+      otlpMetricsBatcher = null
+      batcher
+        .flush()
+        .then(() => batcher.shutdown())
+        .catch(() => {})
+    }
+  }
+
+  /**
+   * 装配 OTLP 导出管线（trace spans 经 BatchSpanProcessor，RUM metrics 经 RumMetricBatcher）。
+   * 仅 `enabled === true` 且提供 `endpoint` 且 tracer 已就绪时才装配；其余情况保持关闭（增量、无副作用）。
+   *
+   * 注：Span 只有经 `tracer.withSpan` / `tracer.endSpan` 结束才会通知 Processor 并进入本管线；
+   * 直接 `span.end()` 不会触发任何导出（既有语义，勿改）。
+   * @param {object} [otlpCfg]
+   */
+  function setupOtlpPipeline(otlpCfg) {
+    teardownOtlp()
+    if (!otlpCfg || otlpCfg.enabled !== true || !otlpCfg.endpoint || !tracer) return
+    // 仅支持 OTLP/HTTP + JSON（最轻量，无 protobuf 依赖）；protobuf 暂不支持，显式跳过并告警。
+    if (otlpCfg.protocol === 'http/protobuf') {
+      console.warn('[web-collection] OTLP protocol=http/protobuf 暂不支持，已跳过（仅支持 http/json）。')
+      return
+    }
+    const merged = {
+      enabled: true,
+      endpoint: String(otlpCfg.endpoint || '').slice(0, 2048),
+      protocol: 'http/json',
+      headers: otlpCfg.headers && typeof otlpCfg.headers === 'object' ? otlpCfg.headers : {},
+      samplingRate: Number.isFinite(Number(otlpCfg.samplingRate)) ? Number(otlpCfg.samplingRate) : 1,
+      metrics: otlpCfg.metrics === false ? false : true,
+      metricsEndpoint: otlpCfg.metricsEndpoint ? String(otlpCfg.metricsEndpoint).slice(0, 2048) : '',
+      timeout: Number.isFinite(Number(otlpCfg.timeout)) && Number(otlpCfg.timeout) > 0 ? Number(otlpCfg.timeout) : 10000
+    }
+    if (!merged.endpoint) return
+    // Resource：service.name 用接入方 appId（对客户看板更有意义），仍与后端 frontend 着色解耦（独立导出）。
+    const resource = { serviceName: cfg.appId || 'frontend', sdkName: 'web-collection-sdk', sdkVersion: SDK_VERSION }
+    const scope = DEFAULT_OTLP_SCOPE
+    try {
+      const traceExporter = new OtlpTraceExporter({
+        endpoint: merged.endpoint,
+        headers: merged.headers,
+        resource,
+        scope,
+        samplingRate: merged.samplingRate,
+        environment: cfg.environment,
+        fetchImpl: originalFetch,
+        timeout: merged.timeout
+      })
+      otlpProcessor = new BatchSpanProcessor(traceExporter, { maxExportBatchSize: 64, scheduledDelayMillis: 5000 })
+      tracer.addSpanProcessor(otlpProcessor)
+      // RUM metrics：可选、增量；默认开启。
+      if (merged.metrics) {
+        const metricsEndpoint = merged.metricsEndpoint || deriveMetricsEndpoint(merged.endpoint)
+        const metricExporter = new OtlpMetricsExporter({
+          endpoint: metricsEndpoint,
+          headers: merged.headers,
+          resource,
+          scope,
+          fetchImpl: originalFetch,
+          timeout: merged.timeout
+        })
+        otlpMetricsBatcher = new RumMetricBatcher(metricExporter, { flushIntervalMillis: 10000, maxBatchSize: 200 })
+      }
+    } catch (err) {
+      console.warn('[web-collection] 初始化 OTLP 导出管线失败，已降级关闭：', err)
+    }
+  }
+  // 初始化阶段按 SDK 选项装配（远程配置后续可能再次调用 setupOtlpPipeline 覆盖）。
+  setupOtlpPipeline(cfg.otlp)
+
   /** 回放分段：基础会话 ID 不变，发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
    *  每种 sessionId 对应一条独立的回放记录，不再互相叠加。 */
   const replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -609,6 +740,43 @@ export function createEys(options = {}) {
     pending.forEach(({ event, urgent }) => push(event, urgent))
   }
 
+  // A3 · 实验通用原语装配（PRD 14 §4，业务契约不入核）：
+  // getVariant(key) = 配置化变体消费（客户端一致性分桶）+ 首次命中曝光上报。
+  // 分桶 ID 双 ID 模型同源：deviceId（anonymousId，localStorage 持久，转化归因不漂移）优先。
+  // 降级链关键：隐私模式/禁 localStorage 下，getId('eys_did', true) 的 catch 分支（utils/id.js）
+  // 会返回每次页面加载都不同的随机值——deviceId 恒为真值但**不跨刷新稳定**，若仍用它分桶，
+  // 同一访客每次刷新命中不同变体，曝光被记成多个临时 visitor_id。故此处显式探测持久 storage
+  // 可写性（探测结果按实例记忆一次）：不可用 → 走 sessionId 兜底并标记 bucketing='session'。
+  // 探测只操作独立探针键，不改 getId 全局语义（事件链路共用）。
+  // 失效安全：无配置/未命中/任何异常均返回 null，业务走默认逻辑。
+  let bucketingStorageUsable = null
+  function persistentStorageUsable() {
+    if (bucketingStorageUsable !== null) return bucketingStorageUsable
+    try {
+      if (typeof localStorage === 'undefined') {
+        bucketingStorageUsable = false
+        return false
+      }
+      localStorage.setItem('__eys_probe__', '1')
+      localStorage.removeItem('__eys_probe__')
+      bucketingStorageUsable = true
+    } catch {
+      // 隐私模式 / StorageEvent 禁用 / 访问 localStorage 即抛错 → deviceId 非持久，不可作分桶键
+      bucketingStorageUsable = false
+    }
+    return bucketingStorageUsable
+  }
+  function resolveBucketingId() {
+    if (deviceId && persistentStorageUsable()) return { id: deviceId, kind: 'anonymous' }
+    if (sessionId) return { id: sessionId, kind: 'session' }
+    return { id: '', kind: 'anonymous' }
+  }
+  const getVariant = createGetVariant({
+    getConfig: () => remoteCtl.getConfig(),
+    getBucketingId: resolveBucketingId,
+    push
+  })
+
   return {
     track,
     error,
@@ -645,6 +813,9 @@ export function createEys(options = {}) {
     identify: (userId, traits = {}) => setUser({ id: userId, ...traits }),
     // P2-5 · 获取匿名设备 ID（anonymousId），与 identify 后的 userId 共同构成双 ID 模型。
     getAnonymousId: () => deviceId,
+    // A3 · 实验通用原语（PRD 14 §4）：配置化变体消费（客户端一致性分桶）+ 首次命中曝光上报。
+    // 返回 null 表示「不参与该实验」，业务走默认逻辑；不含任何实验业务语义。
+    getVariant,
     // 自监控：返回 SDK 采集/交付健康度快照（sent/dropped/retried/失败率/最近错误/health 等）。
     monitoring: () => selfMonitor.snapshot()
   }
@@ -812,6 +983,8 @@ export function createEys(options = {}) {
     if (name === 'fetch' || name === 'xhr') {
       push({ type: 'perf', metric: 'slow_api_rate', value: Number(value) > 1000 ? 100 : 0, props: { threshold: 1000 } })
     }
+    // C1 · 增量导出 RUM metrics 到 OTLP（默认关闭；不改动既有入队逻辑）。
+    if (otlpMetricsBatcher) otlpMetricsBatcher.add(name, value, Date.now())
   }
 
   /** 结构化日志上报，服务端会再次执行脱敏 */
@@ -1091,6 +1264,8 @@ export function createEys(options = {}) {
       await flushReplay(true)
       await sender.sendExitBatch()
       tracer?.flushSpans?.()
+      // C1 · 页面退出尽力冲刷 OTLP metrics 缓冲（与 trace 同生命周期）。
+      await otlpMetricsBatcher?.flush?.()
       return
     }
     await flush(force)
@@ -1304,6 +1479,8 @@ export function createEys(options = {}) {
     replayRing.clear()
     if (stats.dropped || stats.failed) push({ type: 'perf', metric: 'sdk_health', value: stats.enqueued, props: { ...stats }, source: 'auto' })
     await flushAll(true)
+    // C1 · 关闭 OTLP metrics 缓冲并冲刷剩余（与 trace 导出管线同生命周期，独立导出通道）。
+    await otlpMetricsBatcher?.shutdown?.()
     // 关闭 Span 导出管线，冲刷剩余缓冲（根/未结束 Span），避免调用树丢失尾包。
     await tracer?.shutdownSpans?.()
     // 必须在所有发送（flushAll 内的 sendExitBatch 会再次 acquire 锁）完成之后才关闭跨标签页锁，

@@ -3,7 +3,7 @@ import { all, run, scalar } from './db.js'
 import { buildAlertContext, createAlertDeliveries } from './alerting.js'
 
 export const defaultSettings = {
-  retention: { eventsDays: 30, logsDays: 14, replaysDays: 7, resolvedIssuesDays: 90, sourcemapsDays: 180, alertsDays: 90 },
+  retention: { eventsDays: 30, logsDays: 14, replaysDays: 7, resolvedIssuesDays: 90, sourcemapsDays: 180, alertsDays: 90, syntheticResultsDays: 30 },
   alerts: { enabled: true, cooldownMinutes: 10, errorCount: 1, error: true, logError: true, regression: true, lcp: 4000, inp: 500, cls: 0.25, longtask: 200 }
 }
 
@@ -47,15 +47,23 @@ export async function shouldCollect(appId, type) {
 
 export async function listApplications(filters = {}) {
   const page = pageOf(filters)
-  const select = `select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.privacy_mode, a.created_at, a.updated_at,
+  // D2 FR-7：应用列表按当前团队过滤（teamScope='member' 且带 teamId 时启用）。
+  // 未归属应用（team_id null）全员可见，便于 Admin 认领；跨团队已归属应用隐藏。
+  const teamScoped = filters.teamScope === 'member' && filters.teamId
+  const where = teamScoped ? 'where (a.team_id is null or a.team_id = ?)' : ''
+  const teamParams = teamScoped ? [filters.teamId] : []
+  const select = `select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.privacy_mode, a.team_id, a.created_at, a.updated_at,
     (a.collect_key_hash is not null) as collect_key_enabled, count(distinct r.release_name)::integer as release_count
     from applications a left join releases r on r.app_id = a.app_id
-    group by a.app_id order by a.updated_at desc`
+    ${where}
+    group by a.app_id, a.team_id order by a.updated_at desc`
   const [items, total] = await Promise.all([
-    all(`${select} limit ? offset ?`, [page.pageSize, (page.page - 1) * page.pageSize]),
-    scalar('select count(*) count from applications')
+    all(`${select} limit ? offset ?`, [...teamParams, page.pageSize, (page.page - 1) * page.pageSize]),
+    teamScoped
+      ? scalar('select count(*) count from applications where (team_id is null or team_id = ?)', teamParams)
+      : scalar('select count(*) count from applications')
   ])
-  return { ...page, total, items }
+  return { ...page, total, items: items.map(row => ({ ...row, teamId: row.team_id || null })) }
 }
 
 export async function saveApplication(input) {
@@ -85,6 +93,9 @@ export async function deleteApplication(appId) {
   await run('delete from sourcemaps where app_id=?', [appId])
   await run('delete from alert_history where app_id=?', [appId]) // alert_deliveries 通过 ON DELETE CASCADE 级联
   await run('delete from funnel_definitions where app_id=?', [appId])
+  // A3 · 实验分析：级联删除该应用的实验定义与曝光（对齐既有级联口径）
+  await run('delete from experiment_exposures where app_id=?', [appId])
+  await run('delete from experiments where app_id=?', [appId])
   // 最后删除应用记录
   await run('delete from applications where app_id=?', [appId])
   applicationCache.delete(appId)
@@ -222,6 +233,10 @@ export async function cleanupExpiredData() {
   deleted.issues = (await run(`delete from issues where status = 'resolved' and last_seen < ?`, [cutoff(now, retention.resolvedIssuesDays)])).rowCount
   deleted.sourcemaps = (await run('delete from sourcemaps where created_at < ?', [cutoff(now, retention.sourcemapsDays)])).rowCount
   deleted.alerts = (await run('delete from alert_history where created_at < ?', [cutoff(now, retention.alertsDays)])).rowCount
+  // B3 · 合成监控：探针结果默认保留 30d（挂现有 cleanup，PRD FR-9）
+  deleted.syntheticResults = (await run('delete from synthetic_results where checked_at < ?', [cutoff(now, retention.syntheticResultsDays)])).rowCount
+  // A3 · 实验分析：曝光记录默认 30d（与 events 保留期对齐，PRD 14 §7.2；保留期复用 eventsDays 口径）
+  deleted.experimentExposures = (await run('delete from experiment_exposures where exposed_at < ?', [cutoff(now, retention.eventsDays)])).rowCount
   return deleted
 }
 
@@ -270,8 +285,15 @@ function normalizeSettings(input = {}) {
   return merged
 }
 
+// D4 白标：brand 块 + AI 块纳入合并白名单，saveSettings 不再覆盖既有 brand/ai 配置
+// （品牌配置落 platform_settings.config_json.brand，与 retention/alerts 同级；D4 红线：不得清零）。
 function mergeSettings(input = {}) {
-  return { retention: { ...defaultSettings.retention, ...(input?.retention || {}) }, alerts: { ...defaultSettings.alerts, ...(input?.alerts || {}) } }
+  return {
+    retention: { ...defaultSettings.retention, ...(input?.retention || {}) },
+    alerts: { ...defaultSettings.alerts, ...(input?.alerts || {}) },
+    brand: { ...(defaultSettings.brand || {}), ...(input?.brand || {}) },
+    ai: { ...(defaultSettings.ai || {}), ...(input?.ai || {}) }
+  }
 }
 
 function clampRate(value) { return Math.max(0, Math.min(1, Number(value ?? 1))) }

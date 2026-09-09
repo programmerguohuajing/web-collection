@@ -361,6 +361,10 @@ export async function ensureSchema() {
     created_at bigint not null,
     updated_at bigint not null
   )`)
+  // A2 · 自定义看板分享：Postgres 支持 IF NOT EXISTS，瞬时安全；唯一索引对 NULL 放行（未分享行 token=NULL 允许多行）。
+  await run(`alter table dashboard_definitions add column if not exists shared boolean not null default false`)
+  await run(`alter table dashboard_definitions add column if not exists share_token text`)
+  await run(`create unique index if not exists idx_dashboard_definitions_share_token on dashboard_definitions(share_token)`)
   await run(`create table if not exists analytics_insights (
     id bigserial primary key,
     name varchar(128) not null,
@@ -574,6 +578,253 @@ export async function ensureSchema() {
     created_at bigint not null
   )`)
   await run(`create index if not exists idx_data_access_audit_time on data_access_audit(created_at desc)`)
+  // D2 · 账号/团队/RBAC 地基（与 D1 迁移 0025 同构；PG 支持 ADD COLUMN IF NOT EXISTS）
+  await run(`create table if not exists users (
+    id varchar(32) primary key,
+    email varchar(160) not null unique,
+    name varchar(64) not null,
+    password_hash varchar(255) not null,
+    status varchar(16) not null default 'active',
+    created_at bigint not null,
+    updated_at bigint not null,
+    last_login_at bigint
+  )`)
+  await run(`create table if not exists teams (
+    id varchar(32) primary key,
+    name varchar(64) not null,
+    slug varchar(64) not null unique,
+    created_by varchar(32),
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists team_members (
+    team_id varchar(32) not null,
+    user_id varchar(32) not null,
+    role varchar(16) not null default 'member',
+    access_level varchar(2) not null default 'L2',
+    status varchar(16) not null default 'active',
+    joined_at bigint,
+    created_at bigint not null,
+    updated_at bigint not null,
+    primary key (team_id, user_id)
+  )`)
+  await run(`create table if not exists invitations (
+    id varchar(32) primary key,
+    team_id varchar(32) not null,
+    email varchar(160) not null,
+    role varchar(16) not null default 'member',
+    access_level varchar(2) not null default 'L2',
+    token_hash varchar(64) not null,
+    expires_at bigint not null,
+    invited_by varchar(32),
+    accepted_at bigint,
+    revoked_at bigint,
+    created_at bigint not null
+  )`)
+  await run(`create table if not exists sessions (
+    id varchar(32) primary key,
+    user_id varchar(32) not null,
+    token_hash varchar(64) not null,
+    expires_at bigint not null,
+    revoked_at bigint,
+    ip varchar(64),
+    user_agent varchar(255),
+    created_at bigint not null
+  )`)
+  await run(`create table if not exists audit_logs (
+    id bigserial primary key,
+    team_id varchar(32),
+    actor_user_id varchar(32),
+    actor_email varchar(160),
+    action varchar(32) not null,
+    target_type varchar(32),
+    target_id varchar(64),
+    detail_json jsonb,
+    ip varchar(64),
+    user_agent varchar(255),
+    created_at bigint not null
+  )`)
+  await run(`alter table applications add column if not exists team_id varchar(32)`)
+  await run(`create index if not exists idx_applications_team on applications(team_id)`)
+  await run(`create index if not exists idx_team_members_user on team_members(user_id)`)
+  await run(`create index if not exists idx_invitations_team on invitations(team_id, created_at desc)`)
+  await run(`create index if not exists idx_sessions_user on sessions(user_id, created_at desc)`)
+  await run(`create index if not exists idx_audit_logs_team_time on audit_logs(team_id, created_at desc)`)
+
+  // ==================== B2 · SLO / 错误预算（双后端同构，对齐 D1 0027/0028） ====================
+  // 字段与 D1 一致；PG 用 jsonb（::jsonb），D1 用 TEXT(JSON)。
+  await run(`create table if not exists slo_definitions (
+    id varchar(32) primary key, app_id varchar(64) not null, team_id varchar(32),
+    name varchar(80) not null, objective real not null, window_days integer not null default 30,
+    sli_type varchar(16) not null, sli_config jsonb not null default '{}'::jsonb,
+    alert_policy jsonb not null default '{}'::jsonb, created_by varchar(32),
+    created_at bigint not null, updated_at bigint not null
+  )`)
+  await run(`create table if not exists slo_burn_snapshots (
+    id varchar(32) primary key, slo_id varchar(32) not null, snap_at bigint not null,
+    window_start bigint not null, window_end bigint not null, total bigint not null, bad bigint not null,
+    good_ratio real not null, budget_used real not null, burn_rate real not null, status varchar(12) not null
+  )`)
+  await run(`create index if not exists idx_slo_team_app on slo_definitions(team_id, app_id, updated_at desc)`)
+  await run(`create index if not exists idx_burn_slo on slo_burn_snapshots(slo_id, snap_at desc)`)
+
+  // ==================== B3 · 合成监控（双后端同构，对齐 D1 0030/0031） ====================
+  // 字段与 D1 一致；PG 用 boolean（D1 用 integer 0/1）。
+  // app_id varchar(64) 对齐 applications 宽度（B2 曾踩 32 宽度坑，勿用 32）。
+  await run(`create table if not exists synthetic_checks (
+    id varchar(32) primary key, app_id varchar(64) not null, team_id varchar(32),
+    name varchar(80) not null, url varchar(512) not null, method varchar(8) not null default 'GET',
+    interval_seconds integer not null default 300, timeout_ms integer not null default 10000,
+    expected_status integer not null default 200, keyword varchar(256), latency_threshold_ms integer,
+    fail_threshold integer not null default 3, enabled boolean not null default true,
+    last_status varchar(12) default 'unknown', last_run_at bigint, consecutive_failures integer not null default 0,
+    created_at bigint not null, updated_at bigint not null
+  )`)
+  await run(`create table if not exists synthetic_results (
+    id varchar(32) primary key, check_id varchar(32) not null, ok boolean not null,
+    outcome varchar(12) not null, status_code integer, latency_ms integer,
+    latency_exceeded boolean not null default false, error varchar(256), checked_at bigint not null
+  )`)
+  await run(`create index if not exists idx_syn_checks_team_app on synthetic_checks(team_id, app_id, updated_at desc)`)
+  await run(`create index if not exists idx_syn_results_check_time on synthetic_results(check_id, checked_at desc)`)
+  await run(`create index if not exists idx_syn_results_checked_at on synthetic_results(checked_at)`)
+
+  // ==================== D1 · 数据主体权利 DSR（双栈同构，对齐 D1 0033） ====================
+  // 列名/列宽/默认值与 D1 版逐字对齐（team_id varchar(32) 对齐 D2 既有表现实；app_id varchar(64) 对齐 applications），
+  // 保证双栈 JSON 响应同形状。issues/events/replays 为 DSR 命中与擦除目标表（复用既有表，不新建）。
+  await run(`create table if not exists dsr_requests (
+    id varchar(32) primary key, team_id varchar(32),
+    app_id varchar(64) not null default '', subject_type varchar(16) not null,
+    subject_value varchar(256) not null, request_type varchar(16) not null,
+    mode varchar(16), export_format varchar(8), status varchar(24) not null default 'draft',
+    hit_events integer not null default 0, hit_issues integer not null default 0,
+    hit_replays integer not null default 0,
+    requested_by varchar(64) not null, approved_by varchar(64), executed_by varchar(64),
+    reject_reason varchar(512),
+    rows_affected_events integer not null default 0, rows_affected_issues integer not null default 0,
+    rows_affected_replays integer not null default 0,
+    result_json text,
+    created_at bigint not null, decided_at bigint, executed_at bigint, completed_at bigint
+  )`)
+  await run(`create index if not exists idx_dsr_req_team_status on dsr_requests(team_id, status, created_at)`)
+  await run(`create index if not exists idx_dsr_req_subject on dsr_requests(team_id, subject_type, subject_value)`)
+  await run(`create table if not exists dsr_audit_logs (
+    id varchar(32) primary key, request_id varchar(32) not null,
+    actor_id varchar(64) not null, action varchar(24) not null,
+    detail_json text, ts bigint not null
+  )`)
+  await run(`create index if not exists idx_dsr_audit_request on dsr_audit_logs(request_id, ts)`)
+
+  // ==================== A3 · 实验分析（双栈同构，对齐 D1 0034 / cloudflare/migrations/0034_experiments.sql） ====================
+  // 列名/列宽/默认值与 D1 版逐字对齐（app_id varchar(64) 对齐 applications；team_id varchar(32) 对齐 D2 既有表现实），
+  // 保证双栈 JSON 响应同形状。JSON 字段保持 text（JSON 均在 JS 端 JSON.parse，规避 toPgSql 盲替换 `?`
+  // 与 JSONB `?`/`?|` 算子冲突）。
+  await run(`create table if not exists experiments (
+    id varchar(32) primary key,
+    app_id varchar(64) not null,
+    team_id varchar(32),
+    key varchar(64) not null,
+    name varchar(80) not null,
+    description varchar(512),
+    status varchar(16) not null default 'draft',
+    salt varchar(32) not null,
+    traffic_pct integer not null default 100,
+    variants_json text not null,
+    goal_metric_json text,
+    started_at bigint,
+    ended_at bigint,
+    created_by varchar(64),
+    updated_by varchar(64),
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create unique index if not exists uq_experiments_app_key on experiments(app_id, key)`)
+  await run(`create index if not exists idx_experiments_app_status on experiments(app_id, status, updated_at)`)
+  await run(`create index if not exists idx_experiments_team on experiments(team_id, updated_at)`)
+  // 曝光表：唯一索引 (experiment_id, visitor_id) 去重——写入一律 on conflict do nothing，已记录变体永不改写
+  await run(`create table if not exists experiment_exposures (
+    id varchar(32) primary key,
+    experiment_id varchar(32) not null,
+    app_id varchar(64) not null,
+    team_id varchar(32),
+    visitor_id varchar(64) not null,
+    session_id varchar(64),
+    variant varchar(32) not null,
+    exposed_at bigint not null
+  )`)
+  await run(`create unique index if not exists uq_exp_exposure_dedup on experiment_exposures(experiment_id, visitor_id)`)
+  await run(`create index if not exists idx_exp_exposure_variant_ts on experiment_exposures(experiment_id, variant, exposed_at)`)
+  await run(`create index if not exists idx_exp_exposure_app_ts on experiment_exposures(app_id, exposed_at)`)
+
+  // ==================== D3 · 用量计量与套餐/定价（双栈同构，对齐 D1 0035 / cloudflare/migrations/0035_metering.sql） ====================
+  // 列名/列宽/默认值与 D1 版逐字对齐（app_id varchar(64) 对齐 applications；team_id varchar(32) 对齐 teams/team_members），
+  // 保证双栈 JSON 响应同形状。JSON 字段保持 text（全部在 JS 端 JSON.parse，规避 toPgSql 盲替换 `?` 与 JSONB `?`/`?|` 算子冲突）。
+  // enabled 用 boolean（D1 用 integer 0/1，服务层统一 Boolean() 映射，沿用 db.js:673 既有惯例）。
+  //
+  // ⚠️ 保留策略红线：`usage_daily` / `quota_events` 是账单与争议凭证，保留 25 个自然月，
+  //    **不在** governance.js cleanupExpiredData() 的清理清单内（其清理由 meteringDailyTick 独立执行）。
+  //    禁止后续把这两张表加入 cleanupExpiredData()——详见该函数末尾的显式排除注释。
+  //
+  // 日切口径：`day` = yyyyMMdd（UTC 自然日），与既有 metric_daily_stats（0022 迁移）同范式；
+  // period_key='YYYY-MM' 与 day 可互推，故不建 usage_monthly 冗余表（避免双写账本漂移）。
+  await run(`create table if not exists usage_daily (
+    team_id varchar(32) not null default '',
+    app_id varchar(64) not null default '',
+    metric varchar(24) not null,
+    day integer not null,
+    value bigint not null default 0,
+    updated_at bigint not null,
+    primary key (team_id, app_id, metric, day)
+  )`)
+  await run(`create index if not exists idx_usage_team_day on usage_daily(team_id, day)`)
+  await run(`create index if not exists idx_usage_app_day on usage_daily(app_id, day)`)
+  await run(`create table if not exists plans (
+    id varchar(32) primary key,
+    code varchar(32) not null unique,
+    name varchar(64) not null,
+    quota_json text not null,
+    soft_limit_pct integer not null default 80,
+    hard_action varchar(16) not null default 'none',
+    price_hint_json text,
+    enabled boolean not null default true,
+    created_at bigint not null,
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists team_plans (
+    team_id varchar(32) primary key,
+    plan_id varchar(32) not null,
+    quota_override_json text,
+    updated_by varchar(64),
+    updated_at bigint not null
+  )`)
+  await run(`create table if not exists quota_events (
+    id varchar(32) primary key,
+    team_id varchar(32) not null,
+    metric varchar(24) not null,
+    period_key varchar(8) not null,
+    level varchar(8) not null,
+    value bigint not null,
+    quota bigint not null,
+    notified integer not null default 0,
+    created_at bigint not null
+  )`)
+  await run(`create unique index if not exists uq_quota_event on quota_events(team_id, metric, period_key, level)`)
+  await run(`create index if not exists idx_quota_events_team_period on quota_events(team_id, period_key)`)
+  // 种子档位（on conflict(code) do nothing 幂等）：无 team_plans 行时逻辑默认挂 free，不写物理行（PRD Q5）。
+  const meteringSeedAt = Date.now()
+  for (const seed of [
+    ['plan_free', 'free', '免费版', '{"events":100000,"replay_sessions":1000,"seats":3,"retention_days":7}'],
+    ['plan_pro', 'pro', '专业版', '{"events":5000000,"replay_sessions":50000,"seats":20,"retention_days":30}'],
+    ['plan_enterprise', 'enterprise', '企业版', '{"events":-1,"replay_sessions":-1,"seats":-1,"retention_days":90}']
+  ]) {
+    await run(`insert into plans (id, code, name, quota_json, soft_limit_pct, hard_action, price_hint_json, enabled, created_at, updated_at)
+      values (?, ?, ?, ?, 80, 'none', null, true, ?, ?) on conflict (code) do nothing`,
+      [seed[0], seed[1], seed[2], seed[3], meteringSeedAt, meteringSeedAt])
+  }
+  // D3 · 回放会话去重（口径：会话键 = coalesce(base_session_id, session_id)，见架构 §2.6）：
+  // replay_events 此前仅有 session_id 侧索引，重算与去重点查按 base_session_id 扫描会退化为全表扫，故补索引。
+  await run(`create index if not exists idx_replay_events_base_session on replay_events(base_session_id)`)
+  await run(`create index if not exists idx_replay_events_app_session_ts on replay_events(app_id, session_id, created_at)`)
 }
 
 /**

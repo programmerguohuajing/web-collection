@@ -1,0 +1,42 @@
+{
+  "name": "@web-collection/sdk-electron",
+  "version": "0.1.0",
+  "description": "Web Collection SDK for Electron (main process app-level telemetry + renderer IPC bridge). Event types reuse the existing backend whitelist; electron APIs are dependency-injected (never imported) so the package stays unit-testable.",
+  "type": "module",
+  "main": "./dist/sdk-electron.cjs",
+  "module": "./dist/sdk-electron.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./dist/sdk-electron.js",
+      "require": "./dist/sdk-electron.cjs"
+    },
+    "./preload": {
+      "types": "./preload.d.ts",
+      "import": "./dist/sdk-electron.preload.js",
+      "require": "./dist/sdk-electron.preload.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "index.d.ts",
+    "preload.d.ts",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "scripts": {
+    "build": "vite build && vite build --config vite.preload.config.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@web-collection/sdk": ">=0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "electron": {
+      "optional": true
+    }
+  },
+  "license": "MIT"
+}

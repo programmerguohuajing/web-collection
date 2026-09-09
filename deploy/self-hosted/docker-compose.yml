@@ -1,0 +1,42 @@
+# D4 白标 · 可选 docker-compose（api + postgres）
+# 仅为可选补充，未纳入 CI 验证。需先 npm install 并构建前端 dist。
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: web_eys
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  api:
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      - postgres
+    ports:
+      - "8787:8787"
+    volumes:
+      - .:/app
+    command: node apps/api/src/index.js
+    environment:
+      PORT: 8787
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/web_eys
+      ADMIN_API_KEY: change-me-in-prod
+      CORS_ORIGIN: "*"
+      WEB_DIST: ../web/dist
+      SDK_DIST: ../../packages/sdk/dist
+      # ---- 白标出厂预置（可选）----
+      BRAND_NAME: "你的品牌名"
+      BRAND_SHORT_NAME: "YC"
+      BRAND_PRIMARY_COLOR: "#4f46e5"
+      BRAND_LOGO_URL: ""
+      BRAND_FAVICON_URL: ""
+      BRAND_LOGIN_TITLE: ""
+      BRAND_LOGIN_SUBTITLE: "前端遥测平台"
+      PUBLIC_CONSOLE_ORIGIN: "https://monitor.example.com"
+volumes:
+  pgdata:

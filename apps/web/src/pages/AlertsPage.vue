@@ -164,7 +164,7 @@ async function testChannel(row) {
   } finally { channelTestingId.value = null }
 }
 function channelTypeLabel(type) {
-  return { email: '邮件', webhook: 'Webhook', sms: '短信', dingtalk: '钉钉', feishu: '飞书', feishu_app: '飞书智能体', wecom: '企业微信' }[type] || type
+  return { email: '邮件', webhook: 'Webhook', sms: '短信', dingtalk: '钉钉', feishu: '飞书', feishu_app: '飞书智能体', wecom: '企业微信', slack: 'Slack', pagerduty: 'PagerDuty' }[type] || type
 }
 
 const channelVars = computed(() => variablesForChannel(channelForm.type))
@@ -290,9 +290,12 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
   <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑渠道' : '新增渠道'" width="min(760px, calc(100vw - 32px))" :loading="channelSaving">
     <el-form :model="channelForm" label-width="130px">
       <el-form-item label="名称"><el-input v-model="channelForm.name" /></el-form-item>
-      <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','feishu_app','wecom']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
-      <el-form-item v-if="channelForm.type !== 'feishu_app'" label="服务地址" required>
-        <el-input v-model="channelForm.endpoint" :placeholder="channelForm.endpointConfigured ? '已加密保存；留空表示不修改' : 'https://provider.example.com/webhook'" />
+      <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','feishu_app','wecom','slack','pagerduty']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
+      <el-form-item v-if="channelForm.type !== 'feishu_app' && channelForm.type !== 'pagerduty'" label="服务地址" required>
+        <el-input v-model="channelForm.endpoint" :placeholder="endpointPlaceholder" />
+      </el-form-item>
+      <el-form-item v-if="channelForm.type === 'pagerduty'" label="Routing Key" required>
+        <el-input v-model="channelForm.routingKey" type="password" show-password :placeholder="channelForm.endpointConfigured ? '留空表示不修改' : 'Events API v2 的 32 位 Integration/Routing Key'" />
       </el-form-item>
       <template v-if="channelForm.type === 'feishu_app'">
         <el-form-item label="App ID"><el-input v-model="channelForm.appId" placeholder="飞书开放平台应用的 App ID" /></el-form-item>

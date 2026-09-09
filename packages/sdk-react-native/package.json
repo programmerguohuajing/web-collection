@@ -1,0 +1,72 @@
+{
+  "name": "@web-collection/sdk-react-native",
+  "version": "0.1.0",
+  "description": "Web Collection React Native SDK：移动端宿主适配层 + 移动端指标采集（冷启动 / 帧率卡顿 / 崩溃 / 前后台会话 / 网络），上报链路 100% 复用 @web-collection/sdk 平台内核。",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "react-native",
+    "monitoring",
+    "observability",
+    "web-collection",
+    "apm"
+  ],
+  "files": [
+    "dist",
+    "index.d.ts",
+    "react.d.ts",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@web-collection/sdk": "^0.4.0",
+    "react-native": ">=0.72.0",
+    "react": ">=16.8.0",
+    "@react-native-async-storage/async-storage": ">=1.17.0",
+    "@react-native-community/netinfo": ">=9.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react-native": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "@react-native-async-storage/async-storage": {
+      "optional": true
+    },
+    "@react-native-community/netinfo": {
+      "optional": true
+    }
+  },
+  "main": "dist/sdk-react-native.cjs",
+  "module": "dist/sdk-react-native.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./dist/sdk-react-native.js",
+      "require": "./dist/sdk-react-native.cjs"
+    },
+    "./react": {
+      "types": "./react.d.ts",
+      "import": "./dist/sdk-react-native.react.js",
+      "require": "./dist/sdk-react-native.react.cjs"
+    }
+  },
+  "scripts": {
+    "build": "vite build && vite build --config vite.react.config.js",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "terser": "^5.49.0",
+    "vite": "^6.3.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -38,7 +38,8 @@ test('buildCapabilities 写入向后兼容别名 productAnalyticsV2', () => {
 
 test('Node 与 Worker 都从单一真相源导入 buildCapabilities（代码级契约）', () => {
   assert.match(nodeSource, /deployment-capabilities/)
-  assert.match(nodeSource, /buildCapabilities\(\s*NODE_CAPABILITIES\s*\)/)
+  // D2 起 Node/Worker 调用均带运行时 override（accounts/experiments 等），正则只锚定第一实参来源
+  assert.match(nodeSource, /buildCapabilities\(\s*NODE_CAPABILITIES\b/)
   assert.match(workerSource, /deployment-capabilities/)
-  assert.match(workerSource, /buildCapabilities\(\s*WORKER_CAPABILITIES\s*\)/)
+  assert.match(workerSource, /buildCapabilities\(\s*WORKER_CAPABILITIES\b/)
 })

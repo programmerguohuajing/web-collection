@@ -78,20 +78,63 @@ const currentSessionCode = computed(() => {
 
 const currentPageLabel = computed(() => currentReplay.value?.url || '尚未记录页面地址')
 
+/**
+ * 关键事件判定：与侧栏「关键事件」同源，时间轴标记复用同一口径，
+ * 保证列表里看到的事件与进度条上的标记一一对应。
+ */
+function isKeyEvent(event = {}) {
+  if (event?.type === 1 || event?.type === 2 || event?.type === 4 || event?.type === 5) return true
+  return event?.type === 3 && [2, 3, 4, 5, 7, 11, 12].includes(Number(event?.data?.source))
+}
+
+/** 错误类事件：自定义事件的 error 标签，或控制台错误日志。 */
+function isErrorEvent(event = {}) {
+  if (event?.type !== 5 && event?.type !== 3) return false
+  const text = `${event?.data?.tag || ''} ${event?.data?.payload?.type || ''} ${event?.data?.text || ''}`
+  return /error|exception|unhandled/i.test(text)
+}
+
+/** 时间轴标记分类：错误 / 点击 / 导航 / 关键业务。 */
+function timelineEventKind(event = {}) {
+  if (isErrorEvent(event)) return 'error'
+  if (event?.type === 3 && Number(event?.data?.source) === 2) return 'click'
+  if (event?.type === 5) return 'business'
+  return 'navigate'
+}
+
 const keyEvents = computed(() => {
   if (!replayEvents.value.length) return []
   const firstTimestamp = Number(replayEvents.value[0]?.timestamp) || 0
   return replayEvents.value
-    .filter(event => {
-      if (event?.type === 1 || event?.type === 2 || event?.type === 4 || event?.type === 5) return true
-      return event?.type === 3 && [2, 3, 4, 5, 7, 11, 12].includes(Number(event?.data?.source))
-    })
+    .filter(isKeyEvent)
     .slice(0, 8)
     .map((event, index) => ({
       id: `${event.timestamp || 0}-${event.type || 0}-${index}`,
       label: replayEventLabel(event),
       time: formatTime(Math.max((Number(event.timestamp) || firstTimestamp) - firstTimestamp, 0))
     }))
+})
+
+/**
+ * 时间轴标记（B4）：按事件在会话中的相对时间定位到进度条百分比。
+ * duration 为 0（尚未加载/单帧会话）时不渲染，避免全部堆叠在 0 位。
+ */
+const timelineMarkers = computed(() => {
+  if (!replayEvents.value.length || !duration.value) return []
+  const firstTimestamp = Number(replayEvents.value[0]?.timestamp) || 0
+  const max = Math.max(Number(duration.value) || 0, 1)
+  return replayEvents.value
+    .filter(isKeyEvent)
+    .map((event, index) => {
+      const offset = Math.max((Number(event.timestamp) || firstTimestamp) - firstTimestamp, 0)
+      return {
+        id: `${event.timestamp || 0}-${event.type || 0}-${index}`,
+        offset,
+        percent: Math.min(99.5, Math.max(0.5, (offset / max) * 100)),
+        label: replayEventLabel(event),
+        kind: timelineEventKind(event)
+      }
+    })
 })
 
 const replayErrorCount = computed(() => replayEvents.value.filter(event => {
@@ -469,6 +512,25 @@ defineExpose({ play, currentSessionCode })
               @input="onSliderInput"
               @change="seek"
             />
+            <!-- B4：关键事件时间轴标记（错误 / 点击 / 导航 / 关键业务），点击定位到该时刻 -->
+            <div
+              v-if="timelineMarkers.length"
+              class="replay-timeline"
+              role="group"
+              :title="`${timelineMarkers.length} 个关键事件标记（点击可定位）`"
+            >
+              <button
+                v-for="marker in timelineMarkers"
+                :key="marker.id"
+                type="button"
+                class="replay-timeline-marker"
+                :class="`is-${marker.kind}`"
+                :style="{ left: `${marker.percent}%` }"
+                :title="`${marker.label} · ${formatTime(marker.offset)}`"
+                :aria-label="`${marker.label}，定位到 ${formatTime(marker.offset)}`"
+                @click.stop="seek(marker.offset)"
+              ></button>
+            </div>
             <!-- 当前进度时间气泡：组件内渲染、锚定在进度条手柄正上方（不用 teleport 的 popper，避免定位飘移） -->
             <div v-if="duration" class="replay-progress-bubble" :style="{ left: bubbleLeft }">{{ formatTime(progress) }}</div>
           </div>
@@ -596,7 +658,27 @@ defineExpose({ play, currentSessionCode })
 .replay-stage-state.is-error .el-icon, .replay-stage-state.is-error strong { color: #fda29b; }
 .replay-control-bar { display: grid; grid-template-columns: 36px minmax(160px, 1fr) auto auto; align-items: center; gap: 12px; min-height: 68px; padding: 12px 16px; background: var(--c-surface); border-top: 1px solid var(--c-border-2); }
 .replay-play-button { width: 36px; height: 36px; }
-.replay-slider-wrap { position: relative; display: flex; align-items: center; min-width: 0; }
+.replay-slider-wrap { position: relative; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 8px; min-width: 0; }
+/* B4 关键事件时间轴：与 el-slider 同宽，标记按相对时间百分比定位 */
+.replay-timeline { position: relative; height: 12px; }
+.replay-timeline-marker {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.replay-timeline-marker:hover { transform: translate(-50%, -50%) scale(1.45); box-shadow: 0 0 0 3px rgba(100, 116, 139, .25); }
+.replay-timeline-marker:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+.replay-timeline-marker.is-error { background: var(--c-danger); }
+.replay-timeline-marker.is-click { background: var(--c-primary); }
+.replay-timeline-marker.is-navigate { background: #f59e0b; }
+.replay-timeline-marker.is-business { background: #10b981; }
 .replay-progress-bubble {
   position: absolute;
   bottom: calc(100% + 8px);

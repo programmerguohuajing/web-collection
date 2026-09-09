@@ -1,0 +1,34 @@
+# D4 白标 · 控制台域名反代样例
+# 证书由客户自备（certbot 命令见注释，不自动执行）。
+# 将 server_name 改为你的控制台对外域名。
+
+server {
+    listen 443 ssl;
+    server_name monitor.example.com;
+
+    # SSL 证书自备（示例，不自动执行）：
+    #   sudo certbot --nginx -d monitor.example.com
+    # ssl_certificate     /etc/letsencrypt/live/monitor.example.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/monitor.example.com/privkey.pem;
+
+    client_max_body_size 20m;   # SourceMap / 批量上报
+
+    # /brand.js 无需单独 location，走下方 location / 即可
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 采集端点：关闭代理缓冲，保证实时上报
+    location /api/collect {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_buffering off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

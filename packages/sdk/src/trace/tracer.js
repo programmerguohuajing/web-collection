@@ -86,6 +86,20 @@ export class Tracer {
   }
 
   /**
+   * 移除一个 SpanProcessor（如远程配置变更后重新装配 OTLP 导出管线）。
+   * 移除前先 `shutdown()` 冲刷其剩余缓冲（避免尾包丢失），再将其移出处理器列表。
+   * @param {import('./processor.js').SpanProcessor} processor
+   */
+  removeSpanProcessor(processor) {
+    const idx = this._processors.indexOf(processor)
+    if (idx !== -1) {
+      this._processors.splice(idx, 1)
+      try { processor.shutdown?.().catch(() => {}) } catch {}
+    }
+    return this
+  }
+
+  /**
    * 创建根 span（页面加载时调用一次）
    * @param {string} [name='page']
    * @param {object} [attributes]

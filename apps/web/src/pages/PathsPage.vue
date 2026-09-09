@@ -187,8 +187,8 @@ onMounted(load)
               <el-table-column label="点击元素" min-width="200">
                 <template #default="{ row }"><OverflowTip :text="row.label" :force="true" /></template>
               </el-table-column>
-              <el-table-column label="所在页面" min-width="220" show-overflow-tooltip>
-                <template #default="{ row }">{{ clickPage(row) || '-' }}</template>
+              <el-table-column label="所在页面" min-width="220">
+                <template #default="{ row }"><OverflowTip :text="clickPage(row) || '-'" /></template>
               </el-table-column>
               <el-table-column label="点击次数" width="110" align="right">
                 <template #default="{ row }">{{ Number(row.value || 0).toLocaleString() }}</template>
