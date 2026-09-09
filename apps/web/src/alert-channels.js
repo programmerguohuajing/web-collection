@@ -1,3 +1,5 @@
+import { alertSubjectPrefix } from './composables/useBrand'
+
 const DEFAULT_LEVELS = ['error', 'critical']
 const DEFAULT_METRICS = ['error', 'log_error', 'regression']
 
@@ -21,7 +23,7 @@ export function createAlertChannelForm(row = {}) {
     subjectTemplate: config.subjectTemplate || config.subject || '',
     titleTemplate: config.titleTemplate || '',
     messageType: config.messageType || '',
-    subject: config.subject || `${brandName.value} 告警`,
+    subject: config.subject || alertSubjectPrefix.value,
     templateId: config.templateId || '',
     authType: config.authType || 'none',
     token: '',
