@@ -99,7 +99,6 @@ jobs:
           fi
 
       - name: Configure npm auth
-        if: steps.npmcheck.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
         run: |
@@ -109,6 +108,62 @@ jobs:
         id: publish
         if: steps.npmcheck.outputs.skip != 'true'
         working-directory: packages/sdk
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
+        run: pnpm publish --no-git-checks --access public
+
+      # ---- Next Horizon E4/E1：同步发布 sdk-react-native 与 sdk-electron ----
+      # 这两个包各自走独立版本线（当前 0.1.0），不与主 sdk 的 0.5.0 强绑定；
+      # tag 校验（Verify 步骤）仅针对主 sdk，下面的发布按各自 package.json 版本走，
+      # 幂等保护各自独立。dist 已被 gitignore，发布前必须在本工作流内 build。
+      - name: Install sdk-react-native dependencies
+        run: pnpm --filter @web-collection/sdk-react-native install --workspace-root=false
+
+      - name: Build sdk-react-native
+        run: pnpm --filter @web-collection/sdk-react-native build
+
+      - name: Check sdk-react-native version already published
+        id: rncheck
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/sdk-react-native/package.json').version")"
+          exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk-react-native/$version" || true)"
+          if [ "$exists" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Version $version already exists on npm — skipping publish."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish sdk-react-native
+        if: steps.rncheck.outputs.skip != 'true'
+        working-directory: packages/sdk-react-native
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
+        run: pnpm publish --no-git-checks --access public
+
+      - name: Install sdk-electron dependencies
+        run: pnpm --filter @web-collection/sdk-electron install --workspace-root=false
+
+      - name: Build sdk-electron
+        run: pnpm --filter @web-collection/sdk-electron build
+
+      - name: Check sdk-electron version already published
+        id: electroncheck
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/sdk-electron/package.json').version")"
+          exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk-electron/$version" || true)"
+          if [ "$exists" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Version $version already exists on npm — skipping publish."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish sdk-electron
+        if: steps.electroncheck.outputs.skip != 'true'
+        working-directory: packages/sdk-electron
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
         run: pnpm publish --no-git-checks --access public
