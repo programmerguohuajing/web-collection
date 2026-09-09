@@ -20,6 +20,8 @@ import { buildSummary } from './services/summary-service.js'
 import { fingerprint, percentile, scorePerf } from './utils/domain.js'
 import { parseJson } from './utils/json.js'
 import { ensureApplication, passesRules, processAlert, shouldCollect } from './governance.js'
+import { maybeRecordExposure } from './services/experiment-service.js'
+import { meteringRecordCollected, meteringRecordReplay } from './services/metering-service.js'
 
 /** 事件表最大保留行数，超过后自动裁剪旧数据 */
 const maxEvents = Number(process.env.MAX_EVENTS || 50000)
@@ -47,6 +49,13 @@ export async function recordEvents(inputs) {
     const event = await recordEvent(input)
     if (event) events.push(event)
   }
+  // D3 · 用量计量（PRD 15 P0-2，架构 §3.1 Node 注入点）：整批落库成功后按 (teamId, appId) 聚合累加
+  // `events` 计量维度——每请求 ≤ N_app 次 upsert，而非每事件一次写。
+  // **best-effort：meteringRecordCollected 内部吞掉全部异常仅 console.warn，绝不阻断入库。**
+  // 选 store.js 而非 index.js 注入的理由：recordEvents 是 POST /api/collect 与 GET /api/collect.gif
+  // 的唯一收敛点，一次注入覆盖两个入口；且此处 `events` 已确认全部 insertEventRow 成功，
+  // 语义比在 index.js 侧按返回值推断更精确（回放段由 recordReplay 内独立注入）。
+  await meteringRecordCollected(events)
   await trimEventsIfNeeded()
   return events
 }
@@ -72,6 +81,16 @@ export async function recordEvent(input) {
   const issue = event.type === 'error' ? await upsertIssue(event) : null
   if (event.type === 'error' || event.type === 'perf' || event.type === 'log') {
     void processAlert(event, issue).catch(error => console.error('alert processing failed', error))
+  }
+  // A3 · 实验曝光识别（PRD 14 P0-5，架构 §3.2 Node 注入点）：
+  // behavior/exposure + props.experiment_key 且实验 running → 写 experiment_exposures（去重唯一索引兜底）。
+  // best-effort：内部异常吞掉打 warn，不阻断事件主链路；无 running 实验时静默忽略（事件仍留在 events）。
+  if (event.type === 'behavior' && event.name === 'exposure' && event.props?.experiment_key) {
+    try {
+      await maybeRecordExposure(event)
+    } catch (error) {
+      console.warn('[experiment] exposure recording failed:', error?.message || error)
+    }
   }
   return event
 }

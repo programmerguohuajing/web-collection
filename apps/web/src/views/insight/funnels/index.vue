@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { api, pageLoading } from '../../../dashboard.js'
 import AnalyticsChart from '../../../components/AnalyticsChart.vue'
+import OverflowTip from '../../../components/OverflowTip.vue'
+import { buildReplayQuery } from '../../../utils/replay-link.js'
 
 const router = useRouter()
 
@@ -194,6 +196,15 @@ function replay(id) {
   if (id) router.push({ path: '/replays', query: { replayId: id } })
 }
 
+/**
+ * B4 漏斗 → 回放：按流失样本的用户过滤打开回放列表。
+ * actor 为漏斗口径下的用户标识（user_id 优先，缺失时回退 device_id），
+ * 传入回放查询 API 真实支持的 userId 参数。
+ */
+function replayList(actor) {
+  router.push({ path: '/replays', query: buildReplayQuery({ userId: actor }) })
+}
+
 onMounted(loadFunnels)
 </script>
 
@@ -306,17 +317,22 @@ onMounted(loadFunnels)
         <div v-if="report.lostSessions?.length" style="margin-top: 18px">
           <h4 class="prd-sub">👥 流失会话明细（前 {{ report.lostSessions.length }} 条）</h4>
           <el-table :data="report.lostSessions" size="small" border>
-            <el-table-column prop="actor" label="用户" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="lastEvent" label="最后步骤" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="errors" label="错误数" width="90" align="right" />
-            <el-table-column label="会话" min-width="150" show-overflow-tooltip>
-              <template #default="{ row }"><span class="muted">{{ row.sessionId }}</span></template>
+            <el-table-column label="用户" min-width="120">
+              <template #default="{ row }"><OverflowTip :text="row.actor" /></template>
             </el-table-column>
-            <el-table-column label="操作" width="150">
+            <el-table-column label="最后步骤" min-width="160">
+              <template #default="{ row }"><OverflowTip :text="row.lastEvent" /></template>
+            </el-table-column>
+            <el-table-column prop="errors" label="错误数" width="90" align="right" />
+            <el-table-column label="会话" min-width="150">
+              <template #default="{ row }"><OverflowTip :text="row.sessionId" /></template>
+            </el-table-column>
+            <el-table-column label="操作" width="220">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="jumpJourney(row.sessionId)">用户链路</el-button>
                 <el-button v-if="row.replaySessionId" link type="primary" size="small" @click="replay(row.replaySessionId)">回放</el-button>
-                <span v-else class="muted">—</span>
+                <el-button v-if="row.actor" link type="primary" size="small" @click="replayList(row.actor)">查看回放</el-button>
+                <span v-else-if="!row.replaySessionId" class="muted">—</span>
               </template>
             </el-table-column>
           </el-table>

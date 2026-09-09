@@ -21,7 +21,7 @@ export function createAlertChannelForm(row = {}) {
     subjectTemplate: config.subjectTemplate || config.subject || '',
     titleTemplate: config.titleTemplate || '',
     messageType: config.messageType || '',
-    subject: config.subject || 'Web Collection 告警',
+    subject: config.subject || `${brandName.value} 告警`,
     templateId: config.templateId || '',
     authType: config.authType || 'none',
     token: '',
@@ -29,6 +29,7 @@ export function createAlertChannelForm(row = {}) {
     password: '',
     appId: config.appId || '',
     appSecret: '',
+    routingKey: '',
     chatId: config.chatId || '',
     receiveIdType: config.receiveIdType || 'chat_id'
   }
@@ -39,9 +40,12 @@ export function buildAlertChannelPayload(form) {
   const recipients = String(form.recipients || '').trim()
   const type = String(form.type || '')
   const isFeishuApp = type === 'feishu_app'
-  if (!form.id && !endpoint && !isFeishuApp) throw new Error('新渠道必须填写 HTTPS 服务地址或 Webhook 地址')
+  const isPagerDuty = type === 'pagerduty'
+  const routingKey = String(form.routingKey || '').trim()
+  if (!form.id && !endpoint && !isFeishuApp && !isPagerDuty) throw new Error('新渠道必须填写 HTTPS 服务地址或 Webhook 地址')
   if (!form.id && isFeishuApp && !String(form.appSecret || '').trim()) throw new Error('飞书智能体渠道必须填写 App Secret')
   if (!form.id && isFeishuApp && !String(form.chatId || '').trim()) throw new Error('飞书智能体渠道必须填写目标群组/用户 ID')
+  if (!form.id && isPagerDuty && !routingKey) throw new Error('PagerDuty 渠道必须填写 Routing Key')
   if (type === 'sms' && !recipients) throw new Error('短信渠道必须填写接收人')
   if (type === 'email' && !recipients && !String(form.bodyTemplate || '').trim()) throw new Error('邮件渠道必须填写接收人或请求体模板')
 
@@ -51,6 +55,7 @@ export function buildAlertChannelPayload(form) {
   if (String(form.username || '').trim()) secrets.username = String(form.username).trim()
   if (String(form.password || '')) secrets.password = String(form.password)
   if (isFeishuApp && String(form.appSecret || '').trim()) secrets.appSecret = String(form.appSecret).trim()
+  if (isPagerDuty && routingKey) secrets.routingKey = routingKey
 
   return {
     id: form.id || undefined,

@@ -193,6 +193,21 @@ npm install -g pm2
 
 工作流保留最近 5 个版本；新版本启动或健康检查失败时自动切回上一个版本。
 
+### 私有化交付（白标）
+
+```bash
+cp deploy/self-hosted/.env.example .env   # 填写 BRAND_* 与数据库配置
+./deploy/self-hosted/start.sh
+```
+
+- **品牌出厂预置**：改 `.env` 的 `BRAND_NAME` / `BRAND_PRIMARY_COLOR` 等 → 启动即生效（无需进系统）。
+- **品牌运行时配置**：进入控制台「系统设置 → 品牌与白标」改后保存 + 刷新即生效，无需重新构建前端。
+  优先级：界面保存值 > env `BRAND_*` > 内置默认 `Web Collection` / `#4f46e5`。
+- **自定义域名**：控制台域名在 nginx 侧反代（见 `deploy/self-hosted/nginx.conf.example`）并同步 `CORS_ORIGIN`；
+  采集域名由接入方 SDK `init({ endpoint: 'https://collect.example.com/api/collect' })` 指定，平台不修改采集协议。
+- **Cloudflare Worker 部署**：白标默认关闭，需 `wrangler secret put WHITE_LABEL_ENABLED` 设为 `1`；
+  自定义域在 `wrangler.jsonc` 的 `routes[].pattern` 配置。**`/brand.js` 必须在 `assets.run_worker_first` 中**（已在配置内）。
+
 ### SourceMap 自动上传
 
 在业务构建完成后执行：

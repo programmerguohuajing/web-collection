@@ -12,7 +12,7 @@
     "directory": "./apps/web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/health", "/sdk/*", "/sdk-config"]
+    "run_worker_first": ["/api/*", "/health", "/sdk/*", "/sdk-config", "/embed/*", "/login/*", "/teams/*", "/brand.js"]
   },
   "d1_databases": [
     {
@@ -22,6 +22,6 @@
       "migrations_dir": "cloudflare/migrations"
     }
   ],
-  "triggers": { "crons": ["* * * * *", "17 3 * * *"] },
+  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "17 3 * * *"] },
   "observability": { "enabled": true }
 }

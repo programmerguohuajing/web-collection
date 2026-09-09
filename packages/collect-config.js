@@ -101,13 +101,16 @@ export function resolveCollectConfig(rows, context) {
 /** 深合并默认值：下发配置允许只携带变更字段 */
 export function mergeConfig(partial) {
   const base = structuredCloneDefault()
-  return {
+  const merged = {
     master_switch: partial.master_switch === 'off' ? 'off' : 'on',
     sampling: pickRates(partial.sampling, base.sampling),
     blocked_events: Array.isArray(partial.blocked_events) ? partial.blocked_events.map(item => String(item).slice(0, 160)).slice(0, 200) : base.blocked_events,
     plugins: pickBooleans(partial.plugins, base.plugins),
     rate_limits: normalizeRateLimits(partial.rate_limits)
   }
+  // C1 · OTLP 导出：仅当配置显式携带 otlp 块时纳入（默认不含 → 导出保持关闭）。
+  if (partial.otlp && typeof partial.otlp === 'object') merged.otlp = normalizeOtlp(partial.otlp)
+  return merged
 }
 
 function structuredCloneDefault() {
@@ -147,6 +150,29 @@ function clampRate(value) {
   return Math.max(0, Math.min(1, number))
 }
 
+/** 规范化 OTLP 导出配置：白名单字段 + 钳位 + 裁剪，防注入任意键/超长端点。 */
+function normalizeOtlp(input) {
+  if (!input || typeof input !== 'object') return undefined
+  const headers = {}
+  if (input.headers && typeof input.headers === 'object') {
+    for (const [key, value] of Object.entries(input.headers)) {
+      if (value == null) continue
+      headers[String(key).slice(0, 256)] = String(value).slice(0, 4096)
+    }
+  }
+  const rate = Number(input.samplingRate)
+  return {
+    enabled: Boolean(input.enabled),
+    endpoint: typeof input.endpoint === 'string' ? input.endpoint.slice(0, 2048) : '',
+    protocol: input.protocol === 'http/protobuf' ? 'http/protobuf' : 'http/json',
+    headers,
+    samplingRate: Number.isFinite(rate) ? Math.max(0, Math.min(1, rate)) : 1,
+    metrics: input.metrics === false ? false : true,
+    metricsEndpoint: typeof input.metricsEndpoint === 'string' ? input.metricsEndpoint.slice(0, 2048) : '',
+    timeout: Number.isFinite(Number(input.timeout)) && Number(input.timeout) > 0 ? Math.min(60000, Number(input.timeout)) : 10000
+  }
+}
+
 /**
  * 管理端保存入参规范化：白名单字段 + 裁剪，防注入任意键。
  */
@@ -158,7 +184,8 @@ export function sanitizeCollectConfigInput(input = {}) {
       ? (input.blockedEvents ?? input.blocked_events)
       : parseIfJson(input.blockedEvents ?? input.blocked_events),
     plugins: input.plugins,
-    rate_limits: input.rateLimits ?? input.rate_limits
+    rate_limits: input.rateLimits ?? input.rate_limits,
+    otlp: input.otlp && typeof input.otlp === 'object' ? input.otlp : undefined
   })
 }
 
@@ -186,6 +213,9 @@ export function diffConfigs(before, after) {
   }
   if (JSON.stringify(before.rate_limits || {}) !== JSON.stringify(after.rate_limits || {})) {
     lines.push(`rate_limits: ${JSON.stringify(before.rate_limits || {})} → ${JSON.stringify(after.rate_limits || {})}`)
+  }
+  if ((before.otlp?.enabled ?? false) !== (after.otlp?.enabled ?? false)) {
+    lines.push(`otlp.enabled: ${before.otlp?.enabled ?? false} → ${after.otlp?.enabled ?? false}`)
   }
   return lines.join('\n')
 }

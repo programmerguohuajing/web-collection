@@ -12,6 +12,17 @@ export function currentAccessLevel() {
   return normalizeLevel(process.env.DATA_ACCESS_LEVEL)
 }
 
+/**
+ * D2 FR-9：按请求上下文取等级。
+ * ① 已登录（身份中间件已解析 req.auth）→ 团队成员等级；
+ * ② 未登录或 accounts=false → 环境变量回落（fail-close L2，normalizeLevel 兜底）。
+ * applyAccessLevel 中间件与 packages/access-level.js 裁剪规则零改动，仅入参从全局常量换成本函数。
+ */
+export function resolveAccessLevel(req) {
+  if (req?.auth?.level) return normalizeLevel(req.auth.level)
+  return currentAccessLevel()
+}
+
 export async function listMembers() {
   const rows = await all(`select id, name, role, access_level, last_active_at, created_at, updated_at
     from members order by updated_at desc limit 200`).catch(() => [])

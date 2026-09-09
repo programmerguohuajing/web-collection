@@ -2,7 +2,9 @@ import { Receiver } from '@upstash/qstash'
 
 export const channelTypes = ['email', 'sms', 'feishu', 'feishu_app', 'wecom', 'dingtalk', 'webhook']
 export const alertLevels = ['warning', 'error', 'critical']
-export const alertMetrics = ['error', 'log_error', 'regression', 'lcp', 'inp', 'cls', 'longtask']
+// D3 · 用量计量（PRD 15）：'quota' 为配额超限提醒指标，未登记会被 normalizeChannel 的
+// `metrics.filter(v => alertMetrics.includes(v))` 静默过滤掉，用户配了通道也收不到（PRD §6.3 点名的坑）。
+export const alertMetrics = ['error', 'log_error', 'regression', 'lcp', 'inp', 'cls', 'longtask', 'slo_burn', 'quota']
 
 import { channelMessageTypes, renderTemplate, templateVariables, variablesForChannel } from './alert-templates.js'
 export { channelMessageTypes, renderTemplate, templateVariables, variablesForChannel }
@@ -164,6 +166,34 @@ export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
     targetUrl = resolved.url
     headers = resolved.headers
     body = resolved.body
+  } else if (type === 'slack') {
+    const url = String(secrets.url || '').trim()
+    validateEndpoint(url)
+    targetUrl = url
+    headers = { 'content-type': 'application/json' }
+    body = config.bodyTemplate
+      ? renderObject(JSON.parse(config.bodyTemplate), variables, secrets)
+      : { text: renderTemplate(config.messageTemplate || '${message}', variables) }
+  } else if (type === 'pagerduty') {
+    const routingKey = String(secrets.routingKey || '').trim()
+    if (!routingKey) throw new Error('PagerDuty Routing Key 未配置')
+    targetUrl = String(config.eventsUrl || 'https://events.pagerduty.com/v2/enqueue').trim()
+    validateEndpoint(targetUrl)
+    headers = { 'content-type': 'application/json' }
+    body = {
+      routing_key: routingKey,
+      event_action: 'trigger',
+      dedup_key: variables.alertId ? `eys-alert-${variables.alertId}` : undefined,
+      payload: {
+        summary: String(variables.message).slice(0, 1024),
+        source: variables.appId || 'web-collection',
+        severity: pagerdutySeverity(variables.level),
+        timestamp: variables.occurredAt,
+        custom_details: { metric: variables.metric, value: variables.value, threshold: variables.threshold, release: variables.release, page: variables.page, traceId: variables.traceId }
+      },
+      client: 'Web Collection',
+      ...(config.consoleUrl ? { client_url: String(config.consoleUrl) } : {})
+    }
   } else {
     const url = String(secrets.url || '').trim()
     validateEndpoint(url)
@@ -205,6 +235,9 @@ export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
   if (type === 'feishu_app') {
     if (result.code !== 0 && result.code !== undefined) throw new Error(`飞书接口返回错误 code=${result.code}: ${result.msg || ''}`)
     providerMessageId = String(result.data?.message_id || result.message_id || '').slice(0, 256) || null
+  } else if (type === 'pagerduty') {
+    if (result.status && result.status !== 'success') throw new Error(`PagerDuty 接口返回错误: ${result.message || result.status}`)
+    providerMessageId = String(result.dedup_key || '').slice(0, 256) || null
   } else {
     providerMessageId = String(result.messageId || result.msg_id || result.id || response.headers.get('x-request-id') || '').slice(0, 256) || null
   }
@@ -248,6 +281,12 @@ function defaultBody(type, value) {
   if (type === 'email') return { to: value.recipients, subject: value.subject, text: value.message }
   if (type === 'sms') return { to: value.recipients, templateId: value.templateId, params: { message: value.message } }
   return { text: value.message, alert: value }
+}
+
+/** 告警级别 → PagerDuty severity（critical/error/warning/info，未知归 error） */
+function pagerdutySeverity(level) {
+  const normalized = String(level || '').toLowerCase()
+  return ['critical', 'error', 'warning', 'info'].includes(normalized) ? normalized : 'error'
 }
 
 function renderObject(value, variables, secrets) {

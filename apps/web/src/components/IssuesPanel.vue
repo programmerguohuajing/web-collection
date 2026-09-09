@@ -1,7 +1,9 @@
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import OverflowTip from './OverflowTip.vue'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
+import { buildReplayQuery } from '../utils/replay-link.js'
 
 defineProps({
   issues: { type: Array, default: () => [] },
@@ -13,6 +15,7 @@ defineProps({
 defineEmits(['resolve', 'page-change', 'size-change'])
 const selected = ref(null)
 const detailVisible = ref(false)
+const router = useRouter()
 
 function showDetail(row) {
   selected.value = row
@@ -45,6 +48,16 @@ function sourceLabel(original, stack) {
 function issueTraceId(issue) {
   // 优先从 props → original → 事件顶层（聚合表三处都可能保留）取 traceId
   return issue?.props?.traceId || issue?.original?.traceId || issue?.traceId || null
+}
+
+/**
+ * B4 分析 → 回放：带过滤条件打开回放列表。
+ * 按「发生页面 + 用户」过滤，二者均为回放查询 API 支持的真实参数；
+ * 时间范围沿用全局筛选，不臆造新参数。
+ */
+function openReplay(row) {
+  const query = buildReplayQuery({ url: row?.url, userId: row?.props?.userId })
+  router.push({ path: '/replays', query })
 }
 </script>
 
@@ -86,9 +99,10 @@ function issueTraceId(issue) {
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="210" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="showDetail(row)">详情</el-button>
+          <el-button link type="primary" @click="openReplay(row)">查看回放</el-button>
           <el-button v-if="row.status !== 'resolved'" link type="primary" @click="$emit('resolve', row.fingerprint)">
             解决
           </el-button>

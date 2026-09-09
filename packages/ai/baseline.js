@@ -41,12 +41,34 @@ const METRIC_LABEL = {
 // ---------------- 纯工具 ----------------
 
 /**
+ * 判断某个原始值是否"缺测"（不应参与基线计算）。
+ *
+ * 关键：不能先 Number() 再过滤——`Number(null) === 0`、`Number('') === 0`，
+ * 会把"当日无数据"当成"当日值为 0ms"，导致基线均值与标准差被严重拉低（误报/漏报）。
+ * 因此必须在数值转换**之前**剔除缺测值。
+ *
+ * @param {unknown} v 原始值
+ * @returns {boolean} true 表示有效（可参与计算）
+ */
+function isValidSample(v) {
+  if (v == null) return false // null / undefined：缺测
+  if (typeof v === 'string' && v.trim() === '') return false // 空串/纯空白：缺测
+  if (typeof v === 'boolean') return false // 布尔不是有效指标值
+  return true
+}
+
+/**
  * 计算均值（中心）与样本标准差（离散度）。纯 JS，双端一致。
+ * 缺测值（null/undefined/空串）与非法数值（NaN/±Infinity/非数字串）一律跳过；
+ * 无任何有效值时返回安全空结果（center=null, dispersion=0），不产生 NaN、不除零。
  * @param {number[]} values
  * @returns {{ center: number|null, dispersion: number }}
  */
 export function computeBaseline(values) {
-  const arr = Array.isArray(values) ? values.map(Number).filter(v => isFinite(v)) : []
+  const arr = (Array.isArray(values) ? values : [])
+    .filter(isValidSample) // 先剔除缺测，避免 Number(null)→0 污染基线
+    .map(v => Number(v))
+    .filter(v => Number.isFinite(v)) // 再剔除 NaN / ±Infinity
   const n = arr.length
   if (n === 0) return { center: null, dispersion: 0 }
   const mean = arr.reduce((a, b) => a + b, 0) / n

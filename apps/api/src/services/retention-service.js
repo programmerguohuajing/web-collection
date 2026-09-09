@@ -48,8 +48,21 @@ function minDay(daySet) {
   return min
 }
 
+/**
+ * day → 'YYYY-MM-DD'（UTC）。
+ *
+ * 注意：极端脏数据（如 day=2e8）乘以 DAY_MS 后超出 Date 可表示范围（±8.64e15 ms），
+ * 此时 `new Date(...)` 得到 Invalid Date，`toISOString()` 会抛
+ * `RangeError: Invalid time value` —— 一行脏数据会打挂整个留存接口（500）。
+ * 因此先校验时间戳有效性，非法时降级回显原值，保证可读且不中断。
+ *
+ * @param {number} day UTC 天序号（floor(ts / 86400000)）
+ * @returns {string} 'YYYY-MM-DD'，非法时返回原值的字符串形式
+ */
 function dayToDate(day) {
-  return new Date(day * DAY_MS).toISOString().slice(0, 10)
+  const d = new Date(Number(day) * DAY_MS)
+  if (!Number.isFinite(d.getTime())) return String(day)
+  return d.toISOString().slice(0, 10)
 }
 
 /**
@@ -79,6 +92,9 @@ export async function listRetention(input = {}, query = all) {
   for (const row of rows) {
     const uid = row && row.uid
     if (!uid) continue
+    // day 缺测时必须跳过：Number(null)===0、Number('')===0 会造出「1970-01-01」幽灵同期群，
+    // 污染 totalUsers 与按群规模加权的 average。
+    if (row.day == null || row.day === '') continue
     const day = Number(row.day)
     if (!Number.isFinite(day)) continue
     let set = daysByUser.get(uid)

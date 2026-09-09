@@ -107,7 +107,7 @@ function normalize(body) {
   }
   const sampling = body.sampling && typeof body.sampling === 'object' ? body.sampling : {}
   const rateLimit = Number(body.rate_limits?.per_event_per_user_10min)
-  return {
+  const result = {
     config_version: Number(body.config_version) || 0,
     ttl_ms: Number(body.ttl_ms) > 0 ? Number(body.ttl_ms) : DEFAULT_TTL_MS,
     master_switch: body.master_switch === 'off' ? 'off' : 'on',
@@ -122,5 +122,50 @@ function normalize(body) {
       ? Object.fromEntries(Object.entries(body.plugins).map(([key, value]) => [String(key).slice(0, 32), value !== false]))
       : {},
     rate_limits: { per_event_per_user_10min: Number.isFinite(rateLimit) && rateLimit > 0 ? Math.floor(rateLimit) : 500 }
+  }
+  // C1 · OTLP 导出配置：仅当远端显式携带 otlp 块时透传（默认不含 → 导出保持关闭，绝不因配置故障误开）。
+  if (body.otlp && typeof body.otlp === 'object') result.otlp = normalizeOtlp(body.otlp)
+  // A3 · 实验定义块（PRD 14 §3.3）：白名单透传 running 实验（key/salt/traffic/variants），
+  // 供通用原语 getVariant 做客户端一致性分桶；钳位防服务端异常结构污染运行时。
+  // 仅当 items 非空时挂载（空块缺省 → SDK 按无实验处理）。
+  if (body.experiments && typeof body.experiments === 'object' && Array.isArray(body.experiments.items)) {
+    const items = body.experiments.items.slice(0, 20).map(item => ({
+      key: typeof item?.key === 'string' ? item.key.slice(0, 64) : '',
+      salt: typeof item?.salt === 'string' ? item.salt.slice(0, 32) : '',
+      traffic_pct: Math.max(0, Math.min(100, Math.floor(Number(item?.traffic_pct) || 0))),
+      variants: Array.isArray(item?.variants)
+        ? item.variants.slice(0, 4).map(variant => ({
+            name: typeof variant?.name === 'string' ? variant.name.slice(0, 32) : '',
+            weight: Math.max(0, Math.floor(Number(variant?.weight) || 0))
+          })).filter(variant => variant.name)
+        : []
+    })).filter(item => item.key && item.salt && item.variants.length)
+    if (items.length) result.experiments = { items }
+  }
+  return result
+}
+
+/** 规范化远端 OTLP 导出配置：白名单字段 + 钳位，防注入任意键/超长端点。 */
+function normalizeOtlp(input) {
+  const clamp01Local = (value) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1
+  }
+  const headers = {}
+  if (input.headers && typeof input.headers === 'object') {
+    for (const [key, value] of Object.entries(input.headers)) {
+      if (value == null) continue
+      headers[String(key).slice(0, 256)] = String(value).slice(0, 4096)
+    }
+  }
+  return {
+    enabled: Boolean(input.enabled),
+    endpoint: typeof input.endpoint === 'string' ? input.endpoint.slice(0, 2048) : '',
+    protocol: input.protocol === 'http/protobuf' ? 'http/protobuf' : 'http/json',
+    headers,
+    samplingRate: clamp01Local(input.samplingRate),
+    metrics: input.metrics === false ? false : true,
+    metricsEndpoint: typeof input.metricsEndpoint === 'string' ? input.metricsEndpoint.slice(0, 2048) : '',
+    timeout: Number.isFinite(Number(input.timeout)) && Number(input.timeout) > 0 ? Math.min(60000, Number(input.timeout)) : 10000
   }
 }

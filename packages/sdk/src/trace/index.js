@@ -19,6 +19,15 @@ export {
   WebCollectionSpanExporter,
   DEFAULT_RESOURCE
 } from './processor.js'
+// C1 · OpenTelemetry 导出：OTLP/HTTP + JSON（trace spans + RUM metrics）
+export {
+  OtlpTraceExporter,
+  spanToOtlp,
+  spansToOtlpJson,
+  buildOtlpResourceAttributes,
+  DEFAULT_OTLP_SCOPE
+} from './otlp-trace-exporter.js'
+export { OtlpMetricsExporter, RumMetricBatcher } from './otlp-metrics-exporter.js'
 export { Sampler, createSampler, isSampled } from './sampler.js'
 export {
   injectHeaders,

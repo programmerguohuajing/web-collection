@@ -173,6 +173,34 @@ export interface EysTransaction {
   finish(result?: Record<string, unknown>): void
 }
 
+/**
+ * C1 · OpenTelemetry 导出配置（OTLP/HTTP + JSON）。
+ *
+ * 默认关闭（`enabled: false`），必须显式开启——延续「默认关闭 + 脱敏下沉」原则。
+ * 开启后把 trace spans + RUM metrics **增量导出**到客户自有可观测性栈
+ * （Grafana / Datadog / Prometheus OTel Collector）；导出位置为**浏览器内直接 fetch
+ * 到客户 OTLP/HTTP 端点**，不经由本平台 Worker 桥接。
+ * 纯增量：不改动任何既有采集 / 落库逻辑，也不新增 PII 采集面。
+ */
+export interface EysOtlpOptions {
+  /** 是否启用 OTLP 导出，默认 false（默认关闭） */
+  enabled?: boolean
+  /** 客户 OTLP/HTTP traces 端点，如 'https://otlp.example.com/v1/traces' */
+  endpoint?: string
+  /** 协议：仅支持 'http/json'（最轻量、无 protobuf 依赖）；'http/protobuf' 暂不支持，会跳过并告警。默认 'http/json' */
+  protocol?: 'http/json' | 'http/protobuf'
+  /** 自定义请求头（用于客户鉴权，如 Authorization / x-api-key）；请求以 credentials:'omit' 发送，不携带 Cookie */
+  headers?: Record<string, string>
+  /** 导出采样率 [0,1]：按 traceId 做确定性决策，保证同链路父子 Span 一致保留 / 丢弃。默认 1（全量） */
+  samplingRate?: number
+  /** 是否同时导出 RUM metrics，默认 true */
+  metrics?: boolean
+  /** 独立 metrics 端点；留空则由 endpoint 推导（/v1/traces → /v1/metrics） */
+  metricsEndpoint?: string
+  /** 单次导出超时（毫秒），默认 10000 */
+  timeout?: number
+}
+
 /** SDK 初始化配置项 */
 export interface EysOptions {
   /** 数据上报端点地址 */
@@ -221,6 +249,8 @@ export interface EysOptions {
   /** 是否将 Span（页面根 / 自动请求 / 自定义）经 Processor/Exporter 批量写入 /api/spans。
    *  默认 false：0.1.x 不破坏现有后端与存储成本；0.2.0-beta 起可默认开启（配合采样）。 */
   spanExport?: boolean
+  /** C1 · OpenTelemetry 导出（OTLP/HTTP + JSON）：把 trace spans + RUM metrics 增量导出到客户自有栈。默认关闭。 */
+  otlp?: EysOtlpOptions
   /** 是否采集曝光埋点 */
   exposure?: boolean
   /** 是否开启回放录制 */
@@ -393,6 +423,12 @@ export interface EysClient {
   identify(userId: string, traits?: Record<string, unknown>): void
   /** 获取匿名设备 ID（anonymousId），与 identify 后的 userId 共同构成双 ID 模型（P2-5） */
   getAnonymousId(): string
+  /**
+   * A3 · 实验通用原语（PRD 14）：配置化变体消费（客户端一致性分桶）。
+   * 同一访客恒命中同一变体；返回 null 表示「不参与该实验」，业务走默认逻辑（失效安全）。
+   * 首次命中非空变体时自动经 exposure 事件通道上报曝光（会话内去重）。
+   */
+  getVariant(key: string): string | null
   /** 启用/禁用 SDK */
   setEnabled(enabled: boolean): void
   /** 设置全局上下文（会附加到所有上报事件中） */
@@ -590,6 +626,16 @@ export class Tracer {
   extractResponse(span: Span, headers: Headers | Record<string, string>): void
   /** 结束 span 并从活动栈弹出 */
   endSpan(span: Span): void
+  /** 注册 SpanProcessor（如 BatchSpanProcessor），Span 开始 / 结束时会通知它 */
+  addSpanProcessor(processor: SpanProcessor): Tracer
+  /** 移除 SpanProcessor（移除前先冲刷其剩余缓冲，用于远程配置变更重装配导出管线） */
+  removeSpanProcessor(processor: SpanProcessor): Tracer
+  /** 已注册的 Processor 列表（副本） */
+  getSpanProcessors(): SpanProcessor[]
+  /** 刷新所有 Processor 的缓冲（不关闭它们） */
+  flushSpans(): Promise<void>
+  /** 关闭所有 Processor（刷新剩余缓冲后停止接收） */
+  shutdownSpans(): Promise<void>
   /** 获取当前活动 span */
   getCurrentSpan(): Span | null
   /** 获取当前 trace 上下文 */
@@ -702,6 +748,92 @@ export const DEFAULT_RESOURCE: Required<SpanResource>
 export class WebCollectionSpanExporter extends SpanExporter {
   constructor(options: { send?: (payload: { schemaVersion: number; resource: SpanResource; spans: ReadableSpan[] }) => Promise<unknown>; resource?: SpanResource })
 }
+
+// ============================================================================
+// C1 · OpenTelemetry 导出（OTLP/HTTP + JSON）
+// 把 trace spans + RUM metrics 增量导出到客户自有可观测性栈（Grafana/Datadog/Prometheus）。
+// 浏览器内直接 fetch 到客户 OTLP/HTTP 端点，与既有 /api/spans 落库并行且互不干扰。
+// ============================================================================
+
+/** OTLP instrumentation scope（默认 { name: 'web-collection-sdk', version: SDK_VERSION }） */
+export interface OtlpScope {
+  name?: string
+  version?: string
+}
+
+/** OTLP/HTTP + JSON Trace Exporter 配置项 */
+export interface OtlpTraceExporterOptions {
+  /** 客户 OTLP/HTTP traces 端点，如 'https://otlp.example.com/v1/traces' */
+  endpoint: string
+  /** 自定义请求头（客户鉴权），请求以 credentials:'omit' 发送 */
+  headers?: Record<string, string>
+  /** 资源信息（默认 DEFAULT_RESOURCE） */
+  resource?: SpanResource
+  /** instrumentation scope */
+  scope?: OtlpScope
+  /** 导出采样率 [0,1]，按 traceId 确定性决策。默认 1 */
+  samplingRate?: number
+  /** deployment.environment 资源属性 */
+  environment?: string
+  /** 注入 fetch 实现（默认全局 fetch） */
+  fetchImpl?: (input: string | Request, init?: RequestInit) => Promise<Response>
+  /** 单次导出超时（毫秒），默认 10000 */
+  timeout?: number
+}
+
+/** OTLP/HTTP + JSON Trace Exporter：把 Span 以 OTLP JSON 导出到客户自有端点 */
+export class OtlpTraceExporter extends SpanExporter {
+  constructor(options: OtlpTraceExporterOptions)
+  /** 导出统计（不含敏感数据） */
+  getStats(): { exported: number; droppedBySample: number }
+}
+
+/** OTLP metrics 数据点（以 gauge 表达，不含 PII / 不含业务 props） */
+export interface OtlpMetricPoint {
+  name: string
+  value: number
+  /** epoch 纳秒字符串；缺省按当前时间生成 */
+  timeUnixNano?: string
+  attributes?: Array<{ key: string; value: Record<string, unknown> }>
+}
+
+/** OTLP/HTTP + JSON Metrics Exporter 配置项 */
+export interface OtlpMetricsExporterOptions {
+  /** 客户 OTLP/HTTP metrics 端点，如 'https://otlp.example.com/v1/metrics' */
+  endpoint: string
+  headers?: Record<string, string>
+  resource?: SpanResource
+  scope?: OtlpScope
+  fetchImpl?: (input: string | Request, init?: RequestInit) => Promise<Response>
+  timeout?: number
+}
+
+/** OTLP/HTTP + JSON Metrics Exporter：把 RUM metrics 导出到客户自有端点 */
+export class OtlpMetricsExporter {
+  constructor(options: OtlpMetricsExporterOptions)
+  export(points: OtlpMetricPoint[]): Promise<ExportResult>
+}
+
+/** RUM 指标 OTLP 缓冲批处理器：轻量内存缓冲 + 定时 / 达量刷新 */
+export class RumMetricBatcher {
+  constructor(exporter: OtlpMetricsExporter, options?: { flushIntervalMillis?: number; maxBatchSize?: number })
+  /** 追加一个 RUM 指标点（增量、非阻塞） */
+  add(name: string, value: number, ts?: number): void
+  /** 冲刷当前缓冲（不关闭定时器） */
+  flush(): Promise<ExportResult>
+  /** 关闭：停止定时并冲刷剩余缓冲 */
+  shutdown(): Promise<ExportResult>
+}
+
+/** OTLP 导出默认 instrumentation scope */
+export const DEFAULT_OTLP_SCOPE: Required<OtlpScope>
+
+/** 将单个 Span 转换为 OTLP Span JSON */
+export function spanToOtlp(span: Span, resource?: SpanResource): Record<string, unknown>
+/** 将一批 Span 组装为 OTLP/HTTP JSON traces 载荷（resourceSpans → scopeSpans → spans） */
+export function spansToOtlpJson(spans: Span[], resource?: SpanResource, scope?: OtlpScope, environment?: string): Record<string, unknown>
+/** 构造 OTLP Resource 属性（service.name / telemetry.sdk.* 等语义约定） */
+export function buildOtlpResourceAttributes(resource?: SpanResource, environment?: string): Array<{ key: string; value: Record<string, unknown> }>
 
 // ============================================================================
 // W3C 标准传播（路线图 Phase 3 · U03 / SDK-205）

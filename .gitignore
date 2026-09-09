@@ -26,3 +26,12 @@ apps/web/dist-*/
 
 # wrangler d1 临时产物（日志/上传中转，不入库）
 .d1raw.json
+
+# 临时验证/调试产物（不入库）
+_qa_*.txt
+_tmp_*
+apps/mcp/_tc.txt
+apps/mcp/_tct.txt
+apps/mcp/_test.txt
+apps/mcp/.tmp-test/
+dist-wrangler-check/

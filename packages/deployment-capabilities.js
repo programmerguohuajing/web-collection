@@ -24,7 +24,19 @@ export const CAPABILITY_KEYS = [
   'live',
   'releases',
   'eventDefinitions',
-  'journeys'
+  'journeys',
+  'accounts',
+  'slo',
+  // B3 · 合成监控（主动探针）：Node 随代码发布即支持；Worker 需 SYNTHETIC_ENABLED=1
+  'synthetic',
+  // D1 · 数据主体权利 DSR（PRD 13）：Node 随代码发布即支持；Worker 需 DSR_ENABLED=1
+  'dsr',
+  // A3 · 实验分析（PRD 14）：Node 随代码发布即支持；Worker 需 EXPERIMENTS_ENABLED=1 env 门禁
+  'experiments',
+  // D3 · 用量计量 & 套餐（PRD 15）：Node 随代码发布即支持；Worker 需 METERING_ENABLED=1 env 门禁
+  'metering',
+  // D4 · 白标 / 私有化（PRD 16）：Node 随代码发布即支持；Worker 需 WHITE_LABEL_ENABLED=1 env 门禁
+  'whiteLabel'
 ]
 
 /** 旧布尔字段 → 规范键 的向后兼容映射（前端仍可能读 productAnalyticsV2）。 */
@@ -43,7 +55,26 @@ export const NODE_CAPABILITIES = {
   live: true,
   releases: true,
   eventDefinitions: true,
-  journeys: true
+  journeys: true,
+  // D2 账号/团队/RBAC：后端能力已落地（M1）；运行时开关见 isAccountsEnabled()
+  //（默认 false 不破坏存量自托管；开启需 ACCOUNTS_ENABLED=1 + ACCOUNTS_JWT_SECRET）
+  accounts: true,
+  // B2 · SLO / 错误预算：Node 先行（M1 完整闭环）；Worker 镜像验收后再翻 true（原则 #4 兜底）。
+  slo: true,
+  // B3 · 合成监控：Node 自托管升级即得（服务层 + 调度器随代码发布）；Worker 走 env 门禁（原则 #4 兜底）。
+  synthetic: true,
+  // D1 · DSR：Node 自托管升级即得（服务层随代码发布；依赖账号体系 RBAC，未开启 accounts 时路由 403）；
+  // Worker 走 env 门禁（DSR_ENABLED=1，原则 #4 兜底）。
+  dsr: true,
+  // A3 · 实验分析：Node 自托管升级即得（experiment-service 随代码发布）；Worker 走 env 门禁
+  //（EXPERIMENTS_ENABLED=1，原则 #4 兜底）。
+  experiments: true,
+  // D3 · 用量计量：Node 自托管升级即得（metering-service 随代码发布）；Worker 走 env 门禁
+  //（METERING_ENABLED=1，原则 #4 兜底）。
+  metering: true,
+  // D4 · 白标：Node 自托管升级即得（branding-service 随代码发布）；Worker 走 env 门禁
+  //（WHITE_LABEL_ENABLED=1，原则 #4 兜底）。
+  whiteLabel: true
 }
 
 /**
@@ -60,7 +91,27 @@ export const WORKER_CAPABILITIES = {
   live: true,
   releases: true,
   eventDefinitions: true,
-  journeys: true
+  journeys: true,
+  // D2：Worker 侧 auth/team 端点未实现（Node 先行，PRD D9）——必须报 false，
+  // 前端据此隐藏登录态/团队入口，绝不上报未实现能力（原则 #4）
+  accounts: false,
+  // B2 · SLO：Worker 镜像实现与 Node 同套数学（packages/slo.js），但本批**保持 false**，
+  // 待 QA 在 Worker 侧验证 SLO 路由 / 定时 tick / 燃尽投递后再由 lead 翻 true（原则 #4 兜底，绝不上报未实现）。
+  slo: false,
+  // B3 · 合成监控：Worker 侧路由 + 分钟 cron tick 已实现，但依赖 SYNTHETIC_ENABLED=1 env 门禁，
+  // 未开启（含 QA 验收前）保持 false（原则 #4 兜底，绝不上报未验证能力）。
+  synthetic: false,
+  // D1 · DSR：Worker 侧路由已实现，但依赖 DSR_ENABLED=1 env 门禁；未开启保持 false（原则 #4 兜底）。
+  dsr: false,
+  // A3 · 实验分析：Worker 侧路由已实现，但依赖 EXPERIMENTS_ENABLED=1 env 门禁；
+  // 未开启保持 false（原则 #4 兜底；最终值在 worker.js buildCapabilities override 按 env 注入）。
+  experiments: false,
+  // D3 · 用量计量：Worker 侧内联 meteringXxxW 已实现，但依赖 METERING_ENABLED=1 env 门禁；
+  // 未开启保持 false（原则 #4 兜底）。
+  metering: false,
+  // D4 · 白标：Worker 侧 /brand.js 与 /api/brand 路由已实现，但依赖 WHITE_LABEL_ENABLED=1 env 门禁；
+  // 未开启保持 false（原则 #4 兜底）。
+  whiteLabel: false
 }
 
 /**

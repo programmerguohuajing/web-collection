@@ -3,16 +3,21 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
-  Histogram, House, Lock, Menu, Monitor, Operation, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled
+  Histogram, House, Lock, Menu, Monitor, Operation, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled, Share, SetUp, Stamp, Coin, Brush
 } from '@element-plus/icons-vue'
 import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
 import AiDiagnosisDrawer from '../components/AiDiagnosisDrawer.vue'
+import DashboardHeader from '../components/DashboardHeader.vue'
+import { useAuth } from '../composables/useAuth'
+import { useBrand } from '../composables/useBrand'
 
 const route = useRoute()
 const router = useRouter()
+const { accountsEnabled, isLoggedIn, loadCapabilities, loadMe, sloEnabled, syntheticEnabled, dsrEnabled, experimentsEnabled } = useAuth()
+const { brandName, brandShortName, brandSubtitle, brandFooterText } = useBrand()
 const store = useFilterStore()
 const diagnosisStore = useDiagnosisStore()
 const applications = ref([])
@@ -30,7 +35,7 @@ watch(() => route.query, () => {
   applyRoutePrefill(route.query)
 }, { immediate: true })
 
-const groups = [
+const baseGroups = [
   { label: '监测', items: [
     { title: '总览看板', path: '/overview', icon: House },
     { title: '告警中心', path: '/alerts', icon: Bell },
@@ -39,7 +44,12 @@ const groups = [
     { title: '性能分析', path: '/performance', icon: Stopwatch },
     { title: '会话回放', path: '/replays', icon: Film },
     { title: '日志平台', path: '/logs', icon: Files },
-    { title: '链路追踪', path: '/traces', icon: Connection }
+    { title: '链路追踪', path: '/traces', icon: Connection },
+    { title: 'API 健康', path: '/api-health', icon: Share },
+    { title: '集成中心', path: '/integrations', icon: SetUp },
+    { title: 'SLO 预算', path: '/slo', icon: Aim, cap: 'slo' },
+    { title: '合成监控', path: '/synthetic', icon: Stopwatch, cap: 'synthetic' },
+    { title: 'SDK 健康', path: '/sdk-health', icon: Monitor }
   ] },
   { label: '洞察', items: [
     { title: '用户链路', path: '/journey', icon: Aim },
@@ -49,6 +59,7 @@ const groups = [
     { title: '用户路径', path: '/paths', icon: Aim },
     { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
     { title: '留存分析', path: '/retention', icon: Grid },
+    { title: '实验分析', path: '/experiments', icon: Collection, cap: 'experiments' },
     { title: '发布管理', path: '/releases', icon: Operation },
     { title: 'AI 洞察', path: '/ai-insights', icon: BellFilled }
   ] },
@@ -58,20 +69,30 @@ const groups = [
     { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
     { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
-    { title: '知识库', path: '/knowledge', icon: Collection }
+    { title: '知识库', path: '/knowledge', icon: Collection },
+    { title: '合规 DSR', path: '/dsr', icon: Stamp, cap: 'dsr' }
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },
-    { title: '成员与数据等级', path: '/access-levels', icon: Lock }
+    { title: '成员与数据等级', path: '/access-levels', icon: Lock },
+    { title: '用量与套餐', path: '/usage', icon: Coin, cap: 'metering' },
+    { title: '品牌白标', path: '/brand', icon: Brush, cap: 'whiteLabel' }
   ] }
 ]
 
+// 能力位驱动的导航显隐（B3 泛化：cap 键对应 useAuth 同名能力位，false 部署不渲染入口，其余项不受影响）
+const capFlags = { slo: sloEnabled, synthetic: syntheticEnabled, dsr: dsrEnabled, experiments: experimentsEnabled }
+const groups = computed(() => baseGroups
+  .map(group => ({ ...group, items: group.items.filter(item => !item.cap || Boolean(capFlags[item.cap]?.value)) }))
+  .filter(group => group.items.length > 0)
+)
+
 const currentTitle = computed(() => {
-  for (const group of groups) {
+  for (const group of groups.value) {
     const item = group.items.find(entry => entry.path === route.path)
     if (item) return item.title
   }
-  return 'Web Collection'
+  return brandName.value
 })
 
 async function applyGlobal() {
@@ -109,6 +130,12 @@ onMounted(async () => {
     const r = await api('/api/ai/findings?status=open&limit=1', { requestKey: 'layout:insights' })
     insightCount.value = r?.total || 0
   } catch { /* 非阻塞 */ }
+
+  // D2 账号体系：拉取能力位；已登录则加载用户/团队，供导航用户菜单使用（accounts=false 部署自动跳过）
+  await loadCapabilities()
+  if (isLoggedIn.value) {
+    try { await loadMe() } catch { /* 令牌失效不影响监控页 */ }
+  }
 })
 </script>
 
@@ -126,8 +153,8 @@ onMounted(async () => {
     <div v-if="menuOpen" class="mobile-menu-overlay" @click.self="closeMenu">
       <aside class="mobile-sidebar">
         <div class="sidebar-brand">
-          <span class="brand-logo">WC</span>
-          <span><strong>Web Collection</strong><small>前端遥测平台</small></span>
+          <span class="brand-logo">{{ brandShortName }}</span>
+          <span><strong>{{ brandName }}</strong><small>{{ brandSubtitle }}</small></span>
         </div>
         <nav class="sidebar-nav" aria-label="主导航">
           <template v-for="group in groups" :key="group.label || 'overview'">
@@ -142,8 +169,8 @@ onMounted(async () => {
 
     <aside class="desktop-only sidebar-container">
       <div class="sidebar-brand">
-        <span class="brand-logo">WC</span>
-        <span><strong>Web Collection</strong><small>前端遥测平台</small></span>
+        <span class="brand-logo">{{ brandShortName }}</span>
+        <span><strong>{{ brandName }}</strong><small>{{ brandSubtitle }}</small></span>
       </div>
       <el-scrollbar class="sidebar-scroll">
         <nav class="sidebar-nav" aria-label="主导航">
@@ -155,7 +182,7 @@ onMounted(async () => {
           </template>
         </nav>
       </el-scrollbar>
-      <div class="sidebar-foot">Web Collection · 前端遥测平台</div>
+      <div class="sidebar-foot">{{ brandFooterText }}</div>
     </aside>
 
     <section class="main-container">
@@ -186,7 +213,8 @@ onMounted(async () => {
           </el-badge>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>
-          <span class="user-avatar" aria-label="当前用户">运</span>
+          <DashboardHeader v-if="accountsEnabled && isLoggedIn" />
+          <span v-else class="user-avatar" aria-label="当前用户">运</span>
         </div>
       </header>
 
