@@ -47,6 +47,39 @@ test('RingBuffer drain 取出全部留存、take 只取前 N 个', () => {
   assert.equal(rb.size, 0)
 })
 
+// 黑屏/无画面根治：全量快照（type:2）被窗口/容量淘汰后，take/drain 仍应补回，
+// 否则上报的纯增量事件流会让播放器「有播放时间、无画面、只有鼠标」。
+test('RingBuffer 全量快照被窗口淘汰后 take 仍携带 type:2', () => {
+  const rb = new ReplayRingBuffer({ maxSize: 1000, windowMs: 30000 })
+  const now = 1_000_000
+  rb.push({ type: 2, timestamp: now - 40000, data: { node: {} } }) // 快照已超 30s 窗口
+  rb.push({ type: 3, timestamp: now - 1000, data: { source: 1 } }) // 鼠标移动增量
+  const taken = rb.take(10, now)
+  assert.ok(taken.some((e) => e.type === 2), '窗口淘汰后 take 应补回 type:2 快照')
+  assert.equal(taken[0].type, 2, '快照应排在事件流最前')
+})
+
+test('RingBuffer 全量快照被容量淘汰后 drain 仍携带 type:2', () => {
+  const rb = new ReplayRingBuffer({ maxSize: 3, windowMs: 0 })
+  rb.push({ type: 2, data: {} }, 1000)
+  rb.push({ type: 3, data: {} }, 1001)
+  rb.push({ type: 3, data: {} }, 1002)
+  rb.push({ type: 3, data: {} }, 1003) // 容量超限 → 最旧（快照）被淘汰
+  assert.equal(rb.evictedTotal, 1)
+  const drained = rb.drain()
+  assert.ok(drained.some((e) => e.type === 2), '容量淘汰后 drain 应补回 type:2 快照')
+  assert.equal(drained[0].type, 2)
+})
+
+test('RingBuffer 快照随批次自然带出，不上报的旧快照不重复补入', () => {
+  const rb = new ReplayRingBuffer({ maxSize: 10, windowMs: 0 })
+  rb.push({ type: 2, data: {} }, 1000)
+  rb.push({ type: 3, data: {} }, 1001)
+  assert.deepEqual(rb.take(10).map((e) => e.type), [2, 3]) // 快照随本批上报
+  rb.push({ type: 3, data: {} }, 2000) // 新批次无快照且旧快照已上报
+  assert.deepEqual(rb.drain().map((e) => e.type), [3]) // 不重复补入旧快照
+})
+
 // ---------------------------------------------------------------------------
 // 压缩（SDK-210 · gzip / Worker / 降级）
 // ---------------------------------------------------------------------------

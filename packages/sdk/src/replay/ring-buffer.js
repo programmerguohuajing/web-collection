@@ -22,6 +22,12 @@ export class ReplayRingBuffer {
     /** @type {Array<{ts:number, event:object}>} */
     this._buf = []
     this._evicted = 0
+    /** 最近一次全量快照（rrweb type:2）的独立引用。
+     *  环形缓冲按容量/时间窗口淘汰旧事件，若全量快照被淘汰，
+     *  强制刷新上报的将是纯增量事件 → 回放只有鼠标、没有画面。
+     *  独立留存最近一次快照，在 take/drain 时若本批不含快照则前置补回，
+     *  保证每条上报记录都能被 rrweb 重建出页面。 */
+    this._lastSnapshot = null
   }
 
   /**
@@ -31,6 +37,8 @@ export class ReplayRingBuffer {
    * @returns {{ evicted: number }} 本次因容量超限被丢弃的事件数
    */
   push(event, ts = Date.now()) {
+    // rrweb 全量快照（type:2）独立留存：即便随后被容量/窗口淘汰，仍可补回
+    if (event && event.type === 2) this._lastSnapshot = { ts, event }
     this._buf.push({ ts, event })
     let evicted = 0
     // 容量护栏：超出 maxSize 丢弃最旧
@@ -73,9 +81,10 @@ export class ReplayRingBuffer {
    */
   drain(now = Date.now()) {
     this._evictExpired(now)
-    const out = this._buf.map((e) => e.event)
+    const out = this._withSnapshot(this._buf)
     this._buf = []
-    return out
+    if (out.some((e) => e?.event?.type === 2)) this._lastSnapshot = null
+    return out.map((e) => e.event)
   }
 
   /**
@@ -88,7 +97,9 @@ export class ReplayRingBuffer {
     this._evictExpired(now)
     const slice = this._buf.slice(0, count)
     this._buf = this._buf.slice(count)
-    return slice.map((e) => e.event)
+    const out = this._withSnapshot(slice)
+    if (out.some((e) => e?.event?.type === 2)) this._lastSnapshot = null
+    return out.map((e) => e.event)
   }
 
   /**
@@ -106,8 +117,27 @@ export class ReplayRingBuffer {
     }
   }
 
+  /**
+   * 保证输出事件流至少携带一份全量快照（type:2）。
+   * 仅当快照已被窗口/容量淘汰（不在 _buf 中）且本批不含任何快照时，
+   * 将最近一次快照前置补入，避免每次上报都重复补入同一条快照。
+   * @param {Array<{ts:number, event:object}>} items
+   * @returns {Array<{ts:number, event:object}>}
+   */
+  _withSnapshot(items) {
+    if (!Array.isArray(items) || !items.length) return items
+    if (items.some((e) => e?.event?.type === 2)) return items
+    const snapshot = this._lastSnapshot
+    if (!snapshot) return items
+    // 快照仍在缓冲中：无需补偿，会在后续批次自然带出，避免重复上报
+    if (this._buf.includes(snapshot)) return items
+    this._lastSnapshot = null
+    return [snapshot, ...items]
+  }
+
   /** 清空缓冲（销毁时） */
   clear() {
     this._buf = []
+    this._lastSnapshot = null
   }
 }
