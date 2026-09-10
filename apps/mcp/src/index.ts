@@ -55,7 +55,13 @@ export default {
     const scopedCfg: McpConfig = { ...cfg, apiKey: bearer, defaultAppId: app.app_id }
 
     // 4) 无状态模式：每次请求新建 transport + server（契合 Workers 冷启动，无 session 状态）
-    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+    //    注意：无状态模式必须 enableJsonResponse: true，否则 transport 默认走 SSE 流，
+    //    POST initialize 响应不会以 JSON 返回、连接一直挂起，客户端 streamableHttp 握手 60s 超时
+    //    （表现为 "transport handshake hung"）。此处的语义是「简单请求/响应」，无需服务端推送流。
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    })
     const server = buildServer(scopedCfg)
     await server.connect(transport)
 
