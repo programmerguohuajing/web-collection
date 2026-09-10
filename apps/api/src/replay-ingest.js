@@ -48,27 +48,46 @@ export function decompressReplayEvents(event) {
 }
 
 /**
- * 将同一分段的多条回放记录（可能分页、到达乱序）重组成有序事件流。
+ * 将同一回放会话的多条记录（可能分页、到达乱序、跨多个录制实例）重组成可播放事件流。
  *
- * - 按事件 `timestamp` 升序还原时间线（收包乱序也能正确拼接）；同时间戳按入库顺序稳定排序；
+ * 关键：rrweb 的 node id 空间按「录制实例」独立，而同一 `base_session_id` 下可能混有
+ * 多个实例（多次页面加载 / 多次 startReplay）。若把不同实例的事件混排（尤其把 A 实例的
+ * 全量快照塞进 B 实例的增量流），rrweb 重建镜像树时 node id 对不上 → 回放窗口空白。
+ * 因此按 `session_id`（= 录制实例）分组，各自独立处理后再依次拼接：
+ *   - 实例内按事件 `timestamp` 升序还原时间线（容忍分页乱序到达），同时间戳按入库顺序稳定排序；
+ *   - 每个实例只从「它自己的」首个全量快照（type === 2）开始输出，快照之前的增量丢弃；
+ *   - 实例若完全没有自身全量快照 → 整段跳过（不可重建，强行借用他段快照只会让画面崩坏）；
+ *   - 缺失 `session_id` 的行按同一默认实例处理，保持旧调用方的兼容性。
  * - 上限 `cap` 防止异常超大回放拖垮前端。
  *
- * 注：真实 SDK 录制首事件即为 rrweb 全量快照（type === 2），无需额外裁剪；
- * 此处保持「返回该分段全部事件（按时间有序）」的既有契约，避免破坏既有回放读取行为。
- *
- * @param {Array<{events_json:any}>} rows 数据库行（events_json 为 rrweb 事件数组或已解析对象）
+ * @param {Array<{session_id?:string, events_json:any}>} rows 数据库行（events_json 为 rrweb 事件数组或已解析对象）
  * @param {number} [cap=100000] 返回事件数上限
  * @returns {Array<object>}
  */
 export function reassembleReplayEvents(rows, cap = 100000) {
-  const merged = []
-  let seq = 0
-  for (const row of rows || []) {
+  const list = Array.isArray(rows) ? rows : []
+  // 按录制实例（session_id）分组，保持首次出现顺序（SQL 已按 created_at,id 正序，即录制顺序）。
+  const instances = new Map()
+  for (const row of list) {
     const arr = parseJson(row?.events_json)
-    if (!Array.isArray(arr)) continue
-    for (const e of arr) merged.push({ e, seq: seq++ })
+    if (!Array.isArray(arr) || !arr.length) continue
+    const sid = row?.session_id || '__default__'
+    if (!instances.has(sid)) instances.set(sid, [])
+    instances.get(sid).push(arr)
   }
-  if (!merged.length) return []
-  merged.sort((a, b) => (Number(a.e?.timestamp) - Number(b.e?.timestamp)) || (a.seq - b.seq))
-  return merged.slice(0, cap).map((x) => x.e)
+  const merged = []
+  for (const pages of instances.values()) {
+    const flat = []
+    let seq = 0
+    for (const arr of pages) for (const e of arr) flat.push({ e, seq: seq++ })
+    flat.sort((a, b) => (Number(a.e?.timestamp) - Number(b.e?.timestamp)) || (a.seq - b.seq))
+    const idx = flat.findIndex((x) => x.e?.type === 2)
+    if (idx < 0) continue // 该实例无自身全量快照：跳过，避免污染整条时间线导致画面空白
+    // 保留紧邻全量快照之前的 Meta（type:4）：它携带 viewport 尺寸 / href，属同一实例，
+    // 是 rrweb 事件流的规范开头（Meta → FullSnapshot）。只裁掉快照之前的增量。
+    let start = idx
+    if (start > 0 && flat[start - 1]?.e?.type === 4) start--
+    for (let i = start; i < flat.length; i++) merged.push(flat[i].e)
+  }
+  return merged.slice(0, cap)
 }

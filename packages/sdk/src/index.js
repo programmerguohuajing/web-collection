@@ -1389,6 +1389,12 @@ export function createEys(options = {}) {
       if (stopReplay) stopCurrentReplay()
       return
     }
+    // SDK-211 · 录制实例隔离：每个 rrweb 录制实例（分段）使用独立的环形缓冲。
+    // 关键在「建立录制之前」清空——避免上一实例留存的全量快照/增量跨实例串入本实例的
+    // 事件流。rrweb 的 node id 空间按录制实例独立，跨实例拼接会让重建镜像树时 node id
+    // 对不上，服务端合并后回放窗口表现为「有播放时间、画面空白」。上一实例的缓冲已在
+    // endReplaySegment → flushReplay(true) 中同步 drain 完毕，此处清空不会丢事件。
+    replayRing.clear()
     try {
       const blockSelector = [...(cfg.privacy.blockSelectors || []), '.eys-block'].filter(Boolean).join(',')
       const maskSelector = [...(cfg.privacy.maskSelectors || [])].filter(Boolean).join(',')

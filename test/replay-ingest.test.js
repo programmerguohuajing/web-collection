@@ -59,10 +59,39 @@ test('reassembleReplayEvents 跨分页按事件时间重组（收包乱序也能
   assert.equal(out[0].type, 2)
 })
 
-test('reassembleReplayEvents 无快照时也返回全部事件（不裁剪）', () => {
+test('reassembleReplayEvents 无全量快照的实例整体跳过（不可重建，返回空）', () => {
   const rows = [{ events_json: [{ type: 3, timestamp: 50 }, { type: 3, timestamp: 60 }] }]
+  assert.deepEqual(reassembleReplayEvents(rows), [])
+})
+
+test('reassembleReplayEvents 按录制实例隔离：缺快照的实例被跳过且不污染其他实例', () => {
+  const rows = [
+    // 实例 A：只有增量（快照被环形缓冲淘汰）——必须整体跳过，不能借用别段快照
+    { session_id: 's_base_seg2', events_json: [{ type: 3, timestamp: 10 }, { type: 3, timestamp: 20 }] },
+    // 实例 B：自带全量快照——保留，并从自己的快照开始（之前的 meta 也裁掉）
+    { session_id: 's_base_seg3', events_json: [{ type: 4, timestamp: 100 }, { type: 2, timestamp: 105 }, { type: 3, timestamp: 120 }] }
+  ]
   const out = reassembleReplayEvents(rows)
-  assert.deepEqual(out.map(e => e.timestamp), [50, 60])
+  assert.deepEqual(out.map(e => e.timestamp), [100, 105, 120])
+  assert.equal(out[0].type, 4)
+  assert.equal(out[1].type, 2)
+})
+
+test('reassembleReplayEvents 实例内裁掉自身全量快照之前的增量', () => {
+  const rows = [
+    { session_id: 'x_seg1', events_json: [{ type: 3, timestamp: 5 }, { type: 2, timestamp: 10 }, { type: 3, timestamp: 20 }] }
+  ]
+  const out = reassembleReplayEvents(rows)
+  assert.deepEqual(out.map(e => e.timestamp), [10, 20])
+  assert.equal(out[0].type, 2)
+})
+
+test('reassembleReplayEvents 缺失 session_id 的行按同一实例处理（兼容旧调用方）', () => {
+  const rows = [
+    { events_json: [{ type: 2, timestamp: 100 }] },
+    { events_json: [{ type: 3, timestamp: 200 }] }
+  ]
+  assert.deepEqual(reassembleReplayEvents(rows).map(e => e.timestamp), [100, 200])
 })
 
 test('reassembleReplayEvents 容忍非数组 / 空行', () => {
