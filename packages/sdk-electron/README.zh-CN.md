@@ -1,6 +1,15 @@
-# @web-collection/sdk-electron
+<div align="center">
 
-Web Collection SDK 的 **Electron** 适配包 —— 主进程应用级遥测 + 渲染进程事件 IPC 桥。
+🌐 **[中文文档](./README.zh-CN.md) · [English](./README.md)**
+
+# 📦 @web-collection/sdk-electron
+
+> Web Collection SDK 的 **Electron** 适配包 —— 主进程应用级遥测 + 渲染进程事件 IPC 桥。
+
+[![npm version](https://img.shields.io/npm/v/@web-collection/sdk-electron)](https://www.npmjs.com/package/@web-collection/sdk-electron) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk-electron?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk-electron) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk-electron)](https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-electron/index.d.ts)
+
+</div>
+
 
 平台适配器家族成员（`/platform`、`/miniapp`、`/react-native`、…）：所有事件复用**后端既有事件类型白名单**（`track` / `perf` / `behavior` / `error`），Electron 场景语义全部表达在 name / props 上，不新增任何事件 type。本包**绝不 import 'electron'**——全部依赖注入，保证可单测且 main/preload 边界干净。
 

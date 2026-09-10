@@ -175,7 +175,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
         run: pnpm publish --no-git-checks --access public
 
-      # 建 GitHub Release（自动生成 notes）。
+      # 建 GitHub Release。Release 说明从 CHANGELOG.md 抽取本版本章节（--notes-file），
+      # 而非仅 --generate-notes 生成的 "Full Changelog: vX.Y.Z...vX.Y.Z" 占位。
+      # 抽取逻辑：从 "## [<version>]" 行起、到下一个 "## [" 行之前，写入 release-notes.md；
+      # 若该章节为空（CHANGELOG 未补该版本），回退 --generate-notes 以保证 Release 仍创建。
       # 两种情况都建：① npm 已存在（跳过发布，补建 Release）；② npm 发布成功。
       # 若 npm 发布失败，则不建 Release，避免“发了 Release 却没上 npm”。
       # 注意：必须用 always() 包裹，否则当表达式引用了被条件跳过的步骤上下文时，
@@ -193,7 +196,21 @@ jobs:
             echo "Release v$version already exists — will upload tgz to existing release."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            gh release create "v$version" --generate-notes --title "v$version"
+            # 从 CHANGELOG.md 抽取本版本章节作为 Release 说明（点号用 [.] 作字面量，避免 awk 转义告警）
+            v_esc="$(printf '%s' "$version" | sed 's/[.]/[.]/g')"
+            awk -v v="$v_esc" '
+              /^## \[/ {
+                if (found) exit
+                if ($0 ~ "^## \\[" v "\\]") { found=1; print; next }
+              }
+              found { print }
+            ' CHANGELOG.md > release-notes.md
+            if [ -s release-notes.md ]; then
+              gh release create "v$version" --notes-file release-notes.md --title "v$version"
+            else
+              echo "::warning::CHANGELOG.md 未找到 v$version 章节，回退 --generate-notes"
+              gh release create "v$version" --generate-notes --title "v$version"
+            fi
           fi
 
       # 打包 SDK 为 tgz 并作为 Release asset 上传。

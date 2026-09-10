@@ -754,6 +754,64 @@ Transport events: `queue_full`, `rate_limited`, `timeout`, `invalid_payload`, `s
 
 Replay events: `replay_buffer_full`, `replay_worker_unavailable`, `replay_compressed`, `replay_error_triggered`, `replay_recorder_error`, `replay_quality`.
 
+## 🫀 Collection Health & Server Black-hole Detection
+
+The SDK can now detect a **server black hole**: `POST /api/collect` returns `200` but events never reach the backend (the root cause of the 2026-08-28 silent data-loss incident). It periodically polls `GET /api/diagnostics` and compares the server's last-event timestamp with its own last successful send.
+
+```js
+createEys({
+  // Fires when the SDK's health level changes.
+  // Levels: 'healthy' | 'degraded' | 'critical' | 'server-blackhole'
+  onStatus(status, snapshot) {
+    if (status === 'server-blackhole') {
+      // collect returned 200, but the backend is not storing events
+      showBanner('采集可能中断，请检查后端')
+    }
+  },
+  // Diagnostics poll interval (ms). Default 60000; clamped to 5000–300000; 0 disables.
+  diagnosticsPollMs: 60000
+})
+```
+
+| Level | Meaning |
+| --- | --- |
+| `healthy` | Sends succeed and the server confirms recent events. |
+| `degraded` | Some flushes failed but are retrying. |
+| `critical` | Sends persistently fail. |
+| `server-blackhole` | Local sends succeed (within window) but the server's `lastEventTs` lags by more than `blackholeThresholdMs` (default 3 min), or `ingestErrorCount > 0`. |
+
+Inspect the live state any time:
+
+```js
+const m = eys.monitoring()
+// m.serverLastEventTs, m.serverStatus, m.serverIngestErrorCount, m.blackholeSuspected
+```
+
+The console surfaces the same data on the **Collection Health** card (Overview) and the **SDK Health** page (ingestion validity / SDK delivery metrics / SDK bundle size). This is **zero extra ingest events** — it only reads the existing diagnostics endpoint.
+
+## 📤 OpenTelemetry (OTLP) Export
+
+Forward trace spans and RUM metrics to any OTLP/HTTP + JSON endpoint (e.g. an OpenTelemetry Collector) in addition to normal collection. **Off by default** — enable explicitly:
+
+```js
+createEys({
+  otlp: {
+    enabled: true,
+    endpoint: 'https://otel.example.com/v1/traces',   // trace spans
+    protocol: 'http/json',                            // only http/json supported today
+    headers: { Authorization: 'Bearer <token>' },
+    samplingRate: 1,
+    metrics: true,
+    metricsEndpoint: 'https://otel.example.com/v1/metrics' // optional; falls back to endpoint
+  }
+})
+```
+
+- Exports trace spans (via `tracer`) and RUM metrics, independent of the normal `/api/collect` / `/api/spans` path.
+- `protocol` defaults to `http/json`; `http/protobuf` is **not** supported yet and is skipped with a warning.
+- Can also be enabled at runtime via remote collect-config (the `otlp` block). A bad endpoint never breaks the main collection — it fails safe.
+- The pipeline attaches to the tracer synchronously, so in-flight spans are not dropped.
+
 ## 📱 Mini Program and App Integration
 
 For non-Web runtimes, use the standalone entry `@web-collection/sdk/platform`, which does not load DOM, rrweb, `window` or `localStorage`. The same build artifact can also be imported via the `miniapp`, `uni-app`, `taro` and `react-native` subpaths.
@@ -827,11 +885,11 @@ export const request = eys.wrapRequest(Taro.request.bind(Taro))
 
 ### React Native
 
-The React Native persistence queue requires the project's existing AsyncStorage instance; the SDK does not force an additional storage dependency:
+React Native ships as a **standalone package** [`@web-collection/sdk-react-native`](https://www.npmjs.com/package/@web-collection/sdk-react-native) (first published at `0.1.0` in the 0.5.0 release). It adds RN-specific collection (cold start / frame jank / crash / foreground-background session / network) on top of the shared platform kernel, and **never forces an extra storage dependency** — pass the project's existing `AsyncStorage` instance, or omit it to fall back to an in-memory queue.
 
 ```ts
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { createReactNativeEys } from '@web-collection/sdk/react-native'
+import { createReactNativeEys } from '@web-collection/sdk-react-native'
 
 export const eys = createReactNativeEys({
   endpoint: 'https://monitor.example.com/api/collect',
@@ -844,6 +902,12 @@ export const eys = createReactNativeEys({
 
 global.fetch = eys.wrapFetch(global.fetch)
 ```
+
+> The legacy `@web-collection/sdk/react-native` subpath still exists for backward compatibility but is now just an alias of the platform kernel without RN-specific metrics; **new projects should use `@web-collection/sdk-react-native`**.
+
+### Electron
+
+Desktop apps use the standalone [`@web-collection/sdk-electron`](https://www.npmjs.com/package/@web-collection/sdk-electron) package (also first published at `0.1.0` in 0.5.0). It instruments the **main process** (app start / foreground-background / crash handlers) plus an optional **IPC bridge** for renderer events, and never imports `electron` — everything is dependency-injected. See its [README](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-electron/README.md) for the 5-line main-process setup.
 
 Cross-platform clients uniformly support `track`, `behavior`, `metric`, `error`, `pageView`, `pageLeave`, `setUser`, batch queue, retry on failure and persistence. Mini programs and native apps have no browser DOM, so rrweb screen recording is not provided; page traces, clicks and business operations should be reported via lifecycle hooks and `track`.
 

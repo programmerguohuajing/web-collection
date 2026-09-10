@@ -4,6 +4,48 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.5.0] - 2026-09-10
+
+### ⭐ 亮点
+- **SDK 心跳探针（采集黑洞自愈）**：SDK 周期性把本地写入计数回传服务端比对，自动识别「采集黑洞」（客户端已发但服务端零入库），通过 `onStatus` 回调与 `eys.monitoring()` 暴露 `server-blackhole` 等级；控制台三处采集健康视图同步呈现。
+- **留存 / 同期群分析（A1）**：新增留存与同期群分析服务层 + API + 洞察页，按首次访问同期群观测留存曲线。
+- **智能基线异常检测（B1）**：新增基线偏离异常检测，Node 与 Cloudflare 双后端接入。
+- **知识中枢（kb）**：全栈落地 Article 模型 + 治理台 / 帮助中心双页面，沉淀排障知识。
+- **独立 MCP 服务**：新增常驻 MCP Worker，REST 包装 `/api/*` 数据平面并预留 D1 直连，开放 13 个工具供 AI 客户端消费。
+- **OTLP 导出**：SDK 新增 `otlp` 选项（默认关），以 http/json 把事件导出到 OpenTelemetry Collector，失败安全。
+- **多端 SDK 首发**：`@web-collection/sdk-react-native` 与 `@web-collection/sdk-electron` 随 0.5.0 首发（各自 0.1.0），移动端 / 桌面端接入独立成包。
+
+### ✨ 新功能 (Features)
+- **sdk**：心跳探针 `R2-2` —— 周期比对服务端校验采集黑洞（`15d8e8a`）
+- **mcp**：新增独立 MCP 服务（REST 包装 + D1 直连可扩展），鉴权改为调用时采集秘钥（`9c83329`、`497c812`）
+- **ai**：AI 诊断 Markdown 渲染（`fceff0b`）+ AI 助手消息 Markdown 渲染（`f69c806`）
+- **analytics**：留存 / 同期群分析服务层 + API + 洞察页（`dc9954e`）
+- **baseline**：智能基线异常检测双后端接入（`75dc7bf`）
+- **kb**：知识中枢全栈落地（Article 模型 + 治理台 / 帮助中心）（`4ad2ae1`）
+- **sdk-health**：补齐接入有效性 / SDK 交付指标 / SDK 体积三块（`e5bb9a5`）
+- **sdk**：OTLP 导出（http/json，默认关，随 `e4f6683` 路线图收官批次）
+- **monitoring**：持久化 `lastWriteTs` + `ingestErrorCount`，新增 `/api/diagnostics` 与控制台采集健康卡片（`a01d550`）
+- **release**：发布流程扩展同步发 sdk-react-native / sdk-electron（各自 0.1.0）（`57efc9c`）
+
+### 🐛 缺陷修复 (Fixes)
+- **web**：告警中心 `alert-channels` 缺失 `brandName` 导入导致整页 `ReferenceError`（`a47dd0f`，配回归守卫 `e3be85c`）
+- **worker**：补齐 `/api/analytics/retention` 路由，修复留存分析页 not found（`b6b9d58`）
+- **worker**：概览查询缺省时间窗兜底，抑制 D1 全表扫描（`fdf0c42`）
+- **web**：暂停概览 / 分析页 30s 自动刷新，缓解 D1 行读爆量（`6ef3996`）
+- **web**：知识库帮助中心无效图标导入（ThumbsUp/ThumbsDown → CircleCheck/CircleClose）（`6ae0fdc`）
+- **web**：补导入 layout 缺失的 Reading 图标，修复整页空白（`28a3fb1`）
+- **web**：判定列改用 `OverflowTip`，修复 tooltip 定位与溢出提示（`e261979`）
+- **mcp**：修复鉴权顺序与 Bearer 解析空安全导致 500（`e4f8818`）
+- **merge**：修复合并提交遗留冲突标记与 `.merge-tmp` 误提交（`71304ff`）
+- **ci**：pnpm 版本对齐 `packageManager`(11.7.0)、锁文件漂移兜底、MCP secrets 步骤修复（`241fb56`、`0ef3113`、`154400e` 等）
+
+### 🔧 发布说明 / 部署注意
+- **SDK (npm)**：随 tag 由 CI 发布 `@web-collection/sdk@0.5.0`；另首发 `@web-collection/sdk-react-native@0.1.0` 与 `@web-collection/sdk-electron@0.1.0`。IIFE 经 `prepare-cloudflare.js` 拷贝后随前端部署更新。
+- **Worker / MCP / AI Worker**：三个独立 Worker 各自 `--config` 部署，改其一不影响其余；发版后建议 `wrangler tail` 确认无 `[ingestion] record failed` 与 `[mcp]` 鉴权报错。
+- **D1**：本版本涉及采集健康字段持久化（`lastWriteTs`/`ingestErrorCount`）与知识中枢 `Article` 模型，迁移随 tag 的 `wrangler d1 migrations apply --remote` 一并推进，写侧与迁移同提交以保证兼容。
+
+---
+
 ## [0.4.0] - 2026-08-31
 
 ### ⭐ 亮点

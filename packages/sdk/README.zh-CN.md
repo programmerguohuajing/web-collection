@@ -756,6 +756,64 @@ WebCollection.createEys({
 
 回放事件：`replay_buffer_full`、`replay_worker_unavailable`、`replay_compressed`、`replay_error_triggered`、`replay_recorder_error`、`replay_quality`。
 
+## 🫀 采集健康与「服务端黑洞」检测
+
+SDK 现在能检测**服务端黑洞**：`POST /api/collect` 返回 `200` 但事件始终未落到后端（即 2026-08-28 静默丢数事故的根因）。它会周期性调用 `GET /api/diagnostics`，把服务端的「最近事件时间」与自身「最近一次成功发送时间」做比对。
+
+```js
+createEys({
+  // 健康度等级切换时回调。
+  // 等级：'healthy' | 'degraded' | 'critical' | 'server-blackhole'
+  onStatus(status, snapshot) {
+    if (status === 'server-blackhole') {
+      // collect 返回 200，但后端没有落库
+      showBanner('采集可能中断，请检查后端')
+    }
+  },
+  // 诊断轮询间隔（ms）。默认 60000；限幅 5000–300000；0 表示关闭。
+  diagnosticsPollMs: 60000
+})
+```
+
+| 等级 | 含义 |
+| --- | --- |
+| `healthy` | 发送成功且服务端确认近期有事件。 |
+| `degraded` | 部分 flush 失败但仍在重试。 |
+| `critical` | 发送持续失败。 |
+| `server-blackhole` | 本端持续发送成功（窗口内）但服务端 `lastEventTs` 落后超过 `blackholeThresholdMs`（默认 3 分钟），或 `ingestErrorCount > 0`。 |
+
+随时可读取实时状态：
+
+```js
+const m = eys.monitoring()
+// m.serverLastEventTs、m.serverStatus、m.serverIngestErrorCount、m.blackholeSuspected
+```
+
+控制台在**总览页「采集健康」卡片**与**「SDK 健康」页（接入有效性 / SDK 交付指标 / SDK 体积）**也展示了同一份数据。该能力**零额外入库事件**，仅读取既有诊断接口。
+
+## 📤 OpenTelemetry（OTLP）导出
+
+除正常采集外，可将 trace span 与 RUM 指标转发到任意 OTLP/HTTP + JSON 端点（如 OpenTelemetry Collector）。**默认关闭**，需显式开启：
+
+```js
+createEys({
+  otlp: {
+    enabled: true,
+    endpoint: 'https://otel.example.com/v1/traces',   // trace span
+    protocol: 'http/json',                            // 当前仅支持 http/json
+    headers: { Authorization: 'Bearer <token>' },
+    samplingRate: 1,
+    metrics: true,
+    metricsEndpoint: 'https://otel.example.com/v1/metrics' // 可选；缺省回退到 endpoint
+  }
+})
+```
+
+- 通过 `tracer` 导出 trace span 与 RUM 指标，独立于正常的 `/api/collect` / `/api/spans` 上报路径。
+- `protocol` 默认 `http/json`；`http/protobuf` 暂不支持，会跳过并告警。
+- 也可经远程采集配置（collect-config 的 `otlp` 块）在运行期开启。端点异常不会破坏主采集链路——失败安全。
+- 管线同步挂到 tracer 上，进行中的 span 不会漏采。
+
 ## 📱 小程序与 App 接入
 
 非 Web 运行时使用独立入口 `@web-collection/sdk/platform`，不会加载 DOM、rrweb、`window` 或 `localStorage`。同一构建产物也可通过 `miniapp`、`uni-app`、`taro`、`react-native` 子路径导入。
@@ -829,11 +887,11 @@ export const request = eys.wrapRequest(Taro.request.bind(Taro))
 
 ### React Native
 
-React Native 持久化队列需要传入项目已有的 AsyncStorage 实例，SDK 不强制增加存储依赖：
+React Native 以**独立包 [`@web-collection/sdk-react-native`](https://www.npmjs.com/package/@web-collection/sdk-react-native) 提供**（在 0.5.0 版本首次发布，版本号 `0.1.0`）。它在共享平台内核之上补充了 RN 专属采集（冷启动 / 帧率卡顿 / 崩溃 / 前后台会话 / 网络），并且**不强制增加存储依赖**——传入项目已有的 `AsyncStorage` 实例即可，不传则自动降级为内存队列。
 
 ```ts
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { createReactNativeEys } from '@web-collection/sdk/react-native'
+import { createReactNativeEys } from '@web-collection/sdk-react-native'
 
 export const eys = createReactNativeEys({
   endpoint: 'https://monitor.example.com/api/collect',
@@ -846,6 +904,12 @@ export const eys = createReactNativeEys({
 
 global.fetch = eys.wrapFetch(global.fetch)
 ```
+
+> 旧的 `@web-collection/sdk/react-native` 子路径仍保留用于向后兼容，但它只是平台内核的别名、不带 RN 专属指标；**新项目请直接使用 `@web-collection/sdk-react-native`**。
+
+### Electron
+
+桌面端应用使用独立包 [`@web-collection/sdk-electron`](https://www.npmjs.com/package/@web-collection/sdk-electron)（同样在 0.5.0 首次发布，版本号 `0.1.0`）。它负责**主进程**埋点（应用启动 / 前后台 / 崩溃处理）+ 可选的**渲染进程 IPC 桥**，并且**绝不 import `electron`**——全部依赖注入。5 行主进程接入示例见其 [README](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-electron/README.md)。
 
 跨端客户端统一支持 `track`、`behavior`、`metric`、`error`、`pageView`、`pageLeave`、`setUser`、批量队列、失败重试和持久化。小程序与原生 App 没有浏览器 DOM，因此不提供 rrweb 录屏；页面轨迹、点击和业务操作应通过生命周期及 `track` 上报。
 
