@@ -1,6 +1,15 @@
-# @web-collection/sdk-electron
+<div align="center">
 
-Web Collection SDK for **Electron** — app-level telemetry in the main process plus an IPC bridge for renderer events.
+🌐 **[English](./README.md) · [中文文档](./README.zh-CN.md)**
+
+# 📦 @web-collection/sdk-electron
+
+> Web Collection SDK for **Electron** — app-level telemetry in the main process plus an IPC bridge for renderer events.
+
+[![npm version](https://img.shields.io/npm/v/@web-collection/sdk-electron)](https://www.npmjs.com/package/@web-collection/sdk-electron) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk-electron?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk-electron) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk-electron)](https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-electron/index.d.ts)
+
+</div>
+
 
 Part of the platform-adapter family (`/platform`, `/miniapp`, `/react-native`, …): all event payloads reuse the **existing backend event-type whitelist** (`track` / `perf` / `behavior` / `error`); Electron semantics live in names and props, never in new event types. The `electron` module is **never imported** by this package — everything is dependency-injected, which keeps the package unit-testable and the main/preload boundary clean.
 

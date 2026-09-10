@@ -29,6 +29,12 @@
 - [🧪 8. 完整排障示例](#8-完整排障示例)
 - [❓ 9. 常见问题](#9-常见问题)
 - [✅ 10. 问题处理检查清单](#10-问题处理检查清单)
+- [🫀 11. SDK 心跳探针与采集健康](#11-sdk-心跳探针与采集健康)
+- [📈 12. 留存 / 同期群分析](#12-留存--同期群分析)
+- [🔔 13. 智能基线异常检测](#13-智能基线异常检测)
+- [📚 14. 知识中枢](#14-知识中枢)
+- [🤖 15. AI 诊断与助手（Markdown 渲染）](#15-ai-诊断与助手markdown-渲染)
+- [🔌 16. 集成：MCP 服务与 OTLP 导出](#16-集成mcp-服务与-otlp-导出)
 
 ## 🧰 1. 使用前准备
 
@@ -419,3 +425,191 @@ window.WebCollection.createEys({
 - [ ] 已确认 SourceMap 与发布版本一致。
 - [ ] 已记录影响范围、根因、修复内容和验证结果。
 - [ ] 新版本验证通过后已将问题标记解决。
+
+---
+
+## 🫀 11. SDK 心跳探针与采集健康
+
+> **背景**：2026-08-28 曾发生「静默丢数」事故——`POST /api/collect` 始终返回 `200`、控制台 `/health` 始终绿，但后端 D1 实际零入库长达 3 天。根因是写库异常被 `ctx.waitUntil` 静默吞掉。0.5.0 起上线了「服务端入库健康 + SDK 心跳探针」双端防线，让这类黑洞**分钟级可见**。
+
+### 11.1 控制台三处健康视图
+
+| 视图 | 入口 | 回答的问题 |
+| --- | --- | --- |
+| 采集健康卡片 | 总览页顶部 | 「是真没流量，还是采集挂了？」红/绿态 + 最近事件时间 + 近 1h 入库错误数 |
+| SDK 健康页 | 监控 → SDK 健康 | ① 我的 SDK 注入是否健康？② 采集是否丢数据？含三块：接入有效性 / SDK 交付指标 / SDK 体积 |
+| 诊断接口 | `GET /api/diagnostics?appId=` | 程序化回查「我发的到底有没有落库」（SDK 心跳探针即读取它） |
+
+**SDK 健康页三块**：
+- **接入配置有效性**（#3）：复用 `/api/diagnostics` 的真实入库事实派生，判断「配置已下发且服务端确有该应用事件」，无需独立校验接口。未选应用时显示「未选择应用，无法派生接入有效性」。
+- **SDK 交付指标**（#1）：来自 `Worker /api/monitoring/sdk` 的 SDK 端自监控聚合（上报延迟 P75、在线率等）。**需 SDK 发版后才有数据**，无数据时优雅空态。
+- **SDK 体积开销**（#2）：来自 `Worker /api/sdk-size`（包体 / gzip / 运行时内存）。**需发版 CI 构建后上报才有数据**；未上报时提示「CI 未上报」。
+
+> 口径提示：「上报延迟」= 服务端 `received_at − 事件 ts` 的均值（后端字段 `reportLatencyP75`，实际计算为均值）；未填充 `received_at` 的样本不计入。
+
+### 11.2 SDK 侧心跳探针（`server-blackhole`）
+
+消费方应用接入 `onStatus` 回调，即可在**自身运行时**发现「服务端黑洞」——collect 返回 200 但服务端没落库：
+
+```js
+createEys({
+  // 健康度等级切换时回调：'healthy' | 'degraded' | 'critical' | 'server-blackhole'
+  onStatus(status, snapshot) {
+    if (status === 'server-blackhole') {
+      showBanner('数据采集可能中断，请检查后端')
+    }
+  },
+  // 诊断轮询间隔（ms）。默认 60000；限幅 5000–300000；0 = 关闭。
+  diagnosticsPollMs: 60000
+})
+```
+
+判定逻辑（零额外入库事件，仅读 `/api/diagnostics`）：
+- 本端持续发送成功（`lastSuccessAt` 在窗口内）但服务端 `lastEventTs` 落后超 `blackholeThresholdMs`（默认 3 min）→ `server-blackhole`；
+- 或服务端近 1h `ingestErrorCount > 0` → 直接 `server-blackhole`。
+
+实时状态随时可读：
+
+```js
+const m = eys.monitoring()
+// m.serverLastEventTs / m.serverStatus / m.serverIngestErrorCount / m.blackholeSuspected
+```
+
+### 11.3 排障动作建议
+
+- 总览「采集健康」卡片转红 → 先看 `/health` 的 `lastWriteTs` 是否新鲜、`ingestErrorCount` 是否 > 0。
+- SDK 健康页「接入有效性」为空 → 确认远端采集配置已下发、应用 `appId` 与服务端一致。
+- 用 uptime 工具每分钟打 `/health`，对 `now − lastWriteTs > 5min` 或 `ingestErrorCount > 0` 触发告警（运维侧）。
+
+---
+
+## 📈 12. 留存 / 同期群分析
+
+> 路径：**洞察 → 留存 / 同期群分析**
+
+按「首访日期」把用户切成同期群，观察其在后续第 N 日的回访留存率，用于判断功能/版本是否真正带来持续活跃。
+
+### 12.1 使用方式
+
+1. 选择时间范围：**近 7 天 / 14 天 / 30 天 / 90 天**。
+2. 填写**留存天数**（逗号分隔，如 `0,1,2,3,7,14,30`），决定表格展示哪些「第 N 日」列。
+3. 点击「查询」。
+
+### 12.2 结果解读
+
+- **首访日期**：同期群的首访日（`cohortDate`）；**群规模**：该日首访用户数（`size`）。
+- **窗口**：`成熟` = 该偏移天数已完整过去、数据可信；`未成熟` = 尚未过完（如今天的首访群，「第 7 日」列还不可信）。
+- **单元格**：显示第 N 日留存率，紫色底色越深表示留存越高；悬停可看采样说明（小样本会有 `sampleNote` 提示）。
+- **整体平均留存**：按群规模加权的各偏移日平均留存，便于一眼看全局趋势。
+
+> 统计口径：以 `pv` 事件作为留存信号；结果为空时请确认时间范围内确有 PV 事件。新应用前若干天样本不足会标注「未成熟」，属正常预热。
+
+---
+
+## 🔔 13. 智能基线异常检测
+
+> 路径：**AI 洞察流**（与「错误簇 / 发布回归 / 性能退化 / 指标骤降」同列）
+> 类型标签：**基线偏离**（紫色系）
+
+### 13.1 它解决什么
+
+静态阈值告警有两个老问题：**漏报**（错误率从 0.5% 缓慢爬到 2%，从未越线）与**告警疲劳**（大促/版本波动下频繁误报）。基线偏离检测器自动计算应用**自身历史滚动基线**（默认近 28 天），把当前窗口实测值与基线做 z-score 比较：
+
+```
+偏离 σ = |实测 − 基线中心| / 离散度
+|σ| ≥ sensitivity（默认 3σ）即判为异常
+```
+
+默认覆盖指标：`errorRate`（错误率）、`perfAvg`（性能均值）、`volume`（流量）。**不替换阈值告警，只填补其盲区**。
+
+### 13.2 在洞察流中查看
+
+- 列表结论示例：`错误率 1.8%，历史基线 0.4%（偏离 7σ）`——一句话含「基线 vs 实测 vs σ」，口径透明可复核。
+- 详情抽屉展示：`基线值 / 实测值 / 偏离 σ / 对比窗口 / 算法(method)`，全部来自 `detail_json`。
+- 按 |σ| 分档角标：🔴 ≥5σ / 🟠 3–5σ，与「错误簇」红色视觉区分。
+
+### 13.3 操作
+
+- **深诊断 / 推送通道 / 在助手追问**：复用既有洞察动作。
+- **转为告警规则**（灰度能力）：基线洞察详情提供「转为告警规则」，写入现有 `alert_rules`，后续同类越线直接走告警中心，避免重复疲劳。
+- **忽略反馈**：`ignored` 的基线洞察会回喂基线器对其维度降权，降低后续疲劳。
+
+> 预热：新应用历史不足时不报（避免冷启动误报）；基线数据来自 `metric_daily_stats`（保留 ≥180 天），未回填时从 `events` 近 30 天滚动计算并打「预热中」标记。
+
+---
+
+## 📚 14. 知识中枢
+
+> 路径：**知识中枢**（治理台 + 帮助中心双页面）
+
+把「问题定位经验、运行手册、常见问答」沉淀为可检索的知识库，既服务内部排障，也能被 AI 诊断引用作为答案来源。
+
+### 14.1 知识类型与状态
+
+| 维度 | 取值 | 说明 |
+| --- | --- | --- |
+| 来源类型 `source_type` | `issue` / `doc` / `runbook` / `faq` | 错误关联 / 文档 / 运行手册 / 常见问答 |
+| 可见性 `visibility` | `public`（公开）/ `internal`（仅内部） | 公开可读的在帮助中心可见；内部仅后台治理 |
+| 状态 `status` | `published`（已发布）/ `draft`（草稿）/ `archived`（已下线） | 治理台按状态筛选 |
+
+### 14.2 治理台（写入侧）
+
+- 统计卡：知识总数、公开可读、仅内部、被 AI 引用（诊断命中累计）、最近更新。
+- 支持新建 / 编辑 / 上传（`UploadFilled`），过滤维度含类型、可见性、状态、排序（默认按更新时间）。
+- 写入需管理员角色；浏览免鉴权。
+
+### 14.3 帮助中心（读取侧）
+
+- 面向最终用户，展示 `public` 且 `published` 的知识条目，支持语义检索（`/kb/search`）。
+- 用于把高频问题、排障 SOP 前置给用户，减少重复工单。
+
+> 建议：把「第 3 章标准定位流程」「第 9 章 FAQ」中沉淀下来的稳定结论，整理成 `runbook` / `faq` 入库，AI 诊断命中后会自动引用，提升答案可信度。
+
+---
+
+## 🤖 15. AI 诊断与助手（Markdown 渲染）
+
+AI 诊断结论与对话助手消息现已支持 **Markdown 渲染**（代码块、列表、表格、加粗等），便于阅读结构化结论与复现步骤。
+
+- **AI 诊断**：洞察详情的「深诊断」结果以 Markdown 呈现，长结论不再挤成一段纯文本。
+- **AI 助手**：对话消息支持 Markdown，可直接贴出命令、代码片段与要点清单。
+
+> 使用提示：把诊断结论里的命令/代码片段直接复制执行即可；Markdown 仅做展示渲染，不会自动执行任何操作。
+
+---
+
+## 🔌 16. 集成：MCP 服务与 OTLP 导出
+
+### 16.1 独立 MCP 服务（Model Context Protocol）
+
+把 web-collection 的采集数据平面（事件 / 日志 / 错误 / 链路 / 回放 / 分析 / 告警）以 **MCP 工具**形式暴露给 AI Agent（如 Claude Desktop / MCP Inspector），让 Agent 直接查数据、定位问题。
+
+- **架构**：独立 Worker 服务 `web-collection-mcp`，包装后端 `/api/*` REST（Plan A `rest` 数据源，带 `x-app-key`）；预留 `d1` 直连实现（只读 SELECT + 脱敏）。
+- **暴露工具（13 个）**：`list_events` / `list_logs` / `get_summary` / `list_issues` / `list_replays` / `list_traces` / `get_analytics_sessions` / `get_analytics_paths` / `get_analytics_click_paths` / `get_analytics_heatmap` / `get_analytics_live` / `list_alerts` / `list_alert_channels`。
+- **鉴权（两层）**：① MCP 端点需 `Authorization: Bearer <MCP_AUTH_TOKEN>`；② 后端调用用 `MCP_API_KEY` 作为 `x-app-key`。
+- **部署**：`cd apps/mcp && npx wrangler secret put MCP_API_KEY / MCP_AUTH_TOKEN --config wrangler.jsonc && npx wrangler deploy --config wrangler.jsonc`。
+- **客户端接入**：传输 `Streamable HTTP`，Endpoint `https://<subdomain>/mcp`，无状态模式（每次请求独立，无需维护 session）。
+
+详见 `apps/mcp/README.md`。
+
+### 16.2 SDK OTLP 导出（OpenTelemetry）
+
+SDK 可把 **trace span 与 RUM 指标** 转发到任意 OTLP/HTTP + JSON 端点（如 OpenTelemetry Collector），与主采集链路并存。**默认关闭**，需显式开启：
+
+```js
+createEys({
+  otlp: {
+    enabled: true,
+    endpoint: 'https://otel.example.com/v1/traces',   // trace span
+    protocol: 'http/json',                            // 当前仅支持 http/json
+    headers: { Authorization: 'Bearer <token>' },
+    samplingRate: 1,
+    metrics: true,
+    metricsEndpoint: 'https://otel.example.com/v1/metrics' // 可选；缺省回退到 endpoint
+  }
+})
+```
+
+- 也可经远程采集配置（`collect-config` 的 `otlp` 块）在运行期开启；`enabled` 默认 false，**绝不会因配置故障误开**。
+- `http/protobuf` 暂不支持，会跳过并告警；端点异常不影响主采集（失败安全）。
+- 适用于已接入 OTel 体系、想把前端 span/指标并入统一可观测平台的团队。

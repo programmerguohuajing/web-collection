@@ -1,6 +1,15 @@
-# @web-collection/sdk-react-native
+<div align="center">
 
-Web Collection 的 React Native SDK：移动端宿主适配层 + 移动端指标采集（冷启动 / 帧率卡顿 / 崩溃 / 前后台会话 / 网络），**100% 复用 `@web-collection/sdk` 平台内核的上报链路**。
+🌐 **[中文文档](./README.zh-CN.md) · [English](./README.md)**
+
+# 📦 @web-collection/sdk-react-native
+
+> Web Collection 的 React Native SDK：移动端宿主适配层 + 移动端指标采集（冷启动 / 帧率卡顿 / 崩溃 / 前后台会话 / 网络），**100% 复用 `@web-collection/sdk` 平台内核的上报链路**。
+
+[![npm version](https://img.shields.io/npm/v/@web-collection/sdk-react-native)](https://www.npmjs.com/package/@web-collection/sdk-react-native) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk-react-native?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk-react-native) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk-react-native)](https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-react-native/index.d.ts)
+
+</div>
+
 
 > 本包是对 Web SDK 平台内核的**扩展而非替换**：只新增 RN 宿主适配器与 RN 专属采集模块；入库、分批、重试、采样、同意门控全部由内核完成。
 

@@ -1,6 +1,15 @@
-# @web-collection/sdk-react-native
+<div align="center">
 
-React Native SDK for [Web Collection](https://github.com/programmerhuohuajing/web-collection): a mobile host adapter layer + mobile metrics collection (cold start / frame jank / crash / foreground-background session / network), reusing **100% of the `@web-collection/sdk` platform kernel's reporting pipeline**.
+🌐 **[English](./README.md) · [中文文档](./README.zh-CN.md)**
+
+# 📦 @web-collection/sdk-react-native
+
+> React Native SDK for [Web Collection](https://github.com/programmerhuohuajing/web-collection): a mobile host adapter layer + mobile metrics collection (cold start / frame jank / crash / foreground-background session / network), reusing **100% of the `@web-collection/sdk` platform kernel's reporting pipeline**.
+
+[![npm version](https://img.shields.io/npm/v/@web-collection/sdk-react-native)](https://www.npmjs.com/package/@web-collection/sdk-react-native) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk-react-native?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk-react-native) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk-react-native)](https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-react-native/index.d.ts)
+
+</div>
+
 
 > This package is an **extension, not a replacement** of the Web SDK platform kernel. It only adds the RN host adapter and RN-specific collection modules; ingestion, batching, retry, sampling, and consent are all handled by the kernel.
 

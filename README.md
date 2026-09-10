@@ -27,8 +27,21 @@ Web Collection is a **pnpm monorepo** frontend monitoring system: a Vue 3 + Elem
   </tr>
 </table>
 
+## 🌟 What's New in 0.5.0
+
+- **SDK heartbeat probe** — detects collection black-holes (client sent, server received zero) and surfaces a `server-blackhole` level via `onStatus` / `eys.monitoring()`.
+- **Retention & cohort analysis** — new insight page observing retention curves by first-visit cohort.
+- **Smart baseline anomaly detection** — baseline-deviation alerts on both Node and Cloudflare backends.
+- **Knowledge hub** — Article model + governance console / help center.
+- **Standalone MCP service** — 13 tools over the REST data plane, with D1 direct-connect.
+- **OTLP export** — opt-in `otlp` (http/json) export to an OpenTelemetry Collector.
+- **Multi-platform SDKs** — first release of `@web-collection/sdk-react-native` and `@web-collection/sdk-electron` (each 0.1.0).
+
+See [CHANGELOG](./CHANGELOG.md) for the full list.
+
 ## 📑 Table of Contents
 
+- [🌟 What's New in 0.5.0](#whats-new-in-050)
 - [🚀 Quick Start](#quick-start)
 - [🔌 SDK Integration](#sdk-integration)
 - [📚 Documentation](#documentation)
@@ -211,7 +224,7 @@ The Cloudflare Worker retains the original product analytics capability; the con
 
 ## 🔌 SDK Integration
 
-The Web Collection SDK is published as the [`@web-collection/sdk`](https://www.npmjs.com/package/@web-collection/sdk) npm package and supports **NPM, Script (IIFE, no build), the Vue3 plugin, React, and Mini Program / cross-platform App** integrations.
+The Web Collection SDK is published as the [`@web-collection/sdk`](https://www.npmjs.com/package/@web-collection/sdk) npm package and supports **NPM, Script (IIFE, no build), the Vue3 plugin, React, Mini Program / cross-platform App, React Native, and Electron** integrations. The React Native and Electron adapters ship as standalone packages [`@web-collection/sdk-react-native`](https://www.npmjs.com/package/@web-collection/sdk-react-native) and [`@web-collection/sdk-electron`](https://www.npmjs.com/package/@web-collection/sdk-electron) (both `0.1.0`, first released with `0.5.0`).
 
 > Install: `npm install @web-collection/sdk`
 

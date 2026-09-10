@@ -27,8 +27,21 @@ Web Collection 是 **pnpm monorepo** 前端监控系统：Vue 3 + Element Plus �
   </tr>
 </table>
 
+## 🌟 0.5.0 新特性
+
+- **SDK 心跳探针** —— 检测采集黑洞（客户端已发、服务端零入库），通过 `onStatus` / `eys.monitoring()` 暴露 `server-blackhole` 等级。
+- **留存 / 同期群分析** —— 新增洞察页，按首次访问同期群观测留存曲线。
+- **智能基线异常检测** —— Node 与 Cloudflare 双后端基线偏离告警。
+- **知识中枢** —— Article 模型 + 治理台 / 帮助中心。
+- **独立 MCP 服务** —— 基于 REST 数据平面的 13 个工具，并预留 D1 直连。
+- **OTLP 导出** —— 可开启的 `otlp`（http/json）导出到 OpenTelemetry Collector。
+- **多端 SDK 首发** —— 首发 `@web-collection/sdk-react-native` 与 `@web-collection/sdk-electron`（各自 0.1.0）。
+
+完整变更见 [CHANGELOG](./CHANGELOG.md)。
+
 ## 📑 目录
 
+- [🌟 0.5.0 新特性](#050-新特性)
 - [🚀 快速开始](#快速开始)
 - [🔌 SDK 接入](#sdk-接入)
 - [📚 使用文档](#使用文档)
@@ -244,7 +257,7 @@ Cloudflare Worker 保留原有产品分析能力，控制台会通过 `/api/capa
 
 ## 🔌 SDK 接入
 
-Web Collection SDK 通过 npm 包 [`@web-collection/sdk`](https://www.npmjs.com/package/@web-collection/sdk) 提供，支持 **NPM、Script（IIFE 无构建）、Vue3 插件、React 以及小程序 / 跨端 App** 等多种接入方式。
+Web Collection SDK 通过 npm 包 [`@web-collection/sdk`](https://www.npmjs.com/package/@web-collection/sdk) 提供，支持 **NPM、Script（IIFE 无构建）、Vue3 插件、React、小程序 / 跨端 App、React Native 以及 Electron** 等多种接入方式。React Native 与 Electron 适配作为独立包 [`@web-collection/sdk-react-native`](https://www.npmjs.com/package/@web-collection/sdk-react-native) 与 [`@web-collection/sdk-electron`](https://www.npmjs.com/package/@web-collection/sdk-electron) 发布（均为 `0.1.0`，随 `0.5.0` 首发）。
 
 > 安装：`npm install @web-collection/sdk`
 

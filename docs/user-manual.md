@@ -29,6 +29,12 @@ Production console 👉 [https://your-domain.com](https://your-domain.com)
 - [🧪 8. Complete Troubleshooting Example](#8-complete-troubleshooting-example)
 - [❓ 9. FAQ](#9-faq)
 - [✅ 10. Issue Handling Checklist](#10-issue-handling-checklist)
+- [🫀 11. SDK Heartbeat Probe & Collection Health](#11-sdk-heartbeat-probe-collection-health)
+- [📈 12. Retention / Cohort Analysis](#12-retention-cohort-analysis)
+- [🔔 13. Smart Baseline Anomaly Detection](#13-smart-baseline-anomaly-detection)
+- [📚 14. Knowledge Hub](#14-knowledge-hub)
+- [🤖 15. AI Diagnosis & Assistant (Markdown Rendering)](#15-ai-diagnosis-assistant-markdown-rendering)
+- [🔌 16. Integrations: MCP Server & OTLP Export](#16-integrations-mcp-server-otlp-export)
 
 ## 🧰 1. Before You Start
 
@@ -419,3 +425,191 @@ Common types: transport-side `queue_full` (local queue overflow), `dropped_by_sa
 - [ ] Confirmed the SourceMap matches the release version.
 - [ ] Recorded the impact scope, root cause, fix content, and verification result.
 - [ ] After the new version passes verification, marked the issue resolved.
+
+---
+
+## 🫀 11. SDK Heartbeat Probe & Collection Health
+
+> **Background**: On 2026-08-28 a silent data-loss incident occurred — `POST /api/collect` always returned `200` and the console `/health` stayed green, but the backend D1 actually stored zero events for 3 days. The root cause was a write-error silently swallowed by `ctx.waitUntil`. Since 0.5.0, a dual-layer defense of **server-side ingestion health + SDK heartbeat probe** makes such black holes visible within minutes.
+
+### 11.1 Three console health views
+
+| View | Entry | Answers |
+| --- | --- | --- |
+| Collection Health card | Top of Overview | "No traffic, or collection broken?" — red/green state + last-event time + ingest-error count (last 1h) |
+| SDK Health page | Monitor → SDK Health | ① Is my SDK injection healthy? ② Is collection dropping data? Three blocks: ingestion validity / SDK delivery metrics / SDK bundle size |
+| Diagnostics API | `GET /api/diagnostics?appId=` | Programmatically check "did what I sent actually land?" (the SDK heartbeat probe reads this) |
+
+**SDK Health page — three blocks**:
+- **Ingestion validity** (#3): derived from the real ingestion facts in `/api/diagnostics` — confirms "config delivered and the backend actually has events for this app". No separate validation endpoint; shows "select an app to derive validity" when none is chosen.
+- **SDK delivery metrics** (#1): from `Worker /api/monitoring/sdk` SDK-side self-monitoring aggregate (report-latency P75, online rate, etc.). **Data appears only after the SDK is released**; graceful empty state otherwise.
+- **SDK bundle size** (#2): from `Worker /api/sdk-size` (package / gzip / runtime memory). **Appears only after the release CI reports it**; otherwise prompts "CI not reported".
+
+> Caliber note: "report latency" = mean of `received_at − event ts` (backend field `reportLatencyP75`, computed as mean); samples without `received_at` are excluded.
+
+### 11.2 SDK-side heartbeat probe (`server-blackhole`)
+
+Consuming apps wire an `onStatus` callback to detect a **server black hole** at runtime — collect returns 200 but the backend isn't storing:
+
+```js
+createEys({
+  // Fires when health level changes: 'healthy' | 'degraded' | 'critical' | 'server-blackhole'
+  onStatus(status, snapshot) {
+    if (status === 'server-blackhole') {
+      showBanner('Data collection may be interrupted, check the backend')
+    }
+  },
+  // Diagnostics poll interval (ms). Default 60000; clamped 5000–300000; 0 = off.
+  diagnosticsPollMs: 60000
+})
+```
+
+Detection logic (zero extra ingest events, reads only `/api/diagnostics`):
+- Local sends keep succeeding (`lastSuccessAt` within window) but server `lastEventTs` lags by more than `blackholeThresholdMs` (default 3 min) → `server-blackhole`;
+- or server `ingestErrorCount > 0` in the last 1h → `server-blackhole` directly.
+
+Live state is always readable:
+
+```js
+const m = eys.monitoring()
+// m.serverLastEventTs / m.serverStatus / m.serverIngestErrorCount / m.blackholeSuspected
+```
+
+### 11.3 Troubleshooting actions
+
+- Overview "Collection Health" card turns red → first check `/health` `lastWriteTs` freshness and whether `ingestErrorCount > 0`.
+- SDK Health "ingestion validity" empty → confirm remote collect-config was delivered and `appId` matches the backend.
+- Have an uptime tool hit `/health` every minute; alert on `now − lastWriteTs > 5min` or `ingestErrorCount > 0` (ops side).
+
+---
+
+## 📈 12. Retention / Cohort Analysis
+
+> Path: **Insight → Retention / Cohort Analysis**
+
+Slice users into cohorts by **first-visit date** and observe their return retention on day N, to judge whether a feature/release truly drives sustained activity.
+
+### 12.1 How to use
+
+1. Pick a time range: **Last 7 / 14 / 30 / 90 days**.
+2. Fill in **retention offsets** (comma-separated, e.g. `0,1,2,3,7,14,30`) — these decide which "Day N" columns the table shows.
+3. Click "Query".
+
+### 12.2 Reading the result
+
+- **Cohort date**: first-visit day (`cohortDate`); **size**: number of first-visit users that day (`size`).
+- **Window**: `mature` = that offset has fully elapsed and data is trustworthy; `immature` = not yet complete (e.g. today's cohort's "Day 7" column is not yet可信).
+- **Cell**: shows day-N retention rate; deeper purple = higher retention; hover for sampling note (small samples get a `sampleNote`).
+- **Overall average retention**: size-weighted average retention per offset, for an at-a-glance trend.
+
+> Caliber: `pv` events are the retention signal; empty result means no PV in the range. New apps with insufficient history are marked "immature" (normal warm-up).
+
+---
+
+## 🔔 13. Smart Baseline Anomaly Detection
+
+> Path: **AI Insights stream** (same column as "error-cluster / release-regression / perf-regression / metric-drop")
+> Type label: **baseline-deviation** (purple)
+
+### 13.1 What it solves
+
+Static threshold alerts have two old problems: **missed alerts** (error rate creeps from 0.5% to 2% without ever crossing the line) and **alert fatigue** (frequent false alarms during promotions/version swings). The baseline-deviation detector computes the app's **own historical rolling baseline** (default last 28 days) and compares the current window to it via z-score:
+
+```
+σ = |observed − baseline center| / dispersion
+|σ| ≥ sensitivity (default 3σ) → flagged as anomaly
+```
+
+Default metrics: `errorRate`, `perfAvg`, `volume`. **It does not replace threshold alerts — it only fills their blind spots.**
+
+### 13.2 Viewing in the insights stream
+
+- List conclusion example: `Error rate 1.8%, historical baseline 0.4% (deviation 7σ)` — one line with "baseline vs observed vs σ", transparent and verifiable.
+- Detail drawer shows: `baseline value / observed value / deviation σ / comparison window / method`, all from `detail_json`.
+- |σ| badges: 🔴 ≥5σ / 🟠 3–5σ, visually distinct from the red "error-cluster".
+
+### 13.3 Actions
+
+- **Deep diagnosis / push channel / ask in assistant**: reuse existing insight actions.
+- **Convert to alert rule** (gradual rollout): the baseline insight detail offers "convert to alert rule", written to existing `alert_rules`; later crossings go through the alert center, avoiding repeat fatigue.
+- **Ignore feedback**: `ignored` baseline insights feed back to the detector to down-weight that dimension, reducing future fatigue.
+
+> Warm-up: new apps with insufficient history are not reported (avoids cold-start false alarms); baseline data comes from `metric_daily_stats` (retained ≥180 days), falling back to a 30-day `events` rolling calc with a "warming up" marker when not backfilled.
+
+---
+
+## 📚 14. Knowledge Hub
+
+> Path: **Knowledge Hub** (governance console + help center, two pages)
+
+Turn "issue-localization know-how, runbooks, FAQs" into a searchable knowledge base that serves internal troubleshooting and can be cited by AI diagnosis as an answer source.
+
+### 14.1 Knowledge types & status
+
+| Dimension | Values | Meaning |
+| --- | --- | --- |
+| `source_type` | `issue` / `doc` / `runbook` / `faq` | error-linked / doc / runbook / FAQ |
+| `visibility` | `public` / `internal` | public readable in help center; internal only in governance |
+| `status` | `published` / `draft` / `archived` | governance filters by status |
+
+### 14.2 Governance console (write side)
+
+- Stat cards: total knowledge, public readable, internal only, cited by AI (cumulative diagnosis hits), last updated.
+- Supports create / edit / upload (`UploadFilled`); filters by type, visibility, status, sort (default by update time).
+- Writing requires admin role; browsing needs no auth.
+
+### 14.3 Help center (read side)
+
+- For end users; shows `public` + `published` entries with semantic search (`/kb/search`).
+- Front-loads high-frequency questions and troubleshooting SOPs to cut repeat tickets.
+
+> Tip: distill stable conclusions from Chapter 3 (standard workflow) and Chapter 9 (FAQ) into `runbook` / `faq` entries — AI diagnosis auto-cites them, boosting answer credibility.
+
+---
+
+## 🤖 15. AI Diagnosis & Assistant (Markdown Rendering)
+
+AI diagnosis conclusions and the chat assistant now support **Markdown rendering** (code blocks, lists, tables, bold), making structured conclusions and repro steps easier to read.
+
+- **AI diagnosis**: the "deep diagnosis" result in an insight detail renders as Markdown instead of one cramped paragraph.
+- **AI assistant**: chat messages support Markdown — paste commands, code snippets, and bullet checklists directly.
+
+> Note: Markdown is display-only; nothing is auto-executed.
+
+---
+
+## 🔌 16. Integrations: MCP Server & OTLP Export
+
+### 16.1 Standalone MCP Server (Model Context Protocol)
+
+Exposes web-collection's data plane (events / logs / errors / traces / replays / analytics / alerts) as **MCP tools** for AI Agents (e.g. Claude Desktop / MCP Inspector), letting them query data and localize issues directly.
+
+- **Architecture**: standalone Worker `web-collection-mcp` wrapping backend `/api/*` REST (Plan A `rest` data source, with `x-app-key`); `d1` direct-connect implementation reserved (read-only SELECT + masking).
+- **Tools exposed (13)**: `list_events` / `list_logs` / `get_summary` / `list_issues` / `list_replays` / `list_traces` / `get_analytics_sessions` / `get_analytics_paths` / `get_analytics_click_paths` / `get_analytics_heatmap` / `get_analytics_live` / `list_alerts` / `list_alert_channels`.
+- **Auth (two layers)**: ① MCP endpoint requires `Authorization: Bearer <MCP_AUTH_TOKEN>`; ② backend calls use `MCP_API_KEY` as `x-app-key`.
+- **Deploy**: `cd apps/mcp && npx wrangler secret put MCP_API_KEY / MCP_AUTH_TOKEN --config wrangler.jsonc && npx wrangler deploy --config wrangler.jsonc`.
+- **Client**: transport `Streamable HTTP`, endpoint `https://<subdomain>/mcp`, stateless mode (each request independent, no session to maintain).
+
+See `apps/mcp/README.md` for details.
+
+### 16.2 SDK OTLP Export (OpenTelemetry)
+
+The SDK can forward **trace spans and RUM metrics** to any OTLP/HTTP + JSON endpoint (e.g. an OpenTelemetry Collector), alongside the main collection path. **Off by default**, enable explicitly:
+
+```js
+createEys({
+  otlp: {
+    enabled: true,
+    endpoint: 'https://otel.example.com/v1/traces',   // trace spans
+    protocol: 'http/json',                            // http/json only for now
+    headers: { Authorization: 'Bearer <token>' },
+    samplingRate: 1,
+    metrics: true,
+    metricsEndpoint: 'https://otel.example.com/v1/metrics' // optional; falls back to endpoint
+  }
+})
+```
+
+- Can also be enabled at runtime via remote collect-config (`otlp` block); `enabled` defaults to false, **never accidentally turned on by a config fault**.
+- `http/protobuf` is not supported yet (skipped with a warning); a bad endpoint never breaks the main collection (fails safe).
+- For teams already on OTel who want frontend spans/metrics merged into their unified observability platform.
