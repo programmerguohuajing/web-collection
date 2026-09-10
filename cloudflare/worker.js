@@ -975,32 +975,39 @@ async function replayEvents(env,id){
   // 传入 id 既可能是分段 session_id（列表点击），也可能是事件会话 UUID（总览/分析页跳转）。
   const hit=await env.DB.prepare('select session_id,base_session_id from replays where session_id=? limit 1').bind(id).first();
   const baseId=hit?.base_session_id||id;
-  let rows=(await env.DB.prepare('select events_json from replays where base_session_id=? order by created_at,id').bind(baseId).all()).results;
-  if(!rows.length)rows=(await env.DB.prepare('select events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;
-  // 多段/多页记录按 rrweb 事件时间戳升序还原时间线（对齐 Node 端 reassembleReplayEvents），
-  // 否则全量快照可能不排在首位，播放器无法重建页面，表现为“有播放时间、无画面”。
-  // SDK 把回放按段 drain 上报，而 rrweb 的全量快照（type:2）是异步 emit 的：首屏加载期的
-  // 分段竞态下，部分段（尤其首段/中间段）的缓冲在 rrweb 初始全量快照发出前就被 drain，
-  // 入库时只有纯增量事件（type:3）——此时若按全局时间戳排序，纯增量段会排在最前，rrweb
-  // 播放器从头播这些没有 DOM 基础的 mutation，无法重建页面，表现为「首屏短暂有画面后空白」。
-  // 故：① 不按全局 timestamp 重排（段内已按录制时间升序，段间按 created_at,id 即录制顺序）；
-  // ② 逐段维护「最近一次全量快照」，缺快照的段以其前置补入，保证每段都能重建出画面；
-  // ③ 首段若无任何前序快照，用整段会话中第一个可用快照兜底（同会话 DOM 结构一致、node id
-  // 基本对齐，远优于纯空白）。
+  let rows=(await env.DB.prepare('select session_id,events_json from replays where base_session_id=? order by created_at,id').bind(baseId).all()).results;
+  if(!rows.length)rows=(await env.DB.prepare('select session_id,events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;
+  // 合并规则改为「按录制实例锚定」，根治长会话播放中途空白：
+  // 同一 base_session_id 下可能混有多个 rrweb 录制实例（多次页面加载 / 多次 startReplay），
+  // 而 rrweb 的 node id 空间是按录制实例独立的。若像旧实现那样把「上一段的全量快照」借用
+  // 塞进另一实例的增量流，rrweb 重建镜像树时 node id 对不上，整条时间线崩坏 → 播放窗口空白。
+  // 新规则：
+  //   ① 按插入顺序（created_at,id，即录制顺序）逐行扫描；段号变化视为切换录制实例，重置锚点；
+  //   ② 每个实例只从「它自己的」首个全量快照（type:2）开始输出，快照之前的增量一律丢弃；
+  //   ③ 实例若完全没有自己的全量快照，整段丢弃——不借用他段快照（借用只会让画面更糟）；
+  //   ④ 同实例的后续批次原样续接（含 rrweb checkout 周期快照），保持 node id 连续。
+  // 传入 id 既可能是分段 session_id（列表点击），也可能是事件会话 UUID（总览/分析页跳转）。
   const merged=[];
-  let lastSnapshot=null;
-  rows.forEach((row,segIdx)=>{
+  let segId=null,anchored=false;
+  for(const row of rows){
     const evs=parse(row.events_json,[]);
-    if(!Array.isArray(evs)||!evs.length)return;
-    const snap=evs.find(e=>e&&e.type===2);
-    if(snap)lastSnapshot=snap;
-    if(!snap&&lastSnapshot)merged.push(lastSnapshot);
-    for(const e of evs)merged.push(e);
-  });
-  if(merged.length&&merged[0]&&merged[0].type!==2){
-    const firstSnap=merged.find(e=>e&&e.type===2);
-    if(firstSnap)merged.unshift(firstSnap);
+    if(!Array.isArray(evs)||!evs.length)continue;
+    if(row.session_id!==segId){segId=row.session_id;anchored=false}
+    const snapIdx=evs.findIndex(e=>e&&e.type===2);
+    if(!anchored){
+      if(snapIdx<0)continue;                       // 该实例尚无自身全量快照：丢弃，等待同实例后续批次
+      // 保留紧邻全量快照之前的 Meta（type:4）——它携带 viewport 尺寸 / href，属同一实例，
+      // 是 rrweb 事件流的规范开头（Meta → FullSnapshot）。只裁掉快照之前的增量（type:3）。
+      let start=snapIdx;
+      if(start>0&&evs[start-1]&&evs[start-1].type===4)start--;
+      for(let i=start;i<evs.length;i++)merged.push(evs[i]);
+      anchored=true;
+    }else{
+      for(const e of evs)merged.push(e);           // 同实例续接
+    }
   }
+  // 无任何可用全量快照 → 返回空数组，让前端「缺少全量快照」提示生效，而不是静默黑屏。
+  if(!merged.length||!merged.some(e=>e&&e.type===2))return json([]);
   return json(merged)
 }
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
