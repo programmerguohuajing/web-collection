@@ -1403,8 +1403,10 @@ export function createEys(options = {}) {
           recordCanvas: cfg.replayCanvas,
           recordCrossOriginIframes: cfg.replayIframe,
           inlineIframes: cfg.replayIframe,
-          // SDK-211 · 长会话保真：周期性全量快照，避免首屏快照被环形窗口淘汰后黑屏。
-          checkoutEveryN: cfg.replayCheckoutEveryN || 0,
+          // SDK-211 · 长会话保真：周期性全量快照，避免增量断层后无法重建页面。
+          // 注意：rrweb 2.x 的正确字段名是 checkoutEveryNth（旧名 checkoutEveryN 会被
+          // 静默忽略，导致周期快照从未生效——回放表现为「首屏短暂有画面后空白」）。
+          checkoutEveryNth: cfg.replayCheckoutEveryN || 0,
           // SDK-211 · 录制质量：rrweb 录制内部报错转为结构化诊断（不含 PII）。
           errorHandler: (e) => diagnostic.emit('replay_recorder_error', { message: String((e && e.message) || e || '').slice(0, 200) })
         }

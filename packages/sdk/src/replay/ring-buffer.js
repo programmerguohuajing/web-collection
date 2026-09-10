@@ -28,6 +28,11 @@ export class ReplayRingBuffer {
      *  独立留存最近一次快照，在 take/drain 时若本批不含快照则前置补回，
      *  保证每条上报记录都能被 rrweb 重建出页面。 */
     this._lastSnapshot = null
+    /** 最近一次快照的时间戳（不随 take/drain 重置）。
+     *  时间窗口淘汰以此为下界：快照之后的增量永不因窗口淘汰，
+     *  否则「补回快照 + 尾部增量」之间存在断层，mutation 的 node id
+     *  对不上，回放表现为首屏短暂有画面后画面消失。 */
+    this._lastSnapshotTs = 0
   }
 
   /**
@@ -37,8 +42,11 @@ export class ReplayRingBuffer {
    * @returns {{ evicted: number }} 本次因容量超限被丢弃的事件数
    */
   push(event, ts = Date.now()) {
-    // rrweb 全量快照（type:2）独立留存：即便随后被容量/窗口淘汰，仍可补回
-    if (event && event.type === 2) this._lastSnapshot = { ts, event }
+    // rrweb 全量快照（type:2）独立留存：即便随后被容量淘汰，仍可补回
+    if (event && event.type === 2) {
+      this._lastSnapshot = { ts, event }
+      this._lastSnapshotTs = ts
+    }
     this._buf.push({ ts, event })
     let evicted = 0
     // 容量护栏：超出 maxSize 丢弃最旧
@@ -108,7 +116,14 @@ export class ReplayRingBuffer {
    */
   _evictExpired(now) {
     if (this.windowMs_ <= 0) return
-    const cutoff = now - this.windowMs_
+    const timeCutoff = now - this.windowMs_
+    const snapshotTs = this._lastSnapshotTs || 0
+    // 淘汰下界 = min(时间窗口, 最近快照时间)：
+    // 快照及其之后的增量永不因窗口淘汰——否则「补回快照 + 尾部增量」之间存在
+    // 断层，mutation 的 node id 对不上，回放表现为首屏短暂有画面后画面消失。
+    // 快照之前的事件（快照本身已能重建其后画面）仍按窗口正常淘汰，内存护栏不变；
+    // 极端情况（长期无新快照）由容量上限 maxSize 封顶。
+    const cutoff = snapshotTs > 0 ? Math.min(timeCutoff, snapshotTs) : timeCutoff
     let i = 0
     while (i < this._buf.length && this._buf[i].ts < cutoff) i++
     if (i > 0) {
@@ -139,5 +154,6 @@ export class ReplayRingBuffer {
   clear() {
     this._buf = []
     this._lastSnapshot = null
+    this._lastSnapshotTs = 0
   }
 }

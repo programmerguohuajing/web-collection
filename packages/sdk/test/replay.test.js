@@ -47,18 +47,8 @@ test('RingBuffer drain 取出全部留存、take 只取前 N 个', () => {
   assert.equal(rb.size, 0)
 })
 
-// 黑屏/无画面根治：全量快照（type:2）被窗口/容量淘汰后，take/drain 仍应补回，
+// 黑屏/无画面根治：全量快照（type:2）被容量淘汰后，take/drain 仍应补回，
 // 否则上报的纯增量事件流会让播放器「有播放时间、无画面、只有鼠标」。
-test('RingBuffer 全量快照被窗口淘汰后 take 仍携带 type:2', () => {
-  const rb = new ReplayRingBuffer({ maxSize: 1000, windowMs: 30000 })
-  const now = 1_000_000
-  rb.push({ type: 2, timestamp: now - 40000, data: { node: {} } }) // 快照已超 30s 窗口
-  rb.push({ type: 3, timestamp: now - 1000, data: { source: 1 } }) // 鼠标移动增量
-  const taken = rb.take(10, now)
-  assert.ok(taken.some((e) => e.type === 2), '窗口淘汰后 take 应补回 type:2 快照')
-  assert.equal(taken[0].type, 2, '快照应排在事件流最前')
-})
-
 test('RingBuffer 全量快照被容量淘汰后 drain 仍携带 type:2', () => {
   const rb = new ReplayRingBuffer({ maxSize: 3, windowMs: 0 })
   rb.push({ type: 2, data: {} }, 1000)
@@ -69,6 +59,46 @@ test('RingBuffer 全量快照被容量淘汰后 drain 仍携带 type:2', () => {
   const drained = rb.drain()
   assert.ok(drained.some((e) => e.type === 2), '容量淘汰后 drain 应补回 type:2 快照')
   assert.equal(drained[0].type, 2)
+})
+
+// 增量断层根治：时间窗口淘汰以最近快照为下界——快照之后的增量永不因窗口淘汰。
+// 否则「补回快照 + 尾部增量」之间存在断层：mutation 的 node id 对不上，
+// SPA 场景「移除旧 DOM」应用成功而「插入新 DOM」失败 → 首屏短暂有画面后画面消失。
+test('RingBuffer 快照之后的增量不因时间窗口被淘汰（防断层）', () => {
+  const rb = new ReplayRingBuffer({ maxSize: 1000, windowMs: 30000 })
+  const now = 1_000_000
+  rb.push({ type: 3, data: {} }, now - 40000) // 快照之前：超窗，正常淘汰
+  rb.push({ type: 2, data: {} }, now - 35000) // 快照
+  rb.push({ type: 3, data: {} }, now - 31000) // 快照之后但超 30s 窗口
+  rb.push({ type: 3, data: {} }, now - 1000)
+  const taken = rb.take(100, now)
+  // 快照之前的事件被淘汰；快照及其后的全部增量保留（无断层）
+  assert.deepEqual(taken.map((e) => e.type), [2, 3, 3])
+})
+
+test('RingBuffer 新快照推进淘汰下界后，旧快照及更早事件按窗口淘汰', () => {
+  const rb = new ReplayRingBuffer({ maxSize: 1000, windowMs: 30000 })
+  const now = 1_000_000
+  rb.push({ type: 2, data: {} }, now - 40000) // 旧快照
+  rb.push({ type: 3, data: {} }, now - 39000) // 旧快照后增量
+  rb.push({ type: 2, data: {} }, now - 5000) // 新快照（下界推进）
+  rb.push({ type: 3, data: {} }, now - 1000)
+  const taken = rb.take(100, now)
+  // 旧快照/旧增量超窗被淘汰；新快照起的完整序列保留
+  assert.deepEqual(taken.map((e) => e.type), [2, 3])
+})
+
+test('RingBuffer 快照已上报后仍作为淘汰下界保护后续增量', () => {
+  const rb = new ReplayRingBuffer({ maxSize: 1000, windowMs: 30000 })
+  const now = 1_000_000
+  rb.push({ type: 2, data: {} }, now - 35000)
+  rb.push({ type: 3, data: {} }, now - 34000)
+  // 增量 flush：第一批把快照+首条增量带出上报
+  assert.deepEqual(rb.take(2, now).map((e) => e.type), [2, 3])
+  // 快照虽已上报（_lastSnapshot 置空），但时间戳仍作下界：
+  // 后续增量即使超窗也不淘汰，保证与已上报批次连续无断层。
+  rb.push({ type: 3, data: {} }, now - 31000)
+  assert.deepEqual(rb.take(10, now).map((e) => e.type), [3])
 })
 
 test('RingBuffer 快照随批次自然带出，不上报的旧快照不重复补入', () => {
@@ -512,8 +542,9 @@ test('startReplay 在分段启动处显式触发全量快照 takeFullSnapshot(tr
   let fullSnapshotCalls = 0
   let lastCheckoutArg = null
   let capturedEmit = null
+  let capturedRecordOpts = null
   // rrweb v2 的 record 既是可调用函数，又挂有静态方法 takeFullSnapshot。
-  const mockRecord = (opts) => { capturedEmit = opts?.emit; return () => {} }
+  const mockRecord = (opts) => { capturedEmit = opts?.emit; capturedRecordOpts = opts; return () => {} }
   mockRecord.takeFullSnapshot = (isCheckout) => { fullSnapshotCalls++; lastCheckoutArg = isCheckout }
   __setDriver({ record: mockRecord })
   let client
@@ -532,6 +563,10 @@ test('startReplay 在分段启动处显式触发全量快照 takeFullSnapshot(tr
     // 保证该分段（含被独立加载的分页）以 FullSnapshot 开头，根除黑屏。
     assert.ok(fullSnapshotCalls >= 1, 'startReplay 应在分段启动处显式触发全量快照')
     assert.equal(lastCheckoutArg, true, 'takeFullSnapshot 应以 isCheckout=true 触发（强制全量快照）')
+    // 字段名回归防护：rrweb 2.x 读取 checkoutEveryNth；传错名（checkoutEveryN）会被
+    // 静默忽略，周期快照失效 → 长会话增量断层 → 回放「首屏短暂有画面后空白」。
+    assert.equal(capturedRecordOpts.checkoutEveryNth, 100, '应透传 checkoutEveryNth（rrweb 2.x 正确字段名）')
+    assert.equal(capturedRecordOpts.checkoutEveryN, undefined, '不应再传无效旧字段 checkoutEveryN')
   } finally {
     await client?.destroy?.()
     __setDriver(null)
