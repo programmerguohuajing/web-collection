@@ -737,6 +737,40 @@ await eys.flushReplay(true)                   // 强制冲刷错误前 30 秒窗
 | `sampleRate` | `1` | session/global 采样率（见采样与成本控制） |
 | `onDiagnostic` | `null` | 健康事件回调（见诊断） |
 
+### 采集地址 —— `endpoint`、`baseUrl` 与 `collectPath`
+
+这三个选项描述**事件发往何处**，彼此兼容：`baseUrl` + `collectPath` 是显式写法，`endpoint` 是旧版简写，两者都完全支持。
+
+| 选项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `endpoint` | `'/api/collect'` | **旧版。** 采集 POST 完整地址（基址 + 路径）。若同时给出 `baseUrl`，以 `baseUrl` 为准，`endpoint` 不再参与路由拼接。 |
+| `baseUrl` | _（由 `endpoint` 推导）_ | **推荐。** 服务器基址（**不含**采集路径），如 `https://monitor.example.com`。所有兄弟路由（`/api/diagnostics`、`/api/monitoring/sdk`、`/api/spans`、`/sdk-config`）都由 `baseUrl` 拼接，因此绝不会出现双重路径 404。 |
+| `collectPath` | `'api/collect'` | 拼在 `baseUrl` 之后的采集路径，前导斜杠会被去除。使用 `endpoint` 时此选项忽略。 |
+
+解析规则（初始化时执行一次）：
+
+- 若提供了 `baseUrl` → `endpoint = baseUrl + '/' + collectPath`。
+- 否则 → 从 `endpoint` 中剥离 `/collectPath`（默认 `/api/collect`）推导出 `baseUrl`。
+
+```js
+// 推荐：基址与路径分开
+createEys({
+  baseUrl: 'https://monitor.example.com',   // 无需尾斜杠
+  collectPath: 'api/collect',               // 默认值；仅当你的路由不同才需设置
+  appId: 'mall-web',
+  release: '1.0.0'
+})
+
+// 旧版简写（仍然可用，自动推导 baseUrl）
+createEys({
+  endpoint: 'https://monitor.example.com/api/collect',
+  appId: 'mall-web',
+  release: '1.0.0'
+})
+```
+
+> ⚠️ `baseUrl` 只能填**域名 + 路径前缀**（如 `https://monitor.example.com` 或 `https://monitor.example.com/api`）。**不要把采集路径写进 `baseUrl`**——那是 `collectPath` 的职责。把完整路径写进 `baseUrl` 会重现双重路径 `/api/collect/api/diagnostics` 的 404。
+
 发送可靠：指数退避 + 等抖动、`Retry-After` 优先、对 `408/425/429/5xx` 重试、对 `4xx` 契约错误永久丢弃；跨标签页锁保证同域名至多一个标签页真正发送。
 
 手动刷新：
