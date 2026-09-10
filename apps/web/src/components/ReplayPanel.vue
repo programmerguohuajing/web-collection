@@ -282,6 +282,14 @@ async function openReplay(item, autoPlay = false) {
       return
     }
 
+    // 全量快照（rrweb type:2）缺失：播放器只能应用增量事件（鼠标/滚动等），
+    // 无法重建页面 DOM，表现即「有播放时间、无画面、只有鼠标」。明确提示原因，
+    // 避免静默黑屏误导排查；新数据由 SDK 环形缓冲/采样兜底保证必含快照。
+    if (!validEvents.some(event => event.type === 2)) {
+      replayError.value = '该会话缺少页面全量快照（仅有交互事件），无法重建播放画面'
+      return
+    }
+
     replayEvents.value = validEvents
     const meta = validEvents.find(event => event.type === 4)?.data || {}
     const width = Number(meta.width) || replayEl.value.clientWidth || 1024

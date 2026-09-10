@@ -977,7 +977,10 @@ async function replayEvents(env,id){
   const baseId=hit?.base_session_id||id;
   let rows=(await env.DB.prepare('select events_json from replays where base_session_id=? order by created_at,id').bind(baseId).all()).results;
   if(!rows.length)rows=(await env.DB.prepare('select events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;
-  return json(rows.flatMap(row=>parse(row.events_json,[])))
+  // 多段/多页记录按 rrweb 事件时间戳升序还原时间线（对齐 Node 端 reassembleReplayEvents），
+  // 否则全量快照可能不排在首位，播放器无法重建页面，表现为“有播放时间、无画面”。
+  const events=rows.flatMap(row=>parse(row.events_json,[])).sort((a,b)=>(Number(a?.timestamp)||0)-(Number(b?.timestamp)||0));
+  return json(events)
 }
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
 async function traceEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where trace_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
