@@ -67,7 +67,7 @@ function statusType(status) {
         <el-table-column label="时间" :width="behaviorTable ? 180 : 200" cell-class-name="time-cell">
           <template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template>
         </el-table-column>
-        <el-table-column label="类型" width="100" cell-class-name="no-ellipsis">
+        <el-table-column label="类型" width="160" min-width="160" cell-class-name="no-ellipsis">
           <template #default="{ row }">
             <el-tag v-if="behaviorTable" size="small" effect="plain">{{ typeLabel(row) }}</el-tag>
             <template v-else>{{ typeLabel(row) }}</template>
@@ -128,6 +128,6 @@ function statusType(status) {
 </template>
 
 <style scoped>
-:deep(.no-ellipsis .cell) { overflow: visible; white-space: nowrap; }
-:deep(.no-ellipsis .el-tag) { max-width: none; white-space: nowrap; }
+:deep(.no-ellipsis .cell) { overflow: visible; white-space: nowrap; word-break: keep-all; }
+:deep(.no-ellipsis .el-tag) { max-width: none; white-space: nowrap; word-break: keep-all; }
 </style>
