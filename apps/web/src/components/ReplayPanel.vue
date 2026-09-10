@@ -363,6 +363,18 @@ function injectUpgradeInsecureRequests() {
   } catch { /* iframe 不可访问时静默降级，不影响回放 */ }
 }
 
+/**
+ * BUG-009：回放列表行的 session_id 是分段 ID（{sessionId}_{ts36}_{rand}[_segN]），
+ * journey 检索需基础事件会话 ID——去掉 _segN 后缀与录制实例随机后缀（后两段）。
+ */
+function journeySessionIdOf(row = {}) {
+  const raw = String(row.sessionId || row.session_id || row.replayId || '')
+  if (!raw) return ''
+  const noSeg = raw.replace(/_seg\d+$/, '')
+  const match = noSeg.match(/^(.+)_([^_]+)_([^_]+)$/)
+  return match ? match[1] : noSeg
+}
+
 function playReplay() {
   const startAt = duration.value && progress.value >= duration.value ? 0 : progress.value
   progress.value = startAt
@@ -636,12 +648,12 @@ defineExpose({ play, currentSessionCode })
             >
               <span><strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong><small>{{ row.url || '未记录页面地址' }}</small></span>
               <small class="session-item-side">
-                <!-- BUG-009（PRD 01 FR-5 入口 ②）：会话回放页 → 用户链路 -->
+                <!-- BUG-009（PRD 01 FR-5 入口 ②）：会话回放页 → 用户链路（分段 ID 提取基础会话 ID） -->
                 <router-link
-                  v-if="row.sessionId"
+                  v-if="journeySessionIdOf(row)"
                   class="session-journey-link"
                   title="查看该会话的用户链路时间线"
-                  :to="`/journey?type=session&value=${encodeURIComponent(row.sessionId)}`"
+                  :to="`/journey?type=session&value=${encodeURIComponent(journeySessionIdOf(row))}`"
                   @click.stop
                 >链路</router-link>
                 {{ formatDate(row.lastSeen) }}
