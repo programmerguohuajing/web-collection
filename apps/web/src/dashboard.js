@@ -13,6 +13,9 @@ export const pageLoading = ref(false)
 export const slowRequest = ref(false)
 export const activeRequestCount = ref(0)
 export const error = ref('')
+// AI 洞察未读数（右上角通知铃铛徽标）：Layout 挂载时经 loadInsightUnread 拉取
+// （status=open 的洞察总数）；点击铃铛跳转或进入 AI 洞察页后清零（视为已读）。
+export const insightUnread = ref(0)
 export const summary = ref(null)
 export const events = ref([])
 export const errorEvents = ref([])
@@ -316,6 +319,14 @@ function hasReplayEvents(payload) {
   if (Array.isArray(payload)) return payload.length > 0
   return Array.isArray(payload?.events) ? payload.events.length > 0
     : Array.isArray(payload?.data) ? payload.data.length > 0 : false
+}
+
+/** 拉取 AI 洞察未读数（status=open 总数），供右上角通知铃铛徽标展示；失败非阻塞。 */
+export async function loadInsightUnread() {
+  try {
+    const r = await api('/api/ai/findings?status=open&limit=1', { requestKey: 'layout:insights' })
+    insightUnread.value = r?.total || 0
+  } catch { /* 非阻塞：未读数拉取失败不影响主流程 */ }
 }
 
 export async function loadGovernance({ appPage = 1, appPageSize = 10 } = {}) {

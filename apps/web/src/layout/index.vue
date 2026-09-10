@@ -5,7 +5,7 @@ import {
   Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
   Histogram, House, Lock, Menu, Monitor, Operation, Reading, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled, Share, SetUp, Stamp, Coin, Brush
 } from '@element-plus/icons-vue'
-import { api, error, loading, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
+import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
@@ -24,11 +24,16 @@ const applications = ref([])
 const menuOpen = ref(false)
 const aiDrawerOpen = ref(false)
 const aiDrawerRef = ref(null)
-const insightCount = ref(0)
 
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
 function navigate(path) { closeMenu(); router.push(path) }
+
+/** 点击通知铃铛：先清除未读徽标（视为已读）再跳转 AI 洞察页，避免跳转后红点残留。 */
+function openInsights() {
+  insightUnread.value = 0
+  navigate('/ai-insights')
+}
 
 watch(() => route.query, () => {
   resetPageFilters()
@@ -128,11 +133,8 @@ onMounted(async () => {
   } catch (loadError) {
     if (loadError?.code !== 'ABORT_ERR') error.value = loadError.message || '应用列表加载失败'
   }
-  // P1 主动洞察：拉取未处理洞察数，导航红点提示
-  try {
-    const r = await api('/api/ai/findings?status=open&limit=1', { requestKey: 'layout:insights' })
-    insightCount.value = r?.total || 0
-  } catch { /* 非阻塞 */ }
+  // P1 主动洞察：拉取未处理洞察数，导航红点提示（共享状态：洞察页可清零/刷新）
+  await loadInsightUnread()
 
   // D2 账号体系：拉取能力位；已登录则加载用户/团队，供导航用户菜单使用（accounts=false 部署自动跳过）
   await loadCapabilities()
@@ -211,8 +213,8 @@ onMounted(async () => {
           </el-select>
         </div>
         <div class="navbar-actions">
-          <el-badge :value="insightCount" :hidden="!insightCount" :max="99">
-            <el-button text circle aria-label="通知" @click="navigate('/ai-insights')"><el-icon><Bell /></el-icon></el-button>
+          <el-badge :value="insightUnread" :hidden="!insightUnread" :max="99">
+            <el-button text circle aria-label="通知" @click="openInsights"><el-icon><Bell /></el-icon></el-button>
           </el-badge>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>
