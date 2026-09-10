@@ -63,24 +63,9 @@ import { ReliableSender, FetchTransport, BeaconTransport, IndexedDBQueue, create
 import { setupRemoteConfig } from './config/remote-config.js'
 import { createGetVariant } from './experiment/variant.js'
 
-/**
- * 由事件采集端点推导出 Span 接收端点。
- * 例：`/api/collect` → `/api/spans`；`https://host/api/collect` → `https://host/api/spans`。
- * @param {string} endpoint
- * @returns {string}
- */
-function deriveSpansUrl(endpoint) {
-  try {
-    const url = new URL(endpoint, location.href)
-    const suffix = '/api/collect'
-    url.pathname = url.pathname.endsWith(suffix)
-      ? url.pathname.slice(0, -suffix.length) + '/api/spans'
-      : url.pathname.replace(/\/$/, '') + '/api/spans'
-    return url.toString()
-  } catch {
-    return endpoint
-  }
-}
+// 采集地址解析：baseUrl + collectPath 已在下方 cfg 装配处归一（cfg.baseUrl 为接入基址，
+// cfg.endpoint 为采集完整地址 = `${cfg.baseUrl}/${cfg.collectPath}`）。所有兄弟路由
+// （/api/diagnostics、/api/monitoring/sdk、/api/spans、/sdk-config）统一以 cfg.baseUrl 拼接。
 
 /**
  * 由 traces 端点推导 metrics 端点：路径以 `/traces` 结尾则替换为 `/metrics`，否则追加 `/v1/metrics`。
@@ -117,7 +102,9 @@ const OTLP_DEFAULT = {
  * 创建 SDK 实例。
  *
  * @param {object} [options={}] - SDK 配置项
- * @param {string} [options.endpoint='/api/collect'] - 后端采集接口地址
+ * @param {string} [options.endpoint='/api/collect'] - 后端采集接口地址（采集 POST 完整地址，含采集路径）。与 `baseUrl` + `collectPath` 二选一；若同时给出 `baseUrl` 则优先用 `baseUrl`。
+ * @param {string} [options.baseUrl] - 接入基址/域名（不含采集路径），如 `https://monitor.example.com`。优先于 `endpoint`；给出后兄弟路由（diagnostics / monitoring / spans / sdk-config）统一以此拼接。
+ * @param {string} [options.collectPath='api/collect'] - 采集路径（仅用于拼接采集 POST 地址），默认 `api/collect`。
  * @param {string} [options.appId='default'] - 应用标识
  * @param {string} [options.release='dev'] - 应用版本号
  * @param {string} [options.userId=''] - 当前登录用户 ID
@@ -323,6 +310,23 @@ export function createEys(options = {}) {
     beaconMaxBytes: 60 * 1024,
     ...options
   }
+  // ---- 采集地址解析：baseUrl + collectPath 优先；legacy endpoint 兜底 ----
+  // endpoint：采集 POST 完整地址（含采集路径），与 baseUrl 二选一。
+  // 新增 baseUrl（接入基址/域名）+ collectPath（采集路径，默认 api/collect），
+  // 兄弟路由（diagnostics / monitoring / spans / sdk-config）统一以 baseUrl 拼接，
+  // 避免 endpoint 已含采集路径时拼出双重路径（曾导致 /api/collect/api/diagnostics 404）。
+  cfg.collectPath = typeof cfg.collectPath === 'string' && cfg.collectPath
+    ? cfg.collectPath.replace(/^\/+/, '')
+    : 'api/collect'
+  if (typeof cfg.baseUrl === 'string' && cfg.baseUrl) {
+    cfg.baseUrl = cfg.baseUrl.replace(/\/+$/, '')
+  } else {
+    const ep = String(cfg.endpoint || '').replace(/\/+$/, '')
+    const suffix = '/' + cfg.collectPath
+    cfg.baseUrl = ep.endsWith(suffix) ? ep.slice(0, -suffix.length) : ep
+  }
+  // 内部 endpoint 始终为采集完整地址（供 transport 发送与 fetch 自监控过滤使用）。
+  cfg.endpoint = `${cfg.baseUrl}/${cfg.collectPath}`
   // OTLP 配置深合并：允许 options.otlp 仅携带变更字段，其余沿用 OTLP_DEFAULT。
   cfg.otlp = { ...OTLP_DEFAULT, ...(cfg.otlp && typeof cfg.otlp === 'object' ? cfg.otlp : {}) }
   cfg.privacy ||= {}
@@ -493,7 +497,7 @@ export function createEys(options = {}) {
   let spanProcessor = null
   if (cfg.spanExport && tracer) {
     try {
-      const spansUrl = deriveSpansUrl(cfg.endpoint)
+      const spansUrl = `${cfg.baseUrl}/api/spans`
       const exporter = new WebCollectionSpanExporter({
         send: async (payload) => {
           if (!originalFetch) throw new Error('no fetch available for span export')
@@ -689,8 +693,7 @@ export function createEys(options = {}) {
   async function pollServerDiagnostics() {
     if (disposed || !fetchImpl || !cfg.appId) return
     try {
-      const base = String(cfg.endpoint || '').replace(/\/$/, '')
-      if (!base) return
+      const base = cfg.baseUrl
       const url = `${base}/api/diagnostics?appId=${encodeURIComponent(cfg.appId)}`
       const ctrl = new AbortController()
       const to = setTimeout(() => ctrl.abort(), 8000)
@@ -720,8 +723,7 @@ export function createEys(options = {}) {
   let monitoringTimer = null
   async function reportSdkMonitoring() {
     if (disposed || !fetchImpl || !cfg.appId) return
-    const base = String(cfg.endpoint || '').replace(/\/$/, '')
-    if (!base) return
+    const base = cfg.baseUrl
     const snap = selfMonitor.snapshot()
     try {
       const ctrl = new AbortController()
@@ -944,7 +946,7 @@ export function createEys(options = {}) {
     // 15) 远程采集配置（PRD 04）：启动拉取 + 按 ttl 轮询；onConfig 覆盖采样并记录 config_version
     stopRemoteConfig = safe('remoteConfig', () => {
       const ctl = setupRemoteConfig({
-        endpoint: cfg.endpoint,
+        baseUrl: cfg.baseUrl,
         appId: cfg.appId,
         release: cfg.release,
         environment: cfg.environment,
@@ -1325,7 +1327,10 @@ export function createEys(options = {}) {
       replayRing.setWindow(cfg.replayWindowMs)
     }
     // SDK-211 · 常态降采样（replaySampleRate<1 时降本）；错误升采样期间全保留。
-    if (!replayShouldKeep(cfg.replaySampleRate, errorBoosted, Math.random)) {
+    // 全量快照（type:2）永不参与采样丢弃：快照被丢后回放只剩增量事件，
+    // 播放窗口表现为「有播放时间、无画面、仅鼠标」。RingBuffer 亦已独立留存，
+    // 这里从源头避免快照被采样率筛掉。
+    if (event?.type !== 2 && !replayShouldKeep(cfg.replaySampleRate, errorBoosted, Math.random)) {
       replaySampledDrops++
       return
     }

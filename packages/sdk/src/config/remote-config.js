@@ -22,7 +22,7 @@ const FETCH_TIMEOUT_MS = 3000
  * 后端对仅带 sdk_version 的旧版 SDK 仍按原语义兼容。
  *
  * @param {object} opts
- * @param {string} opts.endpoint - 采集端点（用于推导同源 /sdk-config 地址）
+ * @param {string} opts.baseUrl - 接入基址（用于推导同源 /sdk-config 地址）
  * @param {string} opts.appId
  * @param {string} [opts.release] - 应用发布版本
  * @param {string} [opts.environment]
@@ -30,13 +30,13 @@ const FETCH_TIMEOUT_MS = 3000
  * @param {(config: object|null) => void} opts.onConfig - 每次配置应用时回调（null 表示无远程配置）
  * @returns {{ getConfig: () => object|null, getConfigVersion: () => number, destroy: () => void }}
  */
-export function setupRemoteConfig({ endpoint, appId, release, environment, remoteConfig = true, onConfig }) {
+export function setupRemoteConfig({ baseUrl, appId, release, environment, remoteConfig = true, onConfig }) {
   if (remoteConfig === false || typeof window === 'undefined' || typeof fetch !== 'function') {
     onConfig?.(null)
     return { getConfig: () => null, getConfigVersion: () => 0, destroy: () => {} }
   }
 
-  const configUrl = resolveConfigUrl(endpoint, remoteConfig)
+  const configUrl = resolveConfigUrl(baseUrl, remoteConfig)
   let current = null
   let etag = ''
   let timer = null
@@ -84,14 +84,11 @@ export function setupRemoteConfig({ endpoint, appId, release, environment, remot
   }
 }
 
-function resolveConfigUrl(endpoint, remoteConfig) {
+function resolveConfigUrl(baseUrl, remoteConfig) {
   if (typeof remoteConfig === 'string' && remoteConfig) return remoteConfig
   try {
-    const url = new URL(endpoint, location.href)
-    const suffix = '/api/collect'
-    url.pathname = url.pathname.endsWith(suffix)
-      ? url.pathname.slice(0, -suffix.length) + '/sdk-config'
-      : url.pathname.replace(/\/$/, '') + '/sdk-config'
+    const base = String(baseUrl || '').replace(/\/+$/, '')
+    const url = new URL(base + '/sdk-config', location.href)
     url.search = ''
     return url.toString()
   } catch {

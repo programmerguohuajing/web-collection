@@ -735,6 +735,40 @@ Events are buffered in a memory **hot queue** that is mirrored to an **IndexedDB
 | `sampleRate` | `1` | Session/global sampling rate (see Sampling & Cost Control) |
 | `onDiagnostic` | `null` | Health-event callback (see Diagnostics) |
 
+### Collection endpoint — `endpoint`, `baseUrl` & `collectPath`
+
+The three options describe **where events are sent**. They are mutually compatible: `baseUrl` + `collectPath` is the explicit form, `endpoint` is the legacy shorthand, and `endpoint` is still fully supported.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `endpoint` | `'/api/collect'` | **Legacy.** The full collection POST URL (base + path). If `baseUrl` is also given, `baseUrl` wins and `endpoint` is ignored for routing. |
+| `baseUrl` | _(derived from `endpoint`)_ | **Recommended.** The server base address **without** the collection path, e.g. `https://monitor.example.com`. All sibling routes (`/api/diagnostics`, `/api/monitoring/sdk`, `/api/spans`, `/sdk-config`) are built from `baseUrl`, so you never get a double-path 404. |
+| `collectPath` | `'api/collect'` | The collection path appended to `baseUrl`. Leading slashes are stripped. Ignored when `endpoint` is used. |
+
+Resolution rule (run once at init):
+
+- If `baseUrl` is provided → `endpoint = baseUrl + '/' + collectPath`.
+- Else → `baseUrl` is derived by stripping `/collectPath` (default `/api/collect`) from `endpoint`.
+
+```js
+// Recommended: split base and path
+createEys({
+  baseUrl: 'https://monitor.example.com',   // no trailing slash needed
+  collectPath: 'api/collect',               // default; only set if your route differs
+  appId: 'mall-web',
+  release: '1.0.0'
+})
+
+// Legacy shorthand (still works, auto-derives baseUrl)
+createEys({
+  endpoint: 'https://monitor.example.com/api/collect',
+  appId: 'mall-web',
+  release: '1.0.0'
+})
+```
+
+> ⚠️ `baseUrl` must point at the **origin + path prefix only** (e.g. `https://monitor.example.com` or `https://monitor.example.com/api`). Do **not** include the collection path in `baseUrl` — that is what `collectPath` is for. Putting the full path in `baseUrl` recreates the double-path `/api/collect/api/diagnostics` 404.
+
 Sending is reliable: exponential backoff with equal jitter, `Retry-After` honored, `408/425/429/5xx` retried while `4xx` payload errors are dropped permanently. A cross-tab lock ensures at most one tab per origin actively sends.
 
 Manual flush:
