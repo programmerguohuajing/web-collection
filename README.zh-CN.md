@@ -6,11 +6,17 @@
 
 > 前端监控、会话回放与产品分析 —— 一个 SDK，一个控制台。
 
-[![GitHub stars](https://img.shields.io/github/stars/programmerguohuajing/web-collection?style=social)](https://github.com/programmerguohuajing/web-collection) [![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+<p align="center">
+  <a href="https://github.com/programmerguohuajing/web-collection"><img src="https://img.shields.io/github/stars/programmerguohuajing/web-collection" alt="GitHub stars" /></a>
+  <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/dm/@web-collection/sdk" alt="npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/v/@web-collection/sdk" alt="npm version" /></a>
+  <a href="https://web-collection.jingguohua.cc.cd/overview"><img src="https://img.shields.io/badge/demo-online-brightgreen" alt="Live Demo" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+</p>
 
 </div>
 
-Web Collection 是 **pnpm monorepo** 前端监控系统：Vue 3 + Element Plus 控制台、Node API 服务与浏览器 SDK。用控制台定位 **错误、性能、回放、链路与埋点** 问题。
+Web Collection 是 **pnpm monorepo** 前端监控系统：Vue 3 + Element Plus 控制台、Node/Cloudflare D1 API、浏览器 SDK —— 并提供 **MCP 服务** 与 **内置 AI 能力**（智能诊断、基线异常检测、知识中枢），让人和智能体都能通过标准协议查询与处置遥测数据。用控制台定位 **错误、性能、回放、链路与埋点** 问题。
 
 👉 [阅读用户手册](docs/user-manual.zh-CN.md)
 
@@ -39,9 +45,20 @@ Web Collection 是 **pnpm monorepo** 前端监控系统：Vue 3 + Element Plus �
 
 完整变更见 [CHANGELOG](./CHANGELOG.md)。
 
+## 🤖 AI 与 MCP
+
+Web Collection 不只是控制台——它内置**智能能力**并提供**面向智能体的标准接口**，让人和 AI 工具都能查询与处置遥测数据。
+
+- **MCP 服务**（`apps/mcp`）：独立部署的 [Model Context Protocol](https://modelcontextprotocol.io) 服务，在 REST 数据平面之上暴露 **13 个工具**（并预留 D1 直连），Claude / Cursor / 任意 MCP 客户端可经标准协议拉取错误、Trace、回放、会话与分析数据。→ [MCP 服务文档](apps/mcp/README.md)
+- **AI 诊断与助手**：控制台内的 AI 诊断助手，以 Markdown 渲染根因 / 影响 / 修复建议。→ [用户手册 §15](docs/user-manual.zh-CN.md)
+- **智能基线异常检测**：Node 与 Cloudflare 双后端自动基线偏离告警，无需手工阈值。→ [用户手册 §13](docs/user-manual.zh-CN.md)
+- **知识中枢**：治理台 + 控制台内帮助中心，沉淀 runbook / playbook。→ [用户手册 §14](docs/user-manual.zh-CN.md)
+- **OTLP 导出**（可选）：将事件流式导出到任意 OpenTelemetry Collector。→ [SDK 文档 · OTLP](packages/sdk/README.zh-CN.md)
+
 ## 📑 目录
 
 - [🌟 0.5.0 新特性](#050-新特性)
+- [🤖 AI 与 MCP](#ai-与-mcp)
 - [🚀 快速开始](#快速开始)
 - [🔌 SDK 接入](#sdk-接入)
 - [📚 使用文档](#使用文档)

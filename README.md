@@ -6,11 +6,17 @@
 
 > Frontend monitoring, session replay & product analytics — one SDK, one console.
 
-[![GitHub stars](https://img.shields.io/github/stars/programmerguohuajing/web-collection?style=social)](https://github.com/programmerguohuajing/web-collection) [![npm downloads](https://img.shields.io/npm/dm/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![Live Demo](https://img.shields.io/badge/demo-online-brightgreen)](https://web-collection.jingguohua.cc.cd/overview) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+<p align="center">
+  <a href="https://github.com/programmerguohuajing/web-collection"><img src="https://img.shields.io/github/stars/programmerguohuajing/web-collection" alt="GitHub stars" /></a>
+  <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/dm/@web-collection/sdk" alt="npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/v/@web-collection/sdk" alt="npm version" /></a>
+  <a href="https://web-collection.jingguohua.cc.cd/overview"><img src="https://img.shields.io/badge/demo-online-brightgreen" alt="Live Demo" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+</p>
 
 </div>
 
-Web Collection is a **pnpm monorepo** frontend monitoring system: a Vue 3 + Element Plus web console, a Node API service, and a browser SDK. Use the console to locate **errors, performance, replays, traces and custom-tracking** issues.
+Web Collection is a **pnpm monorepo** frontend monitoring system: a Vue 3 + Element Plus web console, a Node/Cloudflare D1 API, a browser SDK — plus an **MCP service** and **built-in AI capabilities** (smart diagnosis, baseline anomaly detection, knowledge hub) so both humans and AI agents can query and act on telemetry through a standard protocol. Use the console to locate **errors, performance, replays, traces and custom-tracking** issues.
 
 👉 [Read the User Manual](docs/user-manual.md)
 
@@ -39,9 +45,20 @@ Web Collection is a **pnpm monorepo** frontend monitoring system: a Vue 3 + Elem
 
 See [CHANGELOG](./CHANGELOG.md) for the full list.
 
+## 🤖 AI & MCP
+
+Web Collection is not just a console — it ships **agent-ready interfaces and built-in AI** so telemetry can be queried and acted on by both humans and AI tools.
+
+- **MCP service** (`apps/mcp`): a standalone [Model Context Protocol](https://modelcontextprotocol.io) server exposing **13 tools** over the REST data plane (with D1 direct-connect), letting Claude / Cursor / any MCP client pull errors, traces, replays, sessions and analytics through a standard protocol. → [MCP service docs](apps/mcp/README.md)
+- **AI diagnosis & assistant**: an AI diagnostic assistant that renders Markdown reports (root-cause, impact, fix suggestions) inside the console. → [User Manual §15](docs/user-manual.md)
+- **Smart baseline anomaly detection**: automatic baseline-deviation alerts on both the Node and Cloudflare backends, no manual thresholds. → [User Manual §13](docs/user-manual.md)
+- **Knowledge hub**: a governance console + in-console help center for runbooks and playbooks. → [User Manual §14](docs/user-manual.md)
+- **OTLP export** (opt-in): stream events to any OpenTelemetry Collector. → [SDK docs · OTLP](packages/sdk/README.md)
+
 ## 📑 Table of Contents
 
 - [🌟 What's New in 0.5.0](#whats-new-in-050)
+- [🤖 AI & MCP](#ai-mcp)
 - [🚀 Quick Start](#quick-start)
 - [🔌 SDK Integration](#sdk-integration)
 - [📚 Documentation](#documentation)

@@ -6,7 +6,12 @@
 
 > Drop-in browser SDK for errors, performance, replay, tracing & behavior.
 
-[![npm version](https://img.shields.io/npm/v/@web-collection/sdk)](https://www.npmjs.com/package/@web-collection/sdk) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/index.d.ts)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/v/@web-collection/sdk" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/dt/%40web-collection%2Fsdk?label=downloads" alt="npm downloads" /></a>
+  <a href="https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/LICENSE"><img src="https://img.shields.io/npm/l/%40web-collection%2Fsdk" alt="License" /></a>
+  <a href="https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/index.d.ts"><img src="https://img.shields.io/badge/types-included-blue" alt="TypeScript" /></a>
+</p>
 
 </div>
 
