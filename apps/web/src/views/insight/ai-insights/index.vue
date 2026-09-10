@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { BellFilled, Refresh, MagicStick, Promotion } from '@element-plus/icons-vue'
-import { api } from '../../../dashboard.js'
+import { api, insightUnread } from '../../../dashboard.js'
 
 const router = useRouter()
 const items = ref([])
@@ -120,7 +120,11 @@ function askInAssistant(f) {
   router.push({ path: '/ai-assistant', query: { q: `分析这条 AI 洞察：${f.summary}` } })
 }
 
-onMounted(load)
+onMounted(() => {
+  // 进入洞察页即视为已读：清除右上角铃铛的未读徽标（覆盖侧边栏等非铃铛入口）。
+  insightUnread.value = 0
+  load()
+})
 </script>
 
 <template>
