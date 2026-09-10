@@ -33,7 +33,7 @@ Production console 👉 [https://your-domain.com](https://your-domain.com)
 - [📈 12. Retention / Cohort Analysis](#12-retention-cohort-analysis)
 - [🔔 13. Smart Baseline Anomaly Detection](#13-smart-baseline-anomaly-detection)
 - [📚 14. Knowledge Hub](#14-knowledge-hub)
-- [🤖 15. AI Diagnosis & Assistant (Markdown Rendering)](#15-ai-diagnosis-assistant-markdown-rendering)
+- [🤖 15. AI Diagnosis & Assistant](#15-ai-diagnosis-assistant)
 - [🔌 16. Integrations: MCP Server & OTLP Export](#16-integrations-mcp-server-otlp-export)
 
 ## 🧰 1. Before You Start
@@ -567,14 +567,121 @@ Turn "issue-localization know-how, runbooks, FAQs" into a searchable knowledge b
 
 ---
 
-## 🤖 15. AI Diagnosis & Assistant (Markdown Rendering)
+## 🤖 15. AI Diagnosis & Assistant
 
-AI diagnosis conclusions and the chat assistant now support **Markdown rendering** (code blocks, lists, tables, bold), making structured conclusions and repro steps easier to read.
+> Paths: **Governance → AI Diagnosis** (global diagnosis drawer + model settings), **Insights → AI Insights**, **Governance → AI Assistant**
 
-- **AI diagnosis**: the "deep diagnosis" result in an insight detail renders as Markdown instead of one cramped paragraph.
-- **AI assistant**: chat messages support Markdown — paste commands, code snippets, and bullet checklists directly.
+The platform ships a set of AI capabilities purpose-built for frontend observability: proactive insight scanning, a deep-diagnosis engine, a conversational assistant, and knowledge base (RAG) retrieval. Diagnosis conclusions and assistant messages render as **Markdown** (code blocks, lists, tables, bold) so structured findings and repro steps stay readable.
 
-> Note: Markdown is display-only; nothing is auto-executed.
+### 15.1 Capability Overview
+
+| Capability | Entry | Description |
+| --- | --- | --- |
+| AI Insights (proactive scan) | Insights → AI Insights | Rule-based detectors scan on a schedule or on demand — surface issues without opening an error first |
+| Deep diagnosis | Insight detail "Deep Diagnose" / global AI drawer | Sends trace / error / session / release context to an LLM for root-cause analysis |
+| AI Assistant (chat) | Governance → AI Assistant | Ask questions in natural language; telemetry context is auto-aggregated and the knowledge base is searched |
+| Knowledge base (RAG) | Knowledge Hub | runbook / doc / faq / issue / feedback content cited by diagnoses |
+| Model settings | Governance → AI Diagnosis | Multi-provider routing, connectivity probes, model listing, key management |
+
+### 15.2 AI Insights (Proactive Scan)
+
+The system ships five "cheap rule" detectors (no LLM calls, zero token cost). Scan results land in the insights stream:
+
+| Detector | Trigger (default threshold) |
+| --- | --- |
+| `error-cluster` | Same-named error occurs ≥ 5 times within the scan window |
+| `release-regression` | New release error rate up ≥ 20% vs previous release, or perf average regressed ≥ 15% |
+| `perf-regression` | Last-1h perf average regressed ≥ 30% vs previous window |
+| `metric-drop` | Last-1h event volume down ≥ 40% vs previous window |
+| `baseline-deviation` | Metric deviates ≥ 3σ from its historical baseline (see Chapter 13) |
+
+Workflow:
+
+1. Go to **Insights → AI Insights**, pick scan scopes and a time range (default: last 24h), click **Scan Now**.
+2. The list shows newest first: type, object, summary, confidence, status, discovered-at.
+3. Open insights of the same type+object are de-duplicated for 7 days — no repeated spam.
+4. Per-insight actions:
+   - **Detail**: view evidence and the summary;
+   - **Deep Diagnose**: map the insight onto the diagnosis engine for a full root-cause analysis (see 15.3);
+   - **Push**: deliver the insight to configured alert channels (see Alert Center);
+   - **Resolved / Ignored**: update status so it is not handled twice;
+   - **Ask in Assistant**: jump to the AI Assistant with "Analyze this AI insight: …" prefilled.
+
+> Cloudflare deployments include a Cron Trigger (daily scan); Node self-hosted backends can call `POST /api/ai/scan` from a scheduler for equivalent behavior.
+
+### 15.3 Deep Diagnosis (trace / error / session / release)
+
+Deep diagnosis hands "telemetry context + knowledge-base hits" to the LLM and forces a structured JSON output (summary / hypotheses / suggestions / relatedKb). Four entry points:
+
+1. **Insight detail → Deep Diagnose** (most common): `release-regression` → release comparison; `error-cluster` → similar-issue retrieval; `perf-regression` / `metric-drop` → evidence-injected root-cause Q&A.
+2. **Global AI diagnosis drawer** (floating button on every page): manual diagnosis by traceId, by error (issue fingerprint or error text), by performance (perf view of a traceId), or by release (version name).
+3. **Error / trace detail pages**: diagnosis context is prefilled with the current traceId or issue fingerprint.
+4. **Open API**: `POST /api/ai/diagnose` with `{ scope: 'trace' | 'perf' | 'session' | 'release', ref, appId, preferOverseas }`, or the legacy `{ traceId }` / `{ issueId }` / `{ errorText }` shape.
+
+Reading the result:
+
+- **summary**: one-line conclusion (≤50 chars).
+- **hypotheses**: root-cause hypotheses sorted by confidence, each with evidence references (span / event / release / kb).
+- **suggestions**: actionable investigation/fix steps, possibly with code refs (file:line).
+- **relatedKb / kbHits**: matched knowledge-base entries; click through to the Knowledge Hub.
+- **Confidence**: the average across hypotheses; when the model flags "insufficient evidence" confidence drops below 0.4 — review manually.
+- **Degraded output**: if the model occasionally emits unparseable output, the raw snippet is shown instead (marked degraded) and the pipeline does not break.
+- **Cache**: results for the same diagnosis target are reused for 10 minutes (repeat clicks cost nothing extra).
+
+### 15.4 Feedback Loop (Thumbs-Down Sedimentation)
+
+Each diagnosis result can be rated:
+
+- **👍 Helpful**: recorded as positive feedback.
+- **👎 Not helpful**: after filling in a correction, the system automatically **sediments the correction into the knowledge base** (source_type=`feedback`); future diagnoses of similar errors will retrieve it — the system gets better with use.
+
+### 15.5 AI Assistant (Conversational Q&A)
+
+Path: **Governance → AI Assistant**.
+
+- Left column: conversation history (multi-turn memory persisted); middle: the chat; right: currently open proactive insights, one click away from being asked about.
+- Example questions: "Why did the iOS payment conversion rate drop today?", "What was behind last Wednesday's crash spike?", "Which error clusters appeared in the last 24h?".
+- The system auto-aggregates last-24h observability context (event volume, perf average, top-3 error clusters) plus knowledge-base hits into the prompt; the model is instructed not to fabricate data and to say so explicitly when data is insufficient.
+- Answers render as Markdown — commands and code snippets can be pasted directly.
+- Like diagnosis conclusions, assistant answers are display-only; nothing is auto-executed.
+
+> Open API: `POST /api/ai/ask` with `{ question, appId, conversationId? }`; `GET /api/ai/conversations` lists history. (Currently provided by the Cloudflare AI Worker; Node backend availability — see CHANGELOG.)
+
+### 15.6 Model Settings (Multi-Provider Routing)
+
+Path: **Governance → AI Diagnosis** (admin only). The model gateway routes providers in configured order; if one fails (unreachable/timeout) it falls back to the next automatically:
+
+| Provider | Env prefix | Default |
+| --- | --- | --- |
+| local (on-prem, e.g. Ollama) | `LOCAL_MODEL_*` | `deepseek-v3` |
+| domestic (China) | `DOMESTIC_*` | DeepSeek `deepseek-chat` |
+| overseas | `OVERSEAS_*` | OpenAI `gpt-4o-mini` |
+| workers-ai (fallback, CF only) | `WORKERS_AI_MODEL` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+
+- **API format**: each provider can use `openai-chat` / `anthropic-messages` / `openai-responses` / `gemini-generatecontent`.
+- **Config source**: the settings page annotates each field's effectiveSource (db / env / default); DB settings take precedence over environment variables.
+- **Keys**: API keys are AES-GCM encrypted at rest (reusing `ALERT_SECRET_MASTER_KEY`) and echoed back masked; leaving the field blank keeps the existing key.
+- **Probes**: before saving, fire a minimal parallel request at every provider in the order (20s timeout) and fetch a single provider's model list.
+- **Timeout**: 8s per provider by default (`AI_TIMEOUT_MS`).
+
+> **Privacy guard**: before any overseas call, PII is aggressively masked (phone / email / national ID / sensitive URL params / tokens); local and domestic calls keep data in-network. Recommended order: local → domestic → overseas.
+
+### 15.7 Open API & Rate Limiting
+
+All AI endpoints live under `/api/ai/*`:
+
+- **Auth**: same-origin console calls need no key; once `AI_API_KEY` is configured, cross-origin open calls must send `x-ai-key`. The three settings endpoints (read/write, probe, model list) are same-origin only.
+- **Rate limiting**: token-bucket per caller (default capacity 60, refill 10/s); exceeding it returns 429 with `retry-after`. Tune via `AI_RATE_CAPACITY` / `AI_RATE_REFILL`.
+- **Vector search (optional)**: set `EMBEDDING_BASE_URL` (OpenAI-compatible `/embeddings`) to enable semantic retrieval; without it, RAG degrades to keyword/rules and the diagnosis pipeline is unaffected.
+
+### 15.8 FAQ
+
+- **Diagnosis unresponsive / 429**: rate limited — retry later or raise capacity; same-origin console calls count under the `console` bucket.
+- **Result marked degraded**: the model output was unparseable and the raw snippet is shown; re-run the diagnosis (repeat clicks within the 10-minute cache return the old result — try again shortly).
+- **No knowledge-base hits**: `EMBEDDING_BASE_URL` is not configured (no vector search), or the KB is empty — add runbooks / FAQs in the Knowledge Hub first (see Chapter 14).
+- **Insight list is empty**: no scan has run yet or the data volume is below thresholds; click "Scan Now" and make sure the time range covers a window with data.
+- **Saving model settings fails with "cannot save keys"**: `ALERT_SECRET_MASTER_KEY` is not configured, so secrets cannot be encrypted at rest; set the master key in the deployment environment first.
+- **Markdown rendering**: both diagnosis and assistant messages support Markdown; rendering is display-only — commands are never auto-executed.
 
 ---
 
