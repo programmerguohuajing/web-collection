@@ -979,8 +979,29 @@ async function replayEvents(env,id){
   if(!rows.length)rows=(await env.DB.prepare('select events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;
   // 多段/多页记录按 rrweb 事件时间戳升序还原时间线（对齐 Node 端 reassembleReplayEvents），
   // 否则全量快照可能不排在首位，播放器无法重建页面，表现为“有播放时间、无画面”。
-  const events=rows.flatMap(row=>parse(row.events_json,[])).sort((a,b)=>(Number(a?.timestamp)||0)-(Number(b?.timestamp)||0));
-  return json(events)
+  // SDK 把回放按段 drain 上报，而 rrweb 的全量快照（type:2）是异步 emit 的：首屏加载期的
+  // 分段竞态下，部分段（尤其首段/中间段）的缓冲在 rrweb 初始全量快照发出前就被 drain，
+  // 入库时只有纯增量事件（type:3）——此时若按全局时间戳排序，纯增量段会排在最前，rrweb
+  // 播放器从头播这些没有 DOM 基础的 mutation，无法重建页面，表现为「首屏短暂有画面后空白」。
+  // 故：① 不按全局 timestamp 重排（段内已按录制时间升序，段间按 created_at,id 即录制顺序）；
+  // ② 逐段维护「最近一次全量快照」，缺快照的段以其前置补入，保证每段都能重建出画面；
+  // ③ 首段若无任何前序快照，用整段会话中第一个可用快照兜底（同会话 DOM 结构一致、node id
+  // 基本对齐，远优于纯空白）。
+  const merged=[];
+  let lastSnapshot=null;
+  rows.forEach((row,segIdx)=>{
+    const evs=parse(row.events_json,[]);
+    if(!Array.isArray(evs)||!evs.length)return;
+    const snap=evs.find(e=>e&&e.type===2);
+    if(snap)lastSnapshot=snap;
+    if(!snap&&lastSnapshot)merged.push(lastSnapshot);
+    for(const e of evs)merged.push(e);
+  });
+  if(merged.length&&merged[0]&&merged[0].type!==2){
+    const firstSnap=merged.find(e=>e&&e.type===2);
+    if(firstSnap)merged.unshift(firstSnap);
+  }
+  return json(merged)
 }
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
 async function traceEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where trace_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
