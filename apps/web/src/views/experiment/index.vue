@@ -100,6 +100,8 @@ function removeVariant(index) {
 }
 
 async function load() {
+  // BUG-005 修复：能力位关闭时不再发请求（避免 503 噪音）；模板已用 v-if/v-else 只渲染占位提示。
+  if (!experimentsEnabled.value) return
   if (!store.appId) {
     list.value = []
     total.value = 0
@@ -229,6 +231,8 @@ async function remove(row) {
 watch(() => store.appId, () => { page.value = 1; load() })
 
 onMounted(() => {
+  // BUG-005：能力位关闭时整页不发任何请求（load/loadApplications 双守卫）。
+  if (!experimentsEnabled.value) return
   load()
   loadApplications()
 })

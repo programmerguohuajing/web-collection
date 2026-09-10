@@ -216,6 +216,12 @@ function changeTab(name) {
 }
 function replay(id) { router.push({ path: '/replays', query: { replayId: id } }) }
 
+/** BUG-009（PRD 01 FR-5 入口 ③）：会话列表行操作 → 用户链路（按 sessionId 打开会话时间线）。 */
+function openJourney(row = {}) {
+  if (!row.session_id) return
+  router.push({ path: '/journey', query: { type: 'session', value: row.session_id } })
+}
+
 /**
  * B4 分析 → 回放：带过滤条件打开回放列表（而非只播单条会话）。
  * 按该会话的 userId / userName 过滤，二者均为回放查询 API 支持的真实参数。
@@ -285,7 +291,12 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="回放" width="160"><template #default="{ row }"><el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button><el-button v-if="row.user_id" link type="primary" @click="replayList(row)">查看回放</el-button><span v-if="!replayId(row) && !row.user_id">-</span></template></el-table-column>
+        <el-table-column label="回放 / 链路" width="220"><template #default="{ row }">
+          <!-- BUG-009（PRD 01 FR-5 入口 ③）：会话列表行 → 用户链路 -->
+          <el-button link type="primary" @click="openJourney(row)">链路</el-button>
+          <el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button>
+          <el-button v-if="row.user_id" link type="primary" @click="replayList(row)">查看回放</el-button>
+        </template></el-table-column>
       </el-table>
       <el-pagination v-if="sessionPager.total > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
     </el-tab-pane>

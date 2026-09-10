@@ -111,23 +111,35 @@ const previewShort = computed(() => form.shortName || (form.name ? form.name.sli
 const savedConsoleDomain = ref('')
 const savedCollectDomain = ref('')
 
+/** 响应解包：Worker/Node 的 GET /api/brand 返回 {enabled, brand} 信封；兼容直接返回扁平品牌对象的历史形态。 */
+function unwrapBrand(data: any): Partial<BrandForm> {
+  return (data && typeof data === 'object' && data.brand && typeof data.brand === 'object') ? data.brand : (data || {})
+}
+
+function applyBrand(data: any): void {
+  const brand = unwrapBrand(data) as Partial<BrandForm>
+  form.name = brand.name || ''
+  form.shortName = brand.shortName || ''
+  form.primaryColor = brand.primaryColor || '#4f46e5'
+  form.logoUrl = brand.logoUrl || ''
+  form.faviconUrl = brand.faviconUrl || ''
+  form.loginTitle = brand.loginTitle || ''
+  form.loginSubtitle = brand.loginSubtitle || ''
+  form.loginFooter = brand.loginFooter || ''
+  form.consoleDomain = brand.consoleDomain || ''
+  form.collectDomain = brand.collectDomain || ''
+  savedConsoleDomain.value = brand.consoleDomain || ''
+  savedCollectDomain.value = brand.collectDomain || ''
+  savedSnapshot = JSON.stringify(form)
+}
+
 async function load(): Promise<void> {
+  // BUG-012 修复：能力位关闭时不发请求、不渲染表单——与 /slo 等能力位页统一为占位页模式
+  //（此前 whiteLabel=false 仍拉取 GET /api/brand（404 噪音）并渲染整页 disabled 表单）。
+  if (!whiteLabelEnabled.value) return
   loading.value = true
   try {
-    const data = (await getBrand()) as Partial<BrandForm> & { consoleDomain?: string; collectDomain?: string }
-    form.name = data.name || ''
-    form.shortName = data.shortName || ''
-    form.primaryColor = data.primaryColor || '#4f46e5'
-    form.logoUrl = data.logoUrl || ''
-    form.faviconUrl = data.faviconUrl || ''
-    form.loginTitle = data.loginTitle || ''
-    form.loginSubtitle = data.loginSubtitle || ''
-    form.loginFooter = data.loginFooter || ''
-    form.consoleDomain = data.consoleDomain || ''
-    form.collectDomain = data.collectDomain || ''
-    savedConsoleDomain.value = data.consoleDomain || ''
-    savedCollectDomain.value = data.collectDomain || ''
-    savedSnapshot = JSON.stringify(form)
+    applyBrand(await getBrand())
   } catch {
     ElMessage.error('加载品牌配置失败')
   } finally {
@@ -142,12 +154,8 @@ async function onSave(): Promise<void> {
   }
   saving.value = true
   try {
-    const data = (await saveBrand({ ...form })) as Partial<BrandForm> & { consoleDomain?: string; collectDomain?: string }
-    form.consoleDomain = data.consoleDomain || ''
-    form.collectDomain = data.collectDomain || ''
-    savedConsoleDomain.value = data.consoleDomain || ''
-    savedCollectDomain.value = data.collectDomain || ''
-    savedSnapshot = JSON.stringify(form)
+    const data = await saveBrand({ ...form }) as Partial<BrandForm> & { consoleDomain?: string; collectDomain?: string }
+    applyBrand(data)
     ElMessage.success('已保存，刷新页面后全量生效')
     try {
       await ElMessageBox.confirm('是否立即刷新页面，使品牌（主色/标题/Logo/favicon）全量生效？', '保存成功', {
@@ -169,20 +177,8 @@ async function onSave(): Promise<void> {
 async function onReset(): Promise<void> {
   saving.value = true
   try {
-    const data = (await resetBrand()) as Partial<BrandForm> & { consoleDomain?: string; collectDomain?: string }
-    form.name = data.name || ''
-    form.shortName = data.shortName || ''
-    form.primaryColor = data.primaryColor || '#4f46e5'
-    form.logoUrl = data.logoUrl || ''
-    form.faviconUrl = data.faviconUrl || ''
-    form.loginTitle = data.loginTitle || ''
-    form.loginSubtitle = data.loginSubtitle || ''
-    form.loginFooter = data.loginFooter || ''
-    form.consoleDomain = data.consoleDomain || ''
-    form.collectDomain = data.collectDomain || ''
-    savedConsoleDomain.value = data.consoleDomain || ''
-    savedCollectDomain.value = data.collectDomain || ''
-    savedSnapshot = JSON.stringify(form)
+    const data = await resetBrand() as Partial<BrandForm> & { consoleDomain?: string; collectDomain?: string }
+    applyBrand(data)
     ElMessage.success('已重置为默认品牌')
   } catch (e) {
     ElMessage.error((e as { message?: string })?.message || '重置失败')
@@ -207,7 +203,8 @@ onMounted(load)
       </div>
     </div>
 
-    <!-- 能力位未开启：显式占位，不静默隐藏 -->
+    <!-- BUG-012 修复：能力位未开启时整页只渲染占位提示（与 slo/synthetic/dsr/experiment 统一），
+         不发任何请求、不渲染表单——而非此前的「alert + disabled 表单」半开放形态。 -->
     <el-alert
       v-if="!whiteLabelEnabled"
       class="section"
@@ -218,7 +215,7 @@ onMounted(load)
       description="Cloudflare Worker 部署需设置 WHITE_LABEL_ENABLED=1 后重启实例方可启用；Node 自托管部署默认支持。"
     />
 
-    <div class="brand-grid">
+    <div v-else class="brand-grid">
       <!-- 左：表单 -->
       <el-card class="section form-card" :body-style="{ padding: '18px 20px' }">
         <el-form :model="form" label-width="92px" label-position="right" :disabled="!whiteLabelEnabled">

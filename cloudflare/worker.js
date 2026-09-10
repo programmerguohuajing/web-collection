@@ -282,7 +282,10 @@ export default {
       else if (url.pathname === '/brand.js') response = await brandScriptW(request, env)
       else if (url.pathname === '/api/collect' && request.method === 'POST') response = await collect(request, env, ctx)
       else if (url.pathname === '/api/collect.gif') response = await collectGif(url, env)
-      else if (url.pathname === '/api/monitoring/ingestion') response = json(await ingestionMonitorSnapshot(env))
+      // BUG-002 修复：统一双端点契约——/health 的 ingestion 字段与 /api/monitoring/ingestion
+      // 此前一个嵌套一个扁平，前端需双路径兼容。现统一为 { ingestion: {...} } 信封
+      //（数据同源 ingestionMonitorSnapshot，与 /health.ingestion 完全同构）。
+      else if (url.pathname === '/api/monitoring/ingestion') response = json({ ingestion: await ingestionMonitorSnapshot(env) })
       else if (url.pathname === '/api/diagnostics') response = await diagnostics(request, env, url)
       else if (url.pathname === '/api/monitoring/sdk' && request.method === 'POST') response = await reportSdkMonitoring(request, env)
       else if (url.pathname === '/api/monitoring/sdk') response = await getSdkMonitoring(env, url)
@@ -386,6 +389,83 @@ async function meteringIncrementW(env, teamId, appId, metric, delta) {
   ).bind(clip(teamId || '', 32), clip(appId || 'default', 64), clip(metric || 'events', 24), day, Number(delta) || 0, Date.now()).run()
 }
 
+// ==================== BUG-011 修复：/api/metering/* 读端点（PRD 15 §7/§8） ====================
+// 守卫：能力未开启统一 503（PRD 15 §验收「Worker 未设 METERING_ENABLED=1 时 /api/metering/* 全部 503」）；
+// 开启后 usage / usage/daily / usage/by-app 从 usage_daily 聚合账本按月/按日/按应用读取（月粒度由日行求和，不落月表）。
+
+/** PRD 15 守卫：metering 能力未开启（env.METERING_ENABLED≠1）时统一 503（复刻 guardDsrW 文案范式）。 */
+function guardMeteringW(env, run) {
+  if (env.METERING_ENABLED !== '1') return json({ error: '用量计量能力未启用（需设置 METERING_ENABLED=1）' }, 503)
+  return run()
+}
+
+const METERING_PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+/** 解析 ?period=YYYY-MM（缺省当月，UTC）→ { key, startDay, endDay, daysRemaining }（day 为 yyyyMMdd 整数）。 */
+function meteringPeriodRange(period) {
+  const now = new Date()
+  const key = METERING_PERIOD_RE.test(String(period || '')) ? String(period)
+    : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
+  const [y, m] = key.split('-').map(Number)
+  const startDay = y * 10000 + m * 100 + 1
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate() // 下月 0 日 = 当月最后一天
+  const endDay = y * 10000 + m * 100 + lastDay
+  const daysRemaining = Math.max(0, Math.ceil((Date.UTC(y, m, 1) - now.getTime()) / 86400000))
+  return { key, startDay, endDay, daysRemaining }
+}
+
+/** 内置回落档位（PRD 15：档位入库不入码——plans 表有数据时以表为准，无数据时按 free 档展示）。 */
+const METERING_FALLBACK_QUOTA = { events: 1000000, replay_sessions: 2000, seats: 5 }
+
+/** GET /api/metering/usage：当前（或 ?period=YYYY-MM）周期用量 + 配额 + 百分比 + 剩余天数。 */
+async function meteringUsageW(env, url) {
+  const { key, startDay, endDay, daysRemaining } = meteringPeriodRange(url.searchParams.get('period'))
+  const rows = await qm(env, 'select metric, sum(value) total from usage_daily where day between ? and ? group by metric', [startDay, endDay])
+  const metrics = ['events', 'replay_sessions', 'seats'].map(name => {
+    const used = Number(rows.find(r => r.metric === name)?.total || 0)
+    const quota = METERING_FALLBACK_QUOTA[name] ?? null
+    const pct = quota ? Math.round((used / quota) * 1000) / 10 : null
+    return { metric: name, used, quota, pct, level: pct == null ? 'ok' : pct >= 100 ? 'exceeded' : pct >= 80 ? 'warning' : 'ok', unlimited: quota == null }
+  })
+  return json({ period: key, periodStart: startDay, periodEnd: endDay, daysRemaining, metrics })
+}
+
+/** GET /api/metering/usage/daily：?from&to&appId → [{day, events, replay_sessions}]（MiniLineChart 序列）。 */
+async function meteringDailyW(env, url) {
+  const nowDay = Number(new Date().toISOString().slice(0, 10).replace(/-/g, ''))
+  const from = Number(url.searchParams.get('from')) || (Math.floor(nowDay / 100) * 100 + 1)
+  const to = Number(url.searchParams.get('to')) || nowDay
+  const appId = clip(url.searchParams.get('appId') || '', 64)
+  const rows = await qm(env, `select day, metric, sum(value) total from usage_daily where day between ? and ? ${appId ? 'and app_id=?' : ''} group by day, metric`, appId ? [from, to, appId] : [from, to])
+  const byDay = new Map()
+  for (const r of rows) {
+    const item = byDay.get(Number(r.day)) || { day: Number(r.day), events: 0, replay_sessions: 0 }
+    if (r.metric === 'events') item.events = Number(r.total)
+    if (r.metric === 'replay_sessions') item.replay_sessions = Number(r.total)
+    byDay.set(Number(r.day), item)
+  }
+  return json([...byDay.values()].sort((a, b) => a.day - b.day))
+}
+
+/** GET /api/metering/usage/by-app：?period → [{appId, appName, events, replay_sessions, pct}]（按 events 降序 Top 50）。 */
+async function meteringByAppW(env, url) {
+  const { startDay, endDay } = meteringPeriodRange(url.searchParams.get('period'))
+  const rows = await qm(env, "select app_id, metric, sum(value) total from usage_daily where day between ? and ? and app_id<>'' group by app_id, metric", [startDay, endDay])
+  const apps = await qm(env, 'select app_id, name from applications')
+  const nameMap = new Map(apps.map(a => [a.app_id, a.name || a.app_id]))
+  const byApp = new Map()
+  let totalEvents = 0
+  for (const r of rows) {
+    const item = byApp.get(r.app_id) || { appId: r.app_id, appName: nameMap.get(r.app_id) || r.app_id, events: 0, replay_sessions: 0 }
+    if (r.metric === 'events') { item.events = Number(r.total); totalEvents += Number(r.total) }
+    if (r.metric === 'replay_sessions') item.replay_sessions = Number(r.total)
+    byApp.set(r.app_id, item)
+  }
+  return json([...byApp.values()]
+    .map(item => ({ ...item, pct: totalEvents ? Math.round((item.events / totalEvents) * 1000) / 10 : 0 }))
+    .sort((a, b) => b.events - a.events)
+    .slice(0, 50))
+}
+
 // ==================== D4 白标：公开 /brand.js 运行时品牌脚本 ====================
 // 与 apps/api/src/services/branding-service.js 逐字段镜像（Worker 不能 import Node 服务）：
 // 优先级 DB(settings.config_json.brand) > env(BRAND_*) > 内置默认；WHITE_LABEL_ENABLED=1 才启用。
@@ -464,25 +544,104 @@ function brandSafeJsonW(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
 }
 
+/** 读取合并后的品牌配置（优先级 DB settings.config_json.brand > env BRAND_* > 内置默认；brandScriptW 与 /api/brand 同源）。 */
+async function brandMergedW(env) {
+  let brandBlock = null
+  try {
+    const row = await env.DB.prepare('select config_json from settings where id=1').first()
+    const cfg = parse(row?.config_json, {})
+    if (cfg && cfg.brand && typeof cfg.brand === 'object') brandBlock = cfg.brand
+  } catch {}
+  const fromEnv = {
+    name: env.BRAND_NAME || '', shortName: env.BRAND_SHORT_NAME || '', logoUrl: env.BRAND_LOGO_URL || '',
+    faviconUrl: env.BRAND_FAVICON_URL || '', primaryColor: env.BRAND_PRIMARY_COLOR || '',
+    loginTitle: env.BRAND_LOGIN_TITLE || '', loginSubtitle: env.BRAND_LOGIN_SUBTITLE || ''
+  }
+  const merged = { ...BRAND_DEFAULTS_W }
+  for (const [k, v] of Object.entries(fromEnv)) { if (v) merged[k] = v }
+  if (brandBlock) { for (const [k, v] of Object.entries(brandBlock)) { if (v !== undefined && v !== null && v !== '') merged[k] = v } }
+  return merged
+}
+
+// ==================== D4 · /api/brand 三端点（PRD 16 D6；镜像 Node apps/api 契约） ====================
+// GET 公开（登录页未登录也读白标）：whiteLabel 关闭 → {enabled:false, brand:null}（200，非静默 404）；
+// PUT / POST reset：能力位关闭 → 503「白标能力未启用」（PRD 16 §164/165）；开启时 merge 写 settings.config_json.brand。
+
+/** 品牌 PUT 可写字段白名单（PRD 16 §163；collectDomain 由 SDK init 生效，仅记录展示）。 */
+const BRAND_WRITABLE_W = ['name', 'shortName', 'logoUrl', 'faviconUrl', 'primaryColor', 'loginTitle', 'loginSubtitle', 'loginFooter', 'consoleDomain', 'collectDomain']
+
+async function brandGetW(env) {
+  try {
+    const enabled = env.WHITE_LABEL_ENABLED === '1'
+    if (!enabled) return json({ enabled: false, brand: null })
+    return json({ enabled: true, brand: brandPublicW(await brandMergedW(env)) })
+  } catch (err) {
+    console.error('[brand] get failed', err)
+    return json({ error: '品牌配置读取失败' }, 500)
+  }
+}
+
+/** 写权限：accounts=false 单租户放行（与 saveSettings 同语义）；开启时需登录（session/api-key）且 admin+（owner 恒可）。 */
+function brandWriteAuthzW(env, auth) {
+  if (!accountsEnabled(env)) return null
+  if (!auth) return json({ error: '未登录' }, 401)
+  const role = String(auth.role || '')
+  if (role !== 'owner' && role !== 'admin') return json({ error: '需要 Admin 及以上角色（owner 恒可）' }, 403)
+  return null
+}
+
+async function brandPutW(request, env, auth) {
+  if (env.WHITE_LABEL_ENABLED !== '1') return json({ error: '白标能力未启用（需设置 WHITE_LABEL_ENABLED=1）' }, 503)
+  const denied = brandWriteAuthzW(env, auth)
+  if (denied) return denied
+  let body
+  try { body = await request.json() } catch { body = {} }
+  if (!body || typeof body !== 'object') return json({ error: '请求体须为 JSON 对象' }, 400)
+  // 白名单过滤 → 归一化（颜色/URL 安全校验同 brandPublicW）→ merge 保留未提交字段的现值
+  const current = await brandMergedW(env)
+  const next = { ...current }
+  for (const key of BRAND_WRITABLE_W) {
+    if (body[key] !== undefined) next[key] = String(body[key] ?? '')
+  }
+  const normalized = brandPublicW(next)
+  try {
+    const row = await env.DB.prepare('select config_json from settings where id=1').first()
+    const cfg = parse(row?.config_json, {})
+    cfg.brand = { ...(cfg.brand || {}), ...normalized }
+    await env.DB.prepare('insert into settings(id, config_json, updated_at) values(1,?,?) on conflict(id) do update set config_json=excluded.config_json, updated_at=excluded.updated_at')
+      .bind(JSON.stringify(cfg), Date.now()).run()
+    return json({ ok: true, brand: normalized })
+  } catch (err) {
+    console.error('[brand] put failed', err)
+    return json({ error: '品牌配置保存失败' }, 500)
+  }
+}
+
+async function brandResetW(request, env, auth) {
+  if (env.WHITE_LABEL_ENABLED !== '1') return json({ error: '白标能力未启用（需设置 WHITE_LABEL_ENABLED=1）' }, 503)
+  const denied = brandWriteAuthzW(env, auth)
+  if (denied) return denied
+  try {
+    const row = await env.DB.prepare('select config_json from settings where id=1').first()
+    const cfg = parse(row?.config_json, {})
+    if (cfg.brand) {
+      delete cfg.brand
+      await env.DB.prepare('insert into settings(id, config_json, updated_at) values(1,?,?) on conflict(id) do update set config_json=excluded.config_json, updated_at=excluded.updated_at')
+        .bind(JSON.stringify(cfg), Date.now()).run()
+    }
+    return json({ ok: true, brand: brandPublicW({ ...BRAND_DEFAULTS_W }) })
+  } catch (err) {
+    console.error('[brand] reset failed', err)
+    return json({ error: '品牌配置重置失败' }, 500)
+  }
+}
+
 async function brandScriptW(request, env) {
   const headers = { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }
   try {
     const enabled = env.WHITE_LABEL_ENABLED === '1'
     if (!enabled) return new Response('window.__BRAND__ = null;', { headers })
-    let brandBlock = null
-    try {
-      const row = await env.DB.prepare('select config_json from settings where id=1').first()
-      const cfg = parse(row?.config_json, {})
-      if (cfg && cfg.brand && typeof cfg.brand === 'object') brandBlock = cfg.brand
-    } catch {}
-    const fromEnv = {
-      name: env.BRAND_NAME || '', shortName: env.BRAND_SHORT_NAME || '', logoUrl: env.BRAND_LOGO_URL || '',
-      faviconUrl: env.BRAND_FAVICON_URL || '', primaryColor: env.BRAND_PRIMARY_COLOR || '',
-      loginTitle: env.BRAND_LOGIN_TITLE || '', loginSubtitle: env.BRAND_LOGIN_SUBTITLE || ''
-    }
-    const merged = { ...BRAND_DEFAULTS_W }
-    for (const [k, v] of Object.entries(fromEnv)) { if (v) merged[k] = v }
-    if (brandBlock) { for (const [k, v] of Object.entries(brandBlock)) { if (v !== undefined && v !== null && v !== '') merged[k] = v } }
+    const merged = await brandMergedW(env)
     const b = brandPublicW(merged)
     const p = brandPaletteW(b.primaryColor)
     const setProps = [
@@ -692,6 +851,18 @@ async function adminApi(request, env, url) {
   // 严格模式（ACCOUNTS_ENFORCE=1）：受控管理接口未登录 → 401（公开前缀豁免，对齐 Node AUTH_PUBLIC_PREFIXES）
   if (!auth && accountsEnabled(env) && accountsEnforced(env) && requiresAuthPath(path)) return json({ error: '未登录或会话已失效' }, 401)
   if (path === '/api/capabilities') return json(buildCapabilities(WORKER_CAPABILITIES, { accounts: accountsEnabled(env), slo: sloEnabledW(env), synthetic: env.SYNTHETIC_ENABLED === '1', dsr: env.DSR_ENABLED === '1', experiments: env.EXPERIMENTS_ENABLED === '1', metering: env.METERING_ENABLED === '1', whiteLabel: env.WHITE_LABEL_ENABLED === '1' }))
+  // ==================== D3 · 用量计量（PRD 15；METERING_ENABLED 门禁） ====================
+  // BUG-011 修复：此前 /api/metering/* 落到 404，而 PRD 15 §验收承诺能力未开启时统一 503+文案。
+  // 未开启 → guardMeteringW 统一 503；开启 → usage/daily/by-app 从 usage_daily 聚合账本读取。
+  if (path === '/api/metering/usage' && request.method === 'GET') return guardMeteringW(env, () => meteringUsageW(env, url))
+  if (path === '/api/metering/usage/daily' && request.method === 'GET') return guardMeteringW(env, () => meteringDailyW(env, url))
+  if (path === '/api/metering/usage/by-app' && request.method === 'GET') return guardMeteringW(env, () => meteringByAppW(env, url))
+  if (path.startsWith('/api/metering/')) return guardMeteringW(env, () => json({ error: 'not implemented' }, 501))
+  // ==================== D4 · 白标品牌端点（PRD 16；镜像 Node apps/api 三端点契约） ====================
+  // BUG-010 修复：GET 公开返回 {enabled, brand}；PUT/reset 需能力位开启（关闭 → 503）。
+  if (path === '/api/brand' && request.method === 'GET') return brandGetW(env)
+  if (path === '/api/brand' && request.method === 'PUT') return brandPutW(request, env, auth)
+  if (path === '/api/brand/reset' && request.method === 'POST') return brandResetW(request, env, auth)
   if (path === '/api/spans' && request.method === 'POST') return recordSpans(env, await request.json())
   if (path === '/api/internal/alerts/deliver' && request.method === 'POST') return consumeAlertDelivery(request, env)
   if (path === '/api/events') return pagedEvents(env, url)
@@ -703,6 +874,8 @@ async function adminApi(request, env, url) {
   if (path === '/api/traces') return traces(env, url)
   if (path === '/api/traces/') return traceEvents(env, '', url)
   if (/^\/api\/traces\/[^/]+\/distributed$/.test(path)) return distributedTrace(env, decodeURIComponent(path.split('/').at(-2)))
+  // BUG-013 修复：topology-plan F1 承诺的调用拓扑端点（服务端按「页面 → API」归并，与 Node getTraceTopology 同构）。
+  if (/^\/api\/traces\/[^/]+\/topology$/.test(path)) return traceTopology(env, decodeURIComponent(path.split('/').at(-2)))
   if (/^\/api\/traces\/[^/]+$/.test(path)) return traceEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
   if (path === '/api/analytics/sessions') return sessions(env, url)
   if (/^\/api\/analytics\/sessions\//.test(path)) return sessionEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
@@ -1010,9 +1183,56 @@ async function replayEvents(env,id){
   if(!merged.length||!merged.some(e=>e&&e.type===2))return json([]);
   return json(merged)
 }
-async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(ts) started_at,max(ts) ended_at,count(*) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
+async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]);
+  // BUG-006 修复：快照类 perf 指标（memory 字节 / *_rate 比率 / redirect_count 次数）是周期监控采样，
+  // 不是链路节点。此前页面挂机数小时时每 60s 一条 memory 事件把「总耗时」拖到 328 分钟、span 数虚高，
+  // 掩盖真实调用耗时；现在起止时间与 span 计数均排除快照类（与 buildDistributedTrace 口径一致）。
+  const spanEv="not(type='perf' and(metric='memory' or substr(metric,-5)='_rate' or metric='redirect_count'))";
+  const[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(case when ${spanEv} then ts end) started_at,max(case when ${spanEv} then ts end) ended_at,sum(case when ${spanEv} then 1 else 0 end) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
 async function traceEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where trace_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
 async function distributedTrace(env,id){if(!id?.trim())return json({root:null,nodes:[],edges:[],criticalPath:[],errorSpans:[]});const[events,backendSpans]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts').bind(id).all(),env.DB.prepare('select * from spans where trace_id=? order by start_ts').bind(id).all().catch(()=>({results:[]}))]);return json(buildDistributedTrace(events.results||[],backendSpans.results||[]))}
+
+// BUG-013 修复：topology-plan F1 —— GET /api/traces/:traceId/topology（调用拓扑，页面节点 → API 节点）。
+// 归并逻辑对齐文档 §4.1：① 根节点取 trace 的 url/path（page:<path>）；② fetch/xhr 按
+// method + host + 归一化 path（去 query）归并为 api:<METHOD host/path>；③ 边 page → api 聚合
+// calls / avgDuration（均值 value）/ errors（status≥400 或 network_error 或 failed）。
+// 产出与前端 buildTopologyFromDistributed 兜底路径同构的 {nodes, edges}。
+async function traceTopology(env,id){
+  if(!id?.trim())return json({nodes:[],edges:[]})
+  const events=await env.DB.prepare('select * from events where trace_id=? order by ts limit 5000').bind(id).all().catch(()=>({results:[]}))
+  const evRows=events.results||[]
+  if(!evRows.length)return json({nodes:[],edges:[]})
+  const pageEvent=evRows.find(e=>e.path||e.url)
+  const pagePath=String((pageEvent?.path||pageEvent?.url||'unknown')).split('?')[0]
+  const pageId=`page:${pagePath}`
+  const nodes=new Map([[pageId,{id:pageId,label:pagePath,type:'page',value:1,p95:0,errors:0}]])
+  const edges=new Map()
+  const normalizeApiPath=raw=>{
+    const url=String(raw||'')
+    if(!url)return ''
+    if(url.startsWith('/'))return url.split('?')[0]
+    try{const u=new URL(url);return `${u.host}${u.pathname}`}catch{return url.split('?')[0]}
+  }
+  for(const row of evRows){
+    if(row.type!=='perf'||!['fetch','xhr'].includes(String(row.metric||'')))continue
+    const props=parse(row.props_json,{})
+    const url=String(props.url||row.name||'')
+    if(!url)continue
+    const method=String(props.method||'GET').toUpperCase()
+    const label=`${method} ${normalizeApiPath(url)}`
+    const apiId=`api:${label}`
+    const failed=Number(props.status)>=400||props.failed===true||props.failed==='true'||String(props.statusClass||'').includes('error')
+    if(!nodes.has(apiId))nodes.set(apiId,{id:apiId,label,type:'api',value:0,p95:0,errors:0})
+    const node=nodes.get(apiId)
+    node.value++;node.p95=Math.max(node.p95,Math.round(Number(row.value)||0));if(failed)node.errors++
+    const edge=edges.get(apiId)||{source:pageId,target:apiId,calls:0,avgDuration:0,errors:0}
+    edge.calls++
+    edge.avgDuration=Math.round((edge.avgDuration*(edge.calls-1)+(Number(row.value)||0))/edge.calls)
+    if(failed)edge.errors++
+    edges.set(apiId,edge)
+  }
+  return json({nodes:[...nodes.values()],edges:[...edges.values()]})
+}
 export { buildDistributedTrace }
 async function sessions(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["session_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select session_id,max(user_id) user_id,max(user_name) user_name,max(device_id) device_id,min(ts) started_at,max(ts) ended_at,count(*) event_count,sum(case when type='error' then 1 else 0 end) error_count,group_concat(distinct path) paths from events ${where} group by session_id order by ended_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by session_id)`).bind(...values).first()]),replayIds=(await env.DB.prepare('select distinct session_id from replays').all()).results;return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at,paths:(r.paths||'').split(',').filter(Boolean),replaySessionId:replayIds.find(x=>x.session_id.startsWith(r.session_id))?.session_id})),total:Number(total.count),page,pageSize})}
 async function sessionEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where session_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where session_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
@@ -1088,8 +1308,9 @@ function jwtSecretOf(env) {
   return secret
 }
 
-/** 免鉴权前缀（采集/健康/公开端点 + D2 公开端点，对齐 Node auth-middleware AUTH_PUBLIC_PREFIXES） */
-const AUTH_PUBLIC_PREFIXES = ['/api/collect', '/api/auth/login', '/api/auth/register', '/api/auth/refresh', '/api/dashboards/shared/', '/api/capabilities', '/api/invitations/']
+/** 免鉴权前缀（采集/健康/公开端点 + D2 公开端点，对齐 Node auth-middleware AUTH_PUBLIC_PREFIXES）
+ *  /api/brand：PRD 16 D6 公开端点（登录页未登录也需读取白标，GET only；PUT/reset 在处理器内自行把关）。 */
+const AUTH_PUBLIC_PREFIXES = ['/api/collect', '/api/auth/login', '/api/auth/register', '/api/auth/refresh', '/api/dashboards/shared/', '/api/capabilities', '/api/invitations/', '/api/brand']
 function requiresAuthPath(path) {
   if (!path.startsWith('/api/')) return false
   return !AUTH_PUBLIC_PREFIXES.some(prefix => path.startsWith(prefix))

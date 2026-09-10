@@ -308,6 +308,10 @@ async function openReplay(item, autoPlay = false) {
     currentReplayer.play(0)
     await waitForInitialRender(currentReplayer)
     if (requestId !== playRequestId || currentReplayId.value !== String(item.replayId)) return
+    // BUG-007 修复：被录页面引用的 http:// 资源在 HTTPS 平台回放时被浏览器阻止（Mixed Content）。
+    // 向 rrweb 回放 iframe 注入 CSP upgrade-insecure-requests，把 http 资源自动升级为 https 请求，
+    // 消除控制台大量警告；公网 http 资源升级后可恢复显示，内网地址升级失败转为安静的网络错误。
+    injectUpgradeInsecureRequests()
     ensureReplayFrameVisible(width, height)
     fitReplay(width, height)
     if (autoPlay) {
@@ -340,6 +344,23 @@ function fallbackToFirstAvailable(failedId) {
 
 function prefetch(item) {
   if (item?.replayId) props.loadReplay(item.replayId).catch(() => {})
+}
+
+/**
+ * BUG-007：向回放 iframe 注入 <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">。
+ * 幂等（重复注入时跳过）；rrweb iframe 为同源 about:blank，可安全访问 contentDocument。
+ */
+function injectUpgradeInsecureRequests() {
+  try {
+    const iframe = replayEl.value?.querySelector('iframe')
+    const doc = iframe?.contentDocument
+    if (!doc?.head) return
+    if (doc.head.querySelector('meta[http-equiv="Content-Security-Policy"]')) return
+    const meta = doc.createElement('meta')
+    meta.setAttribute('http-equiv', 'Content-Security-Policy')
+    meta.setAttribute('content', 'upgrade-insecure-requests')
+    doc.head.prepend(meta)
+  } catch { /* iframe 不可访问时静默降级，不影响回放 */ }
 }
 
 function playReplay() {
@@ -614,14 +635,24 @@ defineExpose({ play, currentSessionCode })
               @click="openReplay(row, true)"
             >
               <span><strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong><small>{{ row.url || '未记录页面地址' }}</small></span>
-              <small>{{ formatDate(row.lastSeen) }}</small>
+              <small class="session-item-side">
+                <!-- BUG-009（PRD 01 FR-5 入口 ②）：会话回放页 → 用户链路 -->
+                <router-link
+                  v-if="row.sessionId"
+                  class="session-journey-link"
+                  title="查看该会话的用户链路时间线"
+                  :to="`/journey?type=session&value=${encodeURIComponent(row.sessionId)}`"
+                  @click.stop
+                >链路</router-link>
+                {{ formatDate(row.lastSeen) }}
+              </small>
             </button>
           </div>
           <el-empty v-else :image-size="54" description="暂无回放会话" />
           <el-pagination
             v-if="total > pageSize"
             class="replay-session-pager"
-            small
+            size="small"
             background
             layout="prev, pager, next"
             :current-page="page"
@@ -744,6 +775,10 @@ defineExpose({ play, currentSessionCode })
 .replay-session-item strong { font-size: 12px; }
 .replay-session-item small { max-width: 104px; color: var(--c-text-muted); font-size: 10px; }
 .replay-session-item > small { align-self: center; }
+/* BUG-009：会话项右侧的链路入口 + 日期 */
+.session-item-side { display: inline-flex; align-items: center; gap: 8px; }
+.session-journey-link { color: var(--c-primary); font-size: 11px; text-decoration: none; padding: 2px 6px; border-radius: 4px; }
+.session-journey-link:hover { background: var(--c-primary-soft); }
 .replay-session-pager { justify-content: center; margin-top: 12px; }
 
 @media (max-width: 1100px) {

@@ -91,7 +91,8 @@ function formatDetail(detail) {
 }
 
 async function load() {
-  if (!requestId.value) return
+  // BUG-005 修复：能力位关闭时不再发请求（避免 503 噪音）；模板已用 v-if/v-else 只渲染占位提示。
+  if (!dsrEnabled.value || !requestId.value) return
   loading.value = true
   loadError.value = ''
   pageLoading.value = true
@@ -208,6 +209,17 @@ onMounted(load)
 
 <template>
   <div class="dsr-detail">
+    <!-- BUG-005 修复：能力位关闭时显式占位（对齐 slo/synthetic/experiment 详情页模式），不发请求。 -->
+    <el-alert
+      v-if="!dsrEnabled"
+      class="section"
+      type="info"
+      :closable="false"
+      show-icon
+      title="当前部署未开启 DSR 能力（capability: dsr）"
+      description="数据主体权利功能需要后端开启 dsr 能力位后使用；本页当前为只读占位，不会发起任何请求。"
+    />
+    <template v-else>
     <div class="detail-head">
       <el-button text @click="router.push('/dsr')">← 返回列表</el-button>
       <div class="head-main" v-if="request">
@@ -302,6 +314,7 @@ onMounted(load)
         </el-timeline>
         <el-empty v-else description="暂无审计记录" :image-size="60" />
       </section>
+    </template>
     </template>
   </div>
 </template>

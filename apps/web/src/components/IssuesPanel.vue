@@ -50,6 +50,17 @@ function issueTraceId(issue) {
   return issue?.props?.traceId || issue?.original?.traceId || issue?.traceId || null
 }
 
+/** BUG-009（PRD 01 FR-5 入口 ①）：错误详情抽屉 → 用户链路，按 sessionId 定位到该会话时间线。 */
+function issueSessionId(issue) {
+  return issue?.props?.sessionId || issue?.original?.sessionId || issue?.sessionId || null
+}
+
+function openJourney(issue) {
+  const sessionId = issueSessionId(issue)
+  if (!sessionId) return
+  router.push({ path: '/journey', query: { type: 'session', value: sessionId } })
+}
+
 /**
  * B4 分析 → 回放：带过滤条件打开回放列表。
  * 按「发生页面 + 用户」过滤，二者均为回放查询 API 支持的真实参数；
@@ -130,6 +141,15 @@ function openReplay(row) {
         <el-descriptions-item label="发生次数">{{ selected.count || 0 }}</el-descriptions-item>
         <el-descriptions-item label="首次发生">{{ selected.firstSeen ? new Date(selected.firstSeen).toLocaleString() : '-' }}</el-descriptions-item>
         <el-descriptions-item label="最近发生">{{ selected.lastSeen ? new Date(selected.lastSeen).toLocaleString() : '-' }}</el-descriptions-item>
+        <!-- BUG-009（PRD 01 FR-5）：错误详情抽屉提供用户链路与 Trace 双入口 -->
+        <el-descriptions-item label="用户链路">
+          <el-button v-if="issueSessionId(selected)" link type="primary" @click="openJourney(selected)">查看该会话时间线</el-button>
+          <span v-else>未关联会话</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="Trace">
+          <router-link v-if="issueTraceId(selected)" :to="`/traces?traceId=${encodeURIComponent(issueTraceId(selected))}`">{{ issueTraceId(selected) }}</router-link>
+          <span v-else>未关联链路</span>
+        </el-descriptions-item>
       </el-descriptions>
       <h3>堆栈</h3>
       <pre>{{ selected?.stack || '未采集到堆栈' }}</pre>

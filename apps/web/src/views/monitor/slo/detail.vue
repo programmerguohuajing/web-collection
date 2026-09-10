@@ -66,7 +66,8 @@ function formatTime(ts) {
 }
 
 async function load() {
-  if (!sloId.value) return
+  // BUG-005 修复：能力位关闭时不再发请求（避免 503 噪音）；模板已用 v-if/v-else 只渲染占位提示。
+  if (!sloEnabled.value || !sloId.value) return
   loading.value = true
   loadError.value = ''
   pageLoading.value = true
