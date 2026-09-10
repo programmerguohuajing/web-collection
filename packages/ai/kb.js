@@ -625,8 +625,10 @@ export function createKb({ db, vectorStore, embedder }) {
     const aVis = (await db.prepare(`select visibility, count(*) n from ${ARTICLE_TABLE} group by visibility`).all()) || []
     const aLatest = await db.prepare(`select max(updated_at) latest from ${ARTICLE_TABLE}`).first()
     const qSum = await db.prepare(`select coalesce(sum(ai_citations),0) c, coalesce(sum(feedback_count),0) f from ${QUALITY_TABLE}`).first()
-    const lType = (await db.prepare(`select source_type, count(*) n from ${META_TABLE} where not exists (select 1 from ${ARTICLE_TABLE} a where a.id=m.source_id) group by source_type`).all()) || []
-    const lLatest = await db.prepare(`select max(updated_at) latest from ${META_TABLE} where not exists (select 1 from ${ARTICLE_TABLE} a where a.id=m.source_id)`).first()
+    // BUG-004 修复：遗留来源子查询此前引用 m.source_id 但 from 子句未声明别名 m，
+    // SQLite 报 no such column: m.source_id → /api/ai/kb/stats 500。此处补上别名。
+    const lType = (await db.prepare(`select source_type, count(*) n from ${META_TABLE} m where not exists (select 1 from ${ARTICLE_TABLE} a where a.id=m.source_id) group by source_type`).all()) || []
+    const lLatest = await db.prepare(`select max(updated_at) latest from ${META_TABLE} m where not exists (select 1 from ${ARTICLE_TABLE} a where a.id=m.source_id)`).first()
     const byType = {}
     let total = 0
     for (const r of aType) { byType[r.type] = (byType[r.type] || 0) + Number(r.n); total += Number(r.n) }

@@ -41,10 +41,37 @@ export function mapIssue(r) {
 
 // ---------------- 分布式 trace（worker.js buildDistributedTrace 抽取） ----------------
 
+/**
+ * BUG-006 修复：perf 事件并非都是「时长」。
+ * - 时长类（value 单位 ms）：fetch/xhr/resource 及 Web Vitals / 阶段耗时 / 网络分段；
+ * - 非时长快照类（memory=字节数、*_rate=比率、redirect_count=次数）：value 若被当作
+ *   duration 参与 P95/关键路径，会得出「P95 135,640,739ms（37.7h）」这类荒谬数值
+ *   （实测：memory.usedJSHeapSize 135MB 字节数被当毫秒展示）。
+ * 快照类事件不参与 span 构建（它们不是一次操作/调用）；时长类才贡献 duration。
+ */
+const SPAN_DURATION_METRICS = new Set([
+  'fetch', 'xhr', 'resource', 'lcp', 'inp', 'fid', 'cls', 'fcp', 'fp', 'ttfb',
+  'longtask', 'tbt', 'dns', 'tcp', 'tls', 'request', 'download', 'redirect',
+  'white_screen', 'first_screen', 'route_render', 'data_ready', 'dom_ready',
+  'page_load', 'js_boot'
+])
+/** 非时长快照类指标：不生成 span 节点（memory 字节 / *_rate 比率 / redirect_count 次数）。 */
+const SNAPSHOT_METRICS = new Set(['memory', 'redirect_count'])
+
+function isSnapshotPerfEvent(event) {
+  if (event.type !== 'perf') return false
+  const metric = String(event.metric || '')
+  return SNAPSHOT_METRICS.has(metric) || metric.endsWith('_rate')
+}
+
 export function buildDistributedTrace(events = [], backendSpans = []) {
   const spanMap = new Map()
   for (const [index, event] of events.entries()) {
+    // BUG-006：监控快照类 perf 事件（memory/rate/count）不是 span，跳过——
+    // 既不贡献 duration（P95 不再被字节数污染），也不撑大节点数。
+    if (isSnapshotPerfEvent(event)) continue
     const attributes = parse(event.props_json, {}) || {}
+    const perfMetric = event.type === 'perf' ? String(event.metric || '') : ''
     const span = {
       spanId: String(event.span_id || '').trim() || `event-${event.id || index}`,
       parentSpanId: String(event.parent_span_id || attributes.__parentSpanId || '').trim(),
@@ -52,7 +79,8 @@ export function buildDistributedTrace(events = [], backendSpans = []) {
       operationName: event.metric || event.name || event.type || 'event',
       kind: 'CLIENT',
       startTs: Number(event.ts) || 0,
-      duration: event.type === 'perf' ? Number(event.value) || 0 : 0,
+      // BUG-006：仅时长类 perf 指标贡献 duration（白名单）；非 perf 或非时长指标为 0。
+      duration: event.type === 'perf' && SPAN_DURATION_METRICS.has(perfMetric) ? Number(event.value) || 0 : 0,
       statusCode: event.type === 'error' || attributes.failed === true || attributes.failed === 'true' || Number(attributes.status) >= 400 ? 'ERROR' : 'OK',
       attributes
     }

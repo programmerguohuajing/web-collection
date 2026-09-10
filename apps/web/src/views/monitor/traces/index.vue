@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Download, RefreshRight, Search, Select, Share } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
+import { Download, Position, RefreshRight, Search, Select, Share } from '@element-plus/icons-vue'
 import { api, normalizePageResponse, queryFromFilters, pageLoading, refreshVersion, filters } from '../../../dashboard.js'
 import { useDiagnosisStore } from '../../../stores/diagnosis.js'
 import { formatDuration } from '../../../utils/format.js'
@@ -10,6 +11,8 @@ import DistributedTraceTree from '../../../components/DistributedTraceTree.vue'
 import RequestResponsePanel from '../../../components/RequestResponsePanel.vue'
 import { buildTopologyFromDistributed } from '../../../utils/trace-topology.js'
 import OverflowTip from '../../../components/OverflowTip.vue'
+
+const router = useRouter()
 
 const traces = ref([])
 const pager = reactive({ page: 1, pageSize: 12, total: 0 })
@@ -315,6 +318,12 @@ async function shareTrace() {
     setTimeout(() => { shareHint.value = '' }, 1800)
   }
 }
+
+/** BUG-009（PRD 01 FR-5 入口 ④）：Trace 详情 → 用户链路（按 traceId 反查关联会话时间线）。 */
+function openJourney() {
+  if (!active.value?.trace_id) return
+  router.push({ path: '/journey', query: { type: 'trace', value: active.value.trace_id } })
+}
 const shareHint = ref('')
 
 onMounted(load)
@@ -343,6 +352,8 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
         <el-button :icon="RefreshRight" :loading="listLoading || topoLoading || distLoading" @click="load">刷新</el-button>
         <el-button :icon="Download" :disabled="!active" @click="exportTrace">导出</el-button>
         <el-button :icon="Share" :disabled="!active" @click="shareTrace">分享</el-button>
+        <!-- BUG-009（PRD 01 FR-5）：Trace 详情提供用户链路入口 -->
+        <el-button :icon="Position" :disabled="!active" @click="openJourney">用户链路</el-button>
         <span v-if="shareHint" class="share-hint">{{ shareHint }}</span>
       </div>
     </header>

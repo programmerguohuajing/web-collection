@@ -123,7 +123,8 @@ async function copySnippet() {
 }
 
 async function load() {
-  if (!experimentId.value) return
+  // BUG-005 修复：能力位关闭时不再发请求（避免 503 噪音）；模板已用 v-if/v-else 只渲染占位提示。
+  if (!experimentsEnabled.value || !experimentId.value) return
   loading.value = true
   loadError.value = ''
   try {
