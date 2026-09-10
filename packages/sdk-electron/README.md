@@ -6,7 +6,12 @@
 
 > Web Collection SDK for **Electron** — app-level telemetry in the main process plus an IPC bridge for renderer events.
 
-[![npm version](https://img.shields.io/npm/v/@web-collection/sdk-electron)](https://www.npmjs.com/package/@web-collection/sdk-electron) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk-electron?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk-electron) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk-electron)](https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-electron/index.d.ts)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@web-collection/sdk-electron"><img src="https://img.shields.io/npm/v/@web-collection/sdk-electron" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@web-collection/sdk-electron"><img src="https://img.shields.io/npm/dt/%40web-collection%2Fsdk-electron?label=downloads" alt="npm downloads" /></a>
+  <a href="https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/%40web-collection%2Fsdk-electron" alt="License" /></a>
+  <a href="https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-electron/index.d.ts"><img src="https://img.shields.io/badge/types-included-blue" alt="TypeScript" /></a>
+</p>
 
 </div>
 

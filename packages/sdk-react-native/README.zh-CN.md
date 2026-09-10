@@ -6,7 +6,12 @@
 
 > Web Collection 的 React Native SDK：移动端宿主适配层 + 移动端指标采集（冷启动 / 帧率卡顿 / 崩溃 / 前后台会话 / 网络），**100% 复用 `@web-collection/sdk` 平台内核的上报链路**。
 
-[![npm version](https://img.shields.io/npm/v/@web-collection/sdk-react-native)](https://www.npmjs.com/package/@web-collection/sdk-react-native) [![npm downloads](https://img.shields.io/npm/dt/%40web-collection%2Fsdk-react-native?label=downloads)](https://www.npmjs.com/package/@web-collection/sdk-react-native) [![License](https://img.shields.io/npm/l/%40web-collection%2Fsdk-react-native)](https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE) [![TypeScript](https://img.shields.io/badge/types-included-blue)](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-react-native/index.d.ts)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@web-collection/sdk-react-native"><img src="https://img.shields.io/npm/v/@web-collection/sdk-react-native" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@web-collection/sdk-react-native"><img src="https://img.shields.io/npm/dt/%40web-collection%2Fsdk-react-native?label=downloads" alt="npm downloads" /></a>
+  <a href="https://github.com/programmerguohuajing/web-collection/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/%40web-collection%2Fsdk-react-native" alt="License" /></a>
+  <a href="https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-react-native/index.d.ts"><img src="https://img.shields.io/badge/types-included-blue" alt="TypeScript" /></a>
+</p>
 
 </div>
 
