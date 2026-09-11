@@ -91,3 +91,36 @@ export function reassembleReplayEvents(rows, cap = 100000) {
   }
   return merged.slice(0, cap)
 }
+
+/** 回放跨度截断上限（30 分钟）：标签页常开的旧 SDK 会话可达十几小时，
+ *  其中大片挂机空白；与 Cloudflare Worker 端 REPLAY_SPAN_LIMIT_MS 保持一致。 */
+export const REPLAY_SPAN_LIMIT_MS = 30 * 60 * 1000
+
+/**
+ * 回放时长截断：跨度超限时截取最近 limitMs，截断点后移到首个全量快照（含其紧邻
+ * Meta），保证输出流仍以可重建的快照开头；窗口内找不到快照则不截断（宁可超长也不黑屏）。
+ * @param {Array<object>} events 已重组的 rrweb 事件流（按 timestamp 升序）
+ * @param {number} [limitMs] 截断窗口，默认 30 分钟
+ * @returns {{events: Array<object>, truncated: boolean, originalSpanMs: number, spanMs: number}}
+ */
+export function truncateReplaySpan(events, limitMs = REPLAY_SPAN_LIMIT_MS) {
+  const list = Array.isArray(events) ? events : []
+  const originalSpanMs = list.length >= 2 ? Number(list[list.length - 1].timestamp) - Number(list[0].timestamp) : 0
+  if (list.length < 2 || originalSpanMs <= limitMs) {
+    return { events: list, truncated: false, originalSpanMs, spanMs: originalSpanMs }
+  }
+  const cutoff = Number(list[list.length - 1].timestamp) - limitMs
+  let start = list.findIndex(e => Number(e?.timestamp) >= cutoff)
+  if (start < 0) start = 0
+  let snapIdx = -1
+  for (let i = start; i < list.length; i++) {
+    if (list[i] && list[i].type === 2) { snapIdx = i; break }
+  }
+  // 窗口内无自身快照：不截断，避免输出无法重建的黑屏流
+  if (snapIdx < 0 || start === 0) {
+    return { events: list, truncated: false, originalSpanMs, spanMs: originalSpanMs }
+  }
+  if (snapIdx > 0 && list[snapIdx - 1] && list[snapIdx - 1].type === 4) snapIdx--
+  const out = list.slice(snapIdx)
+  return { events: out, truncated: true, originalSpanMs, spanMs: Number(out[out.length - 1].timestamp) - Number(out[0].timestamp) }
+}

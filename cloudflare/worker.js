@@ -1329,7 +1329,7 @@ async function alertPatch(env,id,input){
 async function applicationList(env,url,auth){const teamScoped=auth?.via==='session'&&auth.teamId,teamWhere=teamScoped?'where (a.team_id is null or a.team_id=?)':'',teamVals=teamScoped?[auth.teamId]:[];const select=`select a.app_id,a.name,a.platform,a.owner,a.enabled,a.sample_rate,a.replay_sample_rate,a.rules_json,a.team_id,a.created_at,a.updated_at,(a.collect_key_hash is not null) collect_key_enabled,coalesce(rc.release_count,0) release_count from applications a left join (select app_id,count(*) release_count from releases group by app_id) rc on rc.app_id=a.app_id ${teamWhere} order by a.updated_at desc`;if(!url.searchParams.has('page')&&!url.searchParams.has('pageSize'))return json((await env.DB.prepare(select).bind(...teamVals).all()).results.map(mapApplication));const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare(`${select} limit ? offset ?`).bind(...teamVals,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from applications a ${teamWhere}`).bind(...teamVals).first()]);return json({items:rows.results.map(mapApplication),total:Number(total.count),page,pageSize})}
 async function releaseList(env,appId,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare('select * from releases where app_id=? order by created_at desc limit ? offset ?').bind(appId,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from releases where app_id=?').bind(appId).first()]);return json({items:rows.results,total:Number(total.count),page,pageSize})}
 async function replayEvents(env,id){
-  if(!id?.trim())return json([]);
+  if(!id?.trim())return json({events:[]});
   // 回放按会话分段存储，仅首段含全量快照；若只按点击的分段 session_id 读取，缺全量快照
   // 会导致 rrweb 渲染空白 iframe。故先用传入 id 定位该段并取其 base_session_id，再按
   // base_session_id 拉取整段会话的所有分段（首段全量快照在前），保证可正常重建页面。
@@ -1338,6 +1338,9 @@ async function replayEvents(env,id){
   const baseId=hit?.base_session_id||id;
   let rows=(await env.DB.prepare('select session_id,events_json from replays where base_session_id=? order by created_at,id').bind(baseId).all()).results;
   if(!rows.length)rows=(await env.DB.prepare('select session_id,events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;
+  // 闲置切分兼容：SDK 无交互超时会轮换 base 会话键（`{sessionId}_r{n}`），事件会话 UUID
+  // 深链时精确匹配不到——以前缀匹配兑底。护栏 limit 5000 防退化数据打爆单查询。
+  if(!rows.length)rows=(await env.DB.prepare('select session_id,events_json from replays where base_session_id like ? order by created_at,id limit 5000').bind(baseId+'_%').all()).results;
   // 合并规则改为「按录制实例锚定」，根治长会话播放中途空白：
   // 同一 base_session_id 下可能混有多个 rrweb 录制实例（多次页面加载 / 多次 startReplay），
   // 而 rrweb 的 node id 空间是按录制实例独立的。若像旧实现那样把「上一段的全量快照」借用
@@ -1367,9 +1370,27 @@ async function replayEvents(env,id){
       for(const e of evs)merged.push(e);           // 同实例续接
     }
   }
-  // 无任何可用全量快照 → 返回空数组，让前端「缺少全量快照」提示生效，而不是静默黑屏。
-  if(!merged.length||!merged.some(e=>e&&e.type===2))return json([]);
-  return json(merged)
+  // 无任何可用全量快照 → 返回空事件，让前端「缺少全量快照」提示生效，而不是静默黑屏。
+  if(!merged.length||!merged.some(e=>e&&e.type===2))return json({events:[],truncated:false});
+  // 回放时长截断（线上实测踩坑）：标签页常开 + 无闲置切分的旧 SDK 会把十几个小时的
+  // 分段串成一个 base 会话（1044 分钟里 883 分钟纯空白），播放器时间轴全部浪费在空转上。
+  // 超过 30 分钟跨度时截取最近 30 分钟：截断点后移到首个全量快照（含其紧邻 Meta），
+  // 保证输出流仍以可重建的快照开头；窗口内找不到快照则不截断（宁可超长也不黑屏）。
+  const REPLAY_SPAN_LIMIT_MS=30*60*1000;
+  const originalSpanMs=merged[merged.length-1].timestamp-merged[0].timestamp;
+  let out=merged,truncated=false;
+  if(originalSpanMs>REPLAY_SPAN_LIMIT_MS){
+    const cutoff=merged[merged.length-1].timestamp-REPLAY_SPAN_LIMIT_MS;
+    let start=merged.findIndex(e=>e.timestamp>=cutoff);
+    if(start<0)start=0;
+    let snapIdx=-1;
+    for(let i=start;i<merged.length;i++){if(merged[i]&&merged[i].type===2){snapIdx=i;break}}
+    if(snapIdx>start||(snapIdx===start&&start>0)){
+      if(snapIdx>0&&merged[snapIdx-1]&&merged[snapIdx-1].type===4)snapIdx--;
+      out=merged.slice(snapIdx);truncated=true;
+    }
+  }
+  return json({events:out,truncated,originalSpanMs,spanMs:out[out.length-1].timestamp-out[0].timestamp})
 }
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]);
   // BUG-006 修复：快照类 perf 指标（memory 字节 / *_rate 比率 / redirect_count 次数）是周期监控采样，

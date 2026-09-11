@@ -15,7 +15,7 @@ import { run, ensureSchema } from './db.js'
 import { mapEvent } from './mappers/event-mapper.js'
 import { mapIssue } from './mappers/issue-mapper.js'
 import { mapReplay } from './mappers/replay-mapper.js'
-import { decompressReplayEvents, reassembleReplayEvents } from './replay-ingest.js'
+import { decompressReplayEvents, reassembleReplayEvents, truncateReplaySpan } from './replay-ingest.js'
 import { buildSummary } from './services/summary-service.js'
 import { fingerprint, percentile, scorePerf } from './utils/domain.js'
 import { parseJson } from './utils/json.js'
@@ -196,15 +196,16 @@ export async function listReplaysPage(filters = {}) {
 }
 
 /**
- * 获取指定会话的完整回放事件流。
- * 每个分段已是独立 sessionId，直接查所有事件即可。
+ * 获取指定会话的完整回放事件流（含跨度截断元数据）。
+ * 超长会话（旧 SDK 标签页常开串联十几小时）截取最近 30 分钟，响应结构与
+ * Cloudflare Worker 端一致：{ events, truncated, originalSpanMs, spanMs }。
  * @param {string} sessionId - 会话 ID
- * @returns {Promise<Array>} 回放事件数组
+ * @returns {Promise<{events: Array, truncated: boolean, originalSpanMs: number, spanMs: number}>}
  */
 export async function getReplay(sessionId) {
   await initPromise
   const rows = await listReplayEventRows(safeName(sessionId), 100000)
-  return reassembleReplayEvents(rows, 100000)
+  return truncateReplaySpan(reassembleReplayEvents(rows, 100000))
 }
 
 /** 确保数据库 Schema 已初始化（供外部调用） */
