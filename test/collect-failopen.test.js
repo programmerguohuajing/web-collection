@@ -49,6 +49,51 @@ test('collect：applications 查询失败（D1 超限）仍返回 200，不再 5
   assert.equal(body.accepted, 1)
 })
 
+/** mock env.DB：指定 insert SQL 片段抛错（模拟 D1 配额超限），查询类正常。 */
+function failingInsertDb(failFragment) {
+  return {
+    DB: {
+      prepare(sql) {
+        return {
+          bind() { return this },
+          async first() { return null },
+          async all() { return { results: [] } },
+          async run() {
+            if (sql.includes(failFragment)) throw new Error('D1_ERROR: too many writes')
+            return { success: true, results: [], meta: {} }
+          }
+        }
+      }
+    }
+  }
+}
+
+test('monitoring/sdk：快照 insert 失败（D1 超限）仍返回 200，不再 500', async () => {
+  const worker = await loadWorker()
+  const env = failingInsertDb('insert into sdk_monitoring')
+  const res = await worker.fetch(new Request('https://example.com/api/monitoring/sdk?appId=demo', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sdkVersion: '0.6.0', sent: 10, dropped: 0, health: 'healthy' })
+  }), env, { waitUntil() {} })
+  assert.equal(res.status, 200, `应 200 fail-open，实际 ${res.status}`)
+  const body = await res.json()
+  assert.equal(body.ok, true)
+})
+
+test('sdk-size：体积 insert 失败（D1 超限）仍返回 200，不再 500', async () => {
+  const worker = await loadWorker()
+  const env = failingInsertDb('insert into sdk_size')
+  const res = await worker.fetch(new Request('https://example.com/api/sdk-size', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ version: '0.6.0', gzBytes: 40000, rawBytes: 126000 })
+  }), env, { waitUntil() {} })
+  assert.equal(res.status, 200, `应 200 fail-open，实际 ${res.status}`)
+  const body = await res.json()
+  assert.equal(body.ok, true)
+})
+
 test('collect：D1 正常时鉴权仍生效（fail-open 不弱化正常路径）', async () => {
   const worker = await loadWorker()
   const env = {
