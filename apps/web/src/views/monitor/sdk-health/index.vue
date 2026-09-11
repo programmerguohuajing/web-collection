@@ -15,7 +15,8 @@ import OverflowTip from '../../../components/OverflowTip.vue'
  * - `/api/releases/quality?dim=sdk`：按 SDK 版本维度的接入健康。
  * - `/api/collect-config`（命中预览）+ `/api/collect-config/stats`：采集配置与配置版本分布。
  * - `/api/diagnostics`：真实入库事实（派生「接入配置有效性」）。
- * - `/api/monitoring/sdk`：SDK 端交付自监控聚合（需 SDK 发版后才有数据，无数据时优雅空态）。
+ * - `/api/monitoring/sdk`：SDK 端交付自监控聚合（0.5.0+ 已内置周期上报；按 appId 聚合，
+ *   所选应用未接入或未到上报周期时为空态，属正常现象，非「功能未发版」）。
  * - `/api/sdk-size`：SDK 体积开销（需 CI 发版上报后才有数据，无数据时优雅空态）。
  * 表格列溢出一律使用 OverflowTip（禁用原生 show-overflow-tooltip）。
  */
@@ -34,7 +35,7 @@ const ingestionError = ref('')
 const configPreview = ref(null)
 const configError = ref('')
 const configStats = ref(null)
-/** #1 SDK 端交付自监控聚合（Worker /api/monitoring/sdk，需 SDK 发版后才有数据）。 */
+/** #1 SDK 端交付自监控聚合（Worker /api/monitoring/sdk；0.5.0+ SDK 已自动上报，按应用筛选）。 */
 const sdkMonitoring = ref(null)
 const sdkMonitoringError = ref('')
 /** #2 SDK 体积开销（Worker /api/sdk-size，需 CI 发版上报后才有数据）。 */
@@ -264,7 +265,7 @@ async function loadConfigStats() {
   configStats.value = await api('/api/collect-config/stats', { requestKey: 'sdk-health:config-stats' })
 }
 
-/** #1：读取 SDK 端交付自监控聚合（无数据时 hasData=false，前端显示「待 SDK 上报」）。 */
+/** #1：读取 SDK 端交付自监控聚合（无数据时 hasData=false，前端显示「当前应用暂无上报」）。 */
 async function loadSdkMonitoring() {
   const appId = activeAppId.value
   if (!appId) { sdkMonitoring.value = null; return }
@@ -520,7 +521,7 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
         <span>应用：<b>{{ sdkMonitoring.appId }}</b></span>
         <span>统计窗口：<b>近 {{ sdkMonitoring.windowHours }} 小时</b></span>
         <span>上报样本：<b>{{ sdkMonitoring.samples }}</b></span>
-        <span v-if="sdkMonitoring.latest">最近上报：<b>{{ relTime(sdkMonitoring.latest.ts) }}</b>（{{ sdkMonitoring.latest.sdkVersion || '未知版本' }} / {{ { healthy: '健康', degraded: '降级', critical: '严重' }[sdkMonitoring.latest.health] || sdkMonitoring.latest.health }}）</span>
+        <span v-if="sdkMonitoring.latest">最近上报：<b>{{ relTime(sdkMonitoring.latest.ts) }}</b>（{{ sdkMonitoring.latest.sdkVersion || '未知版本' }} / {{ { healthy: '健康', degraded: '降级', critical: '严重', 'server-blackhole': '采集黑洞' }[sdkMonitoring.latest.health] || sdkMonitoring.latest.health }}）</span>
       </div>
       <div class="ingestion-metrics">
         <div class="metric"><span class="metric-k">成功交付 sent</span><span class="metric-v">{{ sdkMonitoring.totals.sent }}</span></div>
@@ -532,8 +533,12 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
         <div class="metric"><span class="metric-k">存储配额失败 storageQuota</span><span class="metric-v" :class="sdkMonitoring.totals.storageQuota > 0 ? 'danger' : ''">{{ sdkMonitoring.totals.storageQuota }}</span></div>
       </div>
     </template>
-    <el-alert v-else class="note" type="info" :closable="false" show-icon title="待 SDK 上报">
-      <template #default>SDK 端 SelfMonitor 已统计 sent/dropped/retried 等指标，但需随下一次 SDK 发版（内置周期 beacon 上报至 <code>/api/monitoring/sdk</code>）后，此处才会显示真实数据。</template>
+    <el-alert v-else class="note" type="info" :closable="false" show-icon title="当前应用暂无上报">
+      <template #default>
+        SDK 端 SelfMonitor 每 5 分钟把 sent / dropped / retried 等指标上报至 <code>/api/monitoring/sdk</code>（0.5.0+ 已内置）。
+        本卡片按<b>顶部所选应用</b>聚合，当前为 <code>{{ activeAppId || '未选择' }}</code>。
+        若该应用未接入 0.5.0+ SDK、或刚接入尚在首个上报周期内（≤5 分钟），此处即无数据——先确认应用筛选是否为真实接入方。
+      </template>
     </el-alert>
   </el-card>
 
