@@ -6,6 +6,7 @@ import { useAuth } from '../../composables/useAuth'
 import OverflowTip from '../../components/OverflowTip.vue'
 import MiniLineChart from '../../components/MiniLineChart.vue'
 import { getExperiment, getExperimentReport, changeExperimentStatus } from '../../api/experiments.js'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * A3 · 实验分析（PRD 14）详情/分析页：
@@ -177,7 +178,7 @@ onMounted(load)
     <div class="detail-head">
       <el-button text @click="router.push('/experiments')">← 返回列表</el-button>
       <div class="head-main" v-if="experiment">
-        <h2><OverflowTip :text="experiment.name" /></h2>
+        <h2><OverflowTip :text="experiment.name" /><el-tooltip content="当前部署不支持实验分析（capability: experiments）。Worker 部署需设置 EXPERIMENTS_ENABLED=1 后使用。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h2>
         <div class="sub">
           <span class="sub-key"><OverflowTip :text="`key: ${experiment.key}`" /></span>
           · 流量 {{ experiment.trafficPct }}%
@@ -197,15 +198,7 @@ onMounted(load)
       </div>
     </div>
 
-    <el-alert
-      v-if="!experimentsEnabled"
-      class="section"
-      type="info"
-      :closable="false"
-      show-icon
-      title="当前部署不支持实验分析（capability: experiments）"
-      description="Worker 部署需设置 EXPERIMENTS_ENABLED=1 后使用。"
-    />
+
     <el-alert v-if="loadError" class="section" type="error" :title="loadError" show-icon />
 
     <template v-if="experimentsEnabled && experiment && report">
@@ -217,8 +210,6 @@ onMounted(load)
         </el-card>
       </section>
 
-      <el-alert class="section" type="info" :closable="false" show-icon
-        :title="`统计口径：cohort=曝光访客（anonymousId 去重首条）；错误率=曝光会话中含 error 事件占比；${goalLabel}窗口 ${goal.windowDays} 天；样本阈值每变体 ${report.minSample} 曝光；不做显著性判定`" />
 
       <el-alert v-if="report.insufficient.length" class="section" type="warning" show-icon :closable="false"
         :title="`样本量不足：${report.insufficient.join(' / ')} 曝光数 < ${report.minSample}，暂勿下结论`" />

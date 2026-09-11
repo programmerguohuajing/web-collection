@@ -2,8 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, Connection, DataAnalysis, Files, Film, Fold, Grid,
-  Histogram, House, Lock, Menu, Monitor, Operation, Reading, Setting, Stopwatch, TrendCharts, User, Warning, MagicStick, Collection, ChatDotRound, BellFilled, Share, SetUp, Stamp, Coin, Brush
+  Aim, Bell, BellFilled, Brush, Calendar, ChatDotRound, Coin, Collection, Connection, Cpu, DataAnalysis, DataLine, Document, Files, Film, Fold, Grid, Histogram, House, Lock, MagicStick, Management, MapLocation, Medal, Menu, Monitor, Operation, Promotion, Reading, Setting, Share, SetUp, Stamp, Stopwatch, Switch, TrendCharts, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
@@ -52,26 +51,26 @@ const baseGroups = [
     { title: '链路追踪', path: '/traces', icon: Connection },
     { title: 'API 健康', path: '/api-health', icon: Share },
     { title: '集成中心', path: '/integrations', icon: SetUp },
-    { title: 'SLO 预算', path: '/slo', icon: Aim, cap: 'slo' },
-    { title: '合成监控', path: '/synthetic', icon: Stopwatch, cap: 'synthetic' },
-    { title: 'SDK 健康', path: '/sdk-health', icon: Monitor }
+    { title: 'SLO 预算', path: '/slo', icon: DataLine, cap: 'slo' },
+    { title: '合成监控', path: '/synthetic', icon: View, cap: 'synthetic' },
+    { title: 'SDK 健康', path: '/sdk-health', icon: Cpu }
   ] },
   { label: '洞察', items: [
-    { title: '用户链路', path: '/journey', icon: Aim },
+    { title: '用户链路', path: '/journey', icon: Promotion },
     { title: '行为分析', path: '/behavior', icon: Histogram },
     { title: '产品分析', path: '/analytics', icon: DataAnalysis },
     { title: '用户会话', path: '/sessions', icon: User },
-    { title: '用户路径', path: '/paths', icon: Aim },
+    { title: '用户路径', path: '/paths', icon: Switch },
     { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
-    { title: '留存分析', path: '/retention', icon: Grid },
-    { title: '实验分析', path: '/experiments', icon: Collection, cap: 'experiments' },
-    { title: '发布管理', path: '/releases', icon: Operation },
+    { title: '留存分析', path: '/retention', icon: Calendar },
+    { title: '实验分析', path: '/experiments', icon: Medal, cap: 'experiments' },
+    { title: '发布管理', path: '/releases', icon: Upload },
     { title: 'AI 洞察', path: '/ai-insights', icon: BellFilled }
   ] },
   { label: '治理', items: [
-    { title: '事件字典', path: '/dictionary', icon: Collection },
-    { title: '采集治理', path: '/governance', icon: Operation },
-    { title: 'SourceMap', path: '/sourcemaps', icon: Grid },
+    { title: '事件字典', path: '/dictionary', icon: Document },
+    { title: '采集治理', path: '/governance', icon: Management },
+    { title: 'SourceMap', path: '/sourcemaps', icon: MapLocation },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
     { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
     { title: '合规 DSR', path: '/dsr', icon: Stamp, cap: 'dsr' }

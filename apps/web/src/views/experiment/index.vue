@@ -7,6 +7,7 @@ import { useAuth } from '../../composables/useAuth'
 import OverflowTip from '../../components/OverflowTip.vue'
 import KpiGrid from '../../components/KpiGrid.vue'
 import { listExperiments, saveExperiment, changeExperimentStatus, deleteExperiment } from '../../api/experiments.js'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * A3 · 实验分析（PRD 14）列表页：KpiGrid + 实验表 + 新建/编辑抽屉表单。
@@ -240,16 +241,10 @@ onMounted(() => {
 
 <template>
   <div class="experiment-page">
-    <el-alert
-      v-if="!experimentsEnabled"
-      class="section"
-      type="info"
-      :closable="false"
-      show-icon
-      title="当前部署不支持实验分析（capability: experiments）"
-      description="A/B 实验平台需要后端开启 experiments 能力位后使用（Worker 部署需设置 EXPERIMENTS_ENABLED=1）；本页当前为只读占位，不会发起写操作。"
-    />
-    <template v-else>
+    <div class="page-heading">
+      <h1>实验分析<el-tooltip content="当前部署不支持实验分析（capability: experiments）。A/B 实验平台需要后端开启 experiments 能力位后使用（Worker 部署需设置 EXPERIMENTS_ENABLED=1）；本页当前为只读占位，不会发起写操作。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
+    </div>
+    <template v-if="experimentsEnabled">
       <KpiGrid :items="kpis" />
       <el-alert v-if="loadError" class="section" type="warning" :title="loadError" show-icon :closable="false" />
 

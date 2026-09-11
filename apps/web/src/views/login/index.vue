@@ -10,6 +10,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { Loading, User, Lock, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../../composables/useAuth'
 
@@ -97,14 +98,10 @@ function toggle(target: 'login' | 'register'): void {
       <div class="auth-brand">
         <span class="brand-logo">{{ brandShortName }}</span>
         <div>
-          <h1>{{ brandName }}</h1>
+          <h1>{{ brandName }}<el-tooltip v-if="inviteToken" content="你收到一个团队邀请，注册后将加入对应团队" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
           <p>{{ brandSubtitle }} · 账号登录</p>
         </div>
       </div>
-
-      <el-alert v-if="inviteToken" type="info" :closable="false" show-icon class="auth-invite">
-        <template #title>你收到一个团队邀请，注册后将加入对应团队</template>
-      </el-alert>
 
       <el-tabs v-model="mode" class="auth-tabs">
         <el-tab-pane label="登录" name="login" />

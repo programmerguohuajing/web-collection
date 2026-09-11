@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, pageLoading } from '../../../dashboard.js'
 import { useAuth } from '../../../composables/useAuth'
 import OverflowTip from '../../../components/OverflowTip.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import MiniLineChart from '../../../components/MiniLineChart.vue'
 
 /**
@@ -126,7 +127,6 @@ onMounted(load)
       </div>
     </div>
 
-    <el-alert v-if="!sloEnabled" class="section" type="info" :closable="false" show-icon title="当前部署未开启 SLO 能力，数据可能不可用" />
     <el-alert v-if="loadError" class="section" type="error" :title="loadError" show-icon />
 
     <section class="section kpi-row">

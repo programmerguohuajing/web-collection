@@ -7,22 +7,17 @@
 import { useAuth } from '../../composables/useAuth'
 import UsageView from './usage.vue'
 import PlansView from './plans.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 const { meteringEnabled } = useAuth()
 </script>
 
 <template>
   <div class="billing-page">
-    <el-alert
-      v-if="!meteringEnabled"
-      class="section"
-      type="info"
-      :closable="false"
-      show-icon
-      title="当前部署不支持用量计量（capability: metering）"
-      description="用量计量与套餐能力需要后端开启 metering 能力位后使用（Worker 部署需设置 METERING_ENABLED=1）；本页当前为只读占位，不会发起任何写请求。"
-    />
-    <template v-else>
+    <div class="page-heading">
+      <h1>用量计费<el-tooltip content="当前部署不支持用量计量（capability: metering）。用量计量与套餐能力需要后端开启 metering 能力位后使用（Worker 部署需设置 METERING_ENABLED=1）；本页当前为只读占位，不会发起任何写请求。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
+    </div>
+    <template v-if="meteringEnabled">
       <el-tabs class="billing-tabs">
         <el-tab-pane label="用量" name="usage">
           <UsageView />

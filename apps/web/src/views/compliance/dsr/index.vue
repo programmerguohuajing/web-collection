@@ -8,6 +8,7 @@ import { useAuth } from '../../../composables/useAuth'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
 import CreateWizard from './create-wizard.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * D1 · 数据主体权利 DSR（PRD 13）列表页。
@@ -167,16 +168,10 @@ onMounted(load)
 
 <template>
   <div class="dsr-page">
-    <el-alert
-      v-if="!dsrEnabled"
-      class="section"
-      type="info"
-      :closable="false"
-      show-icon
-      title="当前部署不支持数据主体权利 DSR（capability: dsr）"
-      description="DSR（查询 / 导出 / 擦除）需要后端开启 dsr 能力位后使用（Worker 部署需设置 DSR_ENABLED=1），并依赖账号体系 RBAC（ACCOUNTS_ENABLED=1）；本页当前为只读占位，不会发起写操作。"
-    />
-    <template v-else>
+    <div class="page-heading">
+      <h1>数据主体权利 · DSR<el-tooltip content="当前部署不支持数据主体权利 DSR（capability: dsr）。DSR（查询 / 导出 / 擦除）需要后端开启 dsr 能力位后使用（Worker 部署需设置 DSR_ENABLED=1），并依赖账号体系 RBAC（ACCOUNTS_ENABLED=1）；本页当前为只读占位，不会发起写操作。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
+    </div>
+    <template v-if="dsrEnabled">
       <KpiGrid :items="kpis" />
       <el-alert v-if="loadError" class="section" type="error" :title="loadError" show-icon />
 

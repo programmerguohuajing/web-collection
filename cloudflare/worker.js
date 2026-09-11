@@ -1202,7 +1202,7 @@ async function summary(env,url){
   const cacheKey = url.search
   const hit = _summaryCache.get(cacheKey)
   if (hit && Date.now() - hit.at < 30000) return new Response(hit.text, { headers: { 'content-type': 'application/json; charset=utf-8', 'x-summary-cache': 'hit' } })
-  const {where,values}=filters(url),perfFilter=filters(url,'perf'),issueFilter=issueFilters(url)
+  const {where,values}=filters(url),perfFilter=filters(url,'perf'),issueFilter=issueFilters(url),apdexFilter=filters(url,'perf',["metric='lcp'"])
   // P0-6 性能预算优化：原实现拉取 5000 条全列事件 + 50000 条 perf 事件到应用层聚合，
   // 现将 byType/behavior/事件总数/perf 计数与均值下推为 SQL GROUP BY，p75 用窗口函数
   // 在库内仅取每个 metric 的边界行（约 2 行/metric），只有 fetch/xhr/resource 明细
@@ -1215,18 +1215,21 @@ async function summary(env,url){
   // ② 预聚合缝合：仅 appId+时间 且窗口 ≤7d 且小时表全覆盖时，byType/behavior/perfStats
   // 改读 events_hourly_stats（体积约为 events 同窗的 1/50）+ 两端 <1h 直扫，免三次全窗扫描。
   const stitchPlan = await hourlyStitchPlan(env, url)
-  const [eventStats,p75Rows,apiRows,issueResult,issueStats, directAgg] = await Promise.all([
+  const [eventStats,p75Rows,apiRows,issueResult,issueStats,browserRows, directAgg, apdexRow] = await Promise.all([
     one(env.DB.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values)),
     all(env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values)),
     all(env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 1000`).bind(...perfFilter.values)),
     all(env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values)),
     one(env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values)),
+    all(env.DB.prepare(`select coalesce(nullif(browser,''),'Unknown') browser, count(*) count from events ${where} group by 1 order by 2 desc`).bind(...values)),
     // 非缝合路径的三项聚合（缝合时该 Promise 结果被忽略，直扫代价与原实现一致）
     stitchPlan ? Promise.resolve(null) : Promise.all([
       all(env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values)),
       all(env.DB.prepare(`select name,count(*) count from events ${where}${where?' and':' where'} type in ('behavior','track') group by name`).bind(...values)),
       all(env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values))
-    ])
+    ]),
+    // Apdex 体验分：基于 LCP 样本，satisfied ≤2500ms / tolerating ≤4000ms（与 scorePerf 的 LCP 阈值同口径）
+    one(env.DB.prepare(`select sum(case when value<=2500 then 1 else 0 end) satisfied,sum(case when value>2500 and value<=4000 then 1 else 0 end) tolerating,count(*) total from events ${apdexFilter.where} and ${perfGuard}`).bind(...apdexFilter.values))
   ])
   let byTypeRows, behaviorRows, perfStats
   if (stitchPlan) {
@@ -1235,10 +1238,11 @@ async function summary(env,url){
   } else {
     [byTypeRows, behaviorRows, perfStats] = directAgg
   }
-  const issues=issueResult,byType={},behavior={},perf={},perfCounts={}
+  const issues=issueResult,byType={},behavior={},perf={},perfCounts={},byBrowser={}
   for(const row of byTypeRows)byType[row.type]=Number(row.count)
   for(const row of behaviorRows)behavior[row.name ?? 'null']=Number(row.count)
   for(const row of perfStats)perfCounts[row.metric ?? 'null']=Number(row.count)
+  for(const row of (browserRows||[]))byBrowser[row.browser]=(byBrowser[row.browser]||0)+Number(row.count)
   const p75ByMetric=new Map()
   for(const row of p75Rows){const list=p75ByMetric.get(row.metric)||[];list.push(row);p75ByMetric.set(row.metric,list)}
   const statByMetric=new Map(perfStats.map(row=>[row.metric,row]))
@@ -1249,7 +1253,10 @@ async function summary(env,url){
     if(value!==null)perf[metric]=Number(value.toFixed(metric==='cls'?4:0))
   }
   const perfRows=apiRows.map(row=>({metric:row.metric,value:Number(row.value),name:row.name,props:parse(row.props_json,{})}))
-  const summaryBody=JSON.stringify({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
+  // Apdex = (satisfied + tolerating/2) / total；无 LCP 样本时为 null（前端显示 '-'）
+  const apdexTotal=Number(apdexRow?.total||0)
+  const apdex=apdexTotal>0?Number(((Number(apdexRow?.satisfied||0)+Number(apdexRow?.tolerating||0)/2)/apdexTotal).toFixed(2)):null
+  const summaryBody=JSON.stringify({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,byBrowser,apdex,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
   if (_summaryCache.size > 32) _summaryCache.clear() // 防泄漏：筛选组合有限，保守上限
   _summaryCache.set(cacheKey, { at: Date.now(), text: summaryBody })
   // 缝合可观测性：与 x-summary-cache 同思路，凭响应头即可确认命中小时表预聚合路径（排障/验证用）

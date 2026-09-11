@@ -6,6 +6,7 @@ import { api, normalizePageResponse, queryFromFilters, deleteAlertChannel, saveA
 import { buildAlertChannelPayload, channelEndpointStatus, channelFilters, channelScope, createAlertChannelForm } from '../alert-channels.js'
 import KpiGrid from '../components/KpiGrid.vue'
 import OverflowTip from '../components/OverflowTip.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import TemplateEditor from '../components/TemplateEditor.vue'
 import { levelLabel, levelTagType, metricLabel, metricTagType } from '../utils/format.js'
 import { channelMessageTypes, variablesForChannel } from '../../../../packages/alert-templates.js'
@@ -302,7 +303,8 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
         <el-form-item label="App Secret" required>
           <el-input v-model="channelForm.appSecret" type="password" show-password :placeholder="channelForm.endpointConfigured ? '留空表示不修改' : '飞书开放平台应用的 App Secret'" />
         </el-form-item>
-        <el-form-item label="目标群/用户 ID" required>
+        <el-form-item required>
+          <template #label>目标群/用户 ID<el-tooltip content="需先把该应用机器人加入目标群并发布版本：智能体/应用机器人需在飞书开放平台开启「机器人」能力并发布，且在目标群内有发言权限、已申请 im:message 权限。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></template>
           <el-input v-model="channelForm.chatId" placeholder="群 ID（oc_xxxx）或用户 open_id / user_id" />
         </el-form-item>
         <el-form-item label="发送范围">
@@ -313,9 +315,6 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
             <el-option label="用户 union_id" value="union_id" />
           </el-select>
         </el-form-item>
-        <el-alert type="info" :closable="false" show-icon title="需先把该应用机器人加入目标群并发布版本">
-          <template #default>智能体/应用机器人需在飞书开放平台开启「机器人」能力并发布，且在目标群内有发言权限、已申请 im:message 权限。</template>
-        </el-alert>
       </template>
       <el-form-item v-if="channelForm.type === 'email' || channelForm.type === 'sms'" label="接收人" required>
         <el-input v-model="channelForm.recipients" :placeholder="channelForm.type === 'email' ? '多个邮箱以逗号分隔' : '多个手机号以逗号分隔'" />

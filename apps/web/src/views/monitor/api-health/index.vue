@@ -6,6 +6,7 @@ import KpiGrid from '../../../components/KpiGrid.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import TopologyChart from '../../../components/TopologyChart.vue'
 import MiniLineChart from '../../../components/MiniLineChart.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * API 健康视图（Next Horizon E2）。
@@ -214,12 +215,6 @@ watch(refreshVersion, () => load(), { immediate: true })
         <small>端点调用关系</small>
       </div>
     </template>
-    <el-alert class="topology-note" type="info" :closable="false" show-icon title="拓扑为端点调用关系占位">
-      <template #default>
-        当前数据仅来自前端 fetch / xhr 聚合，未关联分布式追踪（trace），因此这里呈现「客户端 → 各 API 端点」的调用关系，
-        无法还原服务端内部的服务间依赖。接入后端 Span 上报后可升级为真实服务拓扑。
-      </template>
-    </el-alert>
     <TopologyChart :nodes="topology.nodes" :edges="topology.edges" height="420px" empty-text="暂无端点可绘制拓扑" />
   </el-card>
 

@@ -4,6 +4,7 @@ import { api, pageLoading, queryFromFilters, refreshVersion } from '../../../das
 import { useFilterStore } from '../../../stores/filters.js'
 import KpiGrid from '../../../components/KpiGrid.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * SDK 健康视图（Next Horizon E3）。
@@ -359,7 +360,7 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
   <el-card v-if="ingestion || ingestionError" shadow="never" class="panel section">
     <template #header>
       <div class="panel-head">
-        <div><h2>服务端采集健康</h2><small>SDK 上报 → 服务端入库链路</small></div>
+        <div><h2>服务端采集健康<el-tooltip content="「上报延迟」= 服务端 received_at − 事件 ts 的平均毫秒数（后端字段名为 reportLatencyP75，实际计算为均值；未填充 received_at 的样本不计入)。「疑似停报 / 上报延迟 / 上报正常」按最后上报距今 > 15 分钟 / > 5 分钟 / 5 分钟内判定。若本卡片为空（当前应用暂无上报），多为该应用未接入 0.5.0+ SDK、或刚接入尚在首个上报周期内（≤5 分钟），请先确认顶部应用筛选是否为真实接入方。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h2><small>SDK 上报 → 服务端入库链路</small></div>
         <el-tag :type="ingestion ? ingestionTagType : 'info'" effect="dark">{{ ingestion ? ingestionStatusText : '不可达' }}</el-tag>
       </div>
     </template>
@@ -437,13 +438,7 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
       </el-table-column>
     </el-table>
 
-    <el-alert class="note" type="info" :closable="false" show-icon title="指标口径">
-      <template #default>
-        「上报延迟」= 服务端 <code>received_at − 事件 ts</code> 的平均毫秒数（后端字段名为 reportLatencyP75，实际计算为均值；未填充 received_at 的样本不计入）。
-        「疑似停报 / 上报延迟 / 上报正常」按最后上报距今 &gt; 15 分钟 / &gt; 5 分钟 / 5 分钟内判定，阈值与 <code>/api/diagnostics</code> 一致；
-        当顶部时间范围的结束时间已超过 15 分钟时判定为「历史区间」，不做实时停报判定。
-      </template>
-    </el-alert>
+
   </el-card>
 
   <el-card shadow="never" class="panel section">
@@ -533,13 +528,6 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
         <div class="metric"><span class="metric-k">存储配额失败 storageQuota</span><span class="metric-v" :class="sdkMonitoring.totals.storageQuota > 0 ? 'danger' : ''">{{ sdkMonitoring.totals.storageQuota }}</span></div>
       </div>
     </template>
-    <el-alert v-else class="note" type="info" :closable="false" show-icon title="当前应用暂无上报">
-      <template #default>
-        SDK 端 SelfMonitor 每 5 分钟把 sent / dropped / retried 等指标上报至 <code>/api/monitoring/sdk</code>（0.5.0+ 已内置）。
-        本卡片按<b>顶部所选应用</b>聚合，当前为 <code>{{ activeAppId || '未选择' }}</code>。
-        若该应用未接入 0.5.0+ SDK、或刚接入尚在首个上报周期内（≤5 分钟），此处即无数据——先确认应用筛选是否为真实接入方。
-      </template>
-    </el-alert>
   </el-card>
 
   <el-card shadow="never" class="panel section">
@@ -559,9 +547,6 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
         <el-table-column label="CI 运行" min-width="160"><template #default="{ row }"><OverflowTip :text="row.ciRun || '-'" /></template></el-table-column>
       </el-table>
     </template>
-    <el-alert v-else class="note" type="info" :closable="false" show-icon title="CI 未上报">
-      <template #default>SDK 体积是构建产物侧数据，需发版 CI 步骤构建后上报至 <code>/api/sdk-size</code>，此处才会显示。当前无历史上报记录。</template>
-    </el-alert>
   </el-card>
 </template>
 

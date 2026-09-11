@@ -132,6 +132,9 @@ button, input, textarea, select { font-family: inherit; }
   transition: background 120ms ease, color 120ms ease;
 }
 .nav-item .el-icon { width: 17px; height: 17px; font-size: 17px; flex-shrink: 0; }
+/* 标题侧 help 图标：与整行 el-alert type=info 提示等价，悬浮展示说明文本 */
+.help-icon { color: var(--el-text-color-secondary); cursor: help; margin-left: 6px; outline: none; vertical-align: middle; font-size: 15px; }
+.help-icon:hover { color: var(--el-color-primary); }
 .nav-item:hover { color: var(--c-text); background: var(--c-surface-2); }
 .nav-item.active { color: var(--c-primary); font-weight: 600; background: var(--c-primary-soft); }
 .menu-group {

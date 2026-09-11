@@ -7,6 +7,7 @@ import { useFilterStore } from '../../../stores/filters.js'
 import { useAuth } from '../../../composables/useAuth'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * B2 · SLO / 错误预算 列表页（Next Horizon B2）。
@@ -202,16 +203,10 @@ onMounted(async () => {
 
 <template>
   <div class="slo-page">
-    <el-alert
-      v-if="!sloEnabled"
-      class="section"
-      type="info"
-      :closable="false"
-      show-icon
-      title="当前部署未开启 SLO 能力（capability: slo）"
-      description="SLO / 错误预算功能需要后端开启 slo 能力位后使用；本页当前为只读占位，不会发起写操作。"
-    />
-    <template v-else>
+    <div class="page-heading">
+      <h1>SLO / 错误预算<el-tooltip content="当前部署未开启 SLO 能力（capability: slo）。SLO / 错误预算功能需要后端开启 slo 能力位后使用；本页当前为只读占位，不会发起写操作。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
+    </div>
+    <template v-if="sloEnabled">
       <KpiGrid :items="kpis" />
       <el-alert v-if="loadError" class="section" type="error" :title="loadError" show-icon />
 

@@ -7,6 +7,7 @@ import { useFilterStore } from '../../../stores/filters.js'
 import { useAuth } from '../../../composables/useAuth'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * B3 · 合成监控（主动探针）列表页。
@@ -239,16 +240,10 @@ onMounted(async () => {
 
 <template>
   <div class="synthetic-page">
-    <el-alert
-      v-if="!syntheticEnabled"
-      class="section"
-      type="info"
-      :closable="false"
-      show-icon
-      title="当前部署不支持合成监控（capability: synthetic）"
-      description="主动拨测功能需要后端开启 synthetic 能力位后使用（Worker 部署需设置 SYNTHETIC_ENABLED=1）；本页当前为只读占位，不会发起写操作。"
-    />
-    <template v-else>
+    <div class="page-heading">
+      <h1>合成监控<el-tooltip content="当前部署不支持合成监控（capability: synthetic）。主动拨测功能需要后端开启 synthetic 能力位后使用（Worker 部署需设置 SYNTHETIC_ENABLED=1）；本页当前为只读占位，不会发起写操作。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
+    </div>
+    <template v-if="syntheticEnabled">
       <KpiGrid :items="kpis" />
       <el-alert v-if="loadError" class="section" type="error" :title="loadError" show-icon />
 
