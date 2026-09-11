@@ -324,10 +324,14 @@ export default {
       await hourlyRollupRangeW(env, Date.now() - 48 * 3600000, Date.now()).catch(() => {})
       await cleanup(env)
     }
-    // D1 行读优化 ②：小时级预聚合（上一小时已完结 + 当前小时部分覆盖；首部署回填 14d；顺带 ① 日表缺口回填）
-    if (controller.cron === '0 * * * *') await hourlyRollupW(env)
-    // B2 · SLO：每 5 分钟快照 + 燃尽判定（sloEnabledW 内部自检，未开启时空转）
-    if (controller.cron === '*/5 * * * *') await sloTickW(env)
+    // D2 · SLO：每 5 分钟快照 + 燃尽判定（sloEnabledW 内部自检，未开启时空转）
+    if (controller.cron === '*/5 * * * *') {
+      await sloTickW(env)
+      // D1 行读优化 ②：小时级预聚合复用本 cron——账户 cron 触发器已达 Workers 免费版
+      // 5 个/账户上限（API 10072），无法新增 0 * * * *；用小时桶守卫收敛为每小时首跳执行一次
+      //（隔离重启后守卫归零最多多跑一次，writer 幂等无害；缺口由每日 17:3 的 48h 自愈兜底）。
+      await maybeHourlyRollupW(env, controller.scheduledTime)
+    }
     // B3 · 合成监控：每分钟探针 tick（SYNTHETIC_ENABLED≠1 时首行空转返回，零开销）
     if (controller.cron === '* * * * *') await syntheticTickW(env)
   }
@@ -1113,6 +1117,18 @@ async function hourlyRollupW(env) {
     }
     await metricDailyRollupW(env)
   } catch (error) { console.error('[hourly-rollup] failed:', error?.message || error) }
+}
+
+/**
+ * ② 小时桶守卫：复用「每 5 分钟」cron 执行小时级预聚合（账户 cron 触发器达免费版 5 个上限，
+ * 无法新增独立小时触发器）。同一小时桶只跑一次；隔离冷启动后守卫归零最多多跑一次（幂等无害）。
+ */
+let _lastHourlyBucketW = 0
+async function maybeHourlyRollupW(env, scheduledTime) {
+  const bucket = Math.floor(Number(scheduledTime) || Date.now()) / 3600000 | 0
+  if (bucket === _lastHourlyBucketW) return
+  _lastHourlyBucketW = bucket
+  await hourlyRollupW(env)
 }
 
 /**
