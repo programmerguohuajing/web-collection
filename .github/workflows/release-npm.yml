@@ -46,37 +46,6 @@ jobs:
       - name: Build SDK
         run: pnpm --filter @web-collection/sdk build
 
-      # Next Horizon E4/E1 补齐：发版时把 SDK 体积（gzip / raw / min）上报到 /api/sdk-size，
-      # 使 sdk-health 页「SDK 体积开销」卡片在发版后自动有真实数据。
-      # 幂等且 best-effort：失败不阻断发版；worker 未配置 CI_REPORT_TOKEN 时该接口开放写入。
-      - name: Report SDK size to monitoring endpoint
-        if: always()
-        continue-on-error: true
-        env:
-          SDK_SIZE_ENDPOINT: https://web-collection.jingguohua.cc.cd/api/sdk-size
-          SDK_SIZE_REPORT_TOKEN: ${{ secrets.SDK_SIZE_REPORT_TOKEN }}
-        shell: bash
-        run: |
-          export VERSION="${{ steps.target.outputs.package_version }}"
-          node -e '
-            const fs=require("fs"); const zlib=require("zlib"); const path=require("path");
-            const dir="packages/sdk/dist";
-            const files=fs.readdirSync(dir);
-            const iife=files.find(f=>f.endsWith(".iife.js") && !f.endsWith(".min.js"));
-            if(!iife){ console.log("no iife bundle found, skip"); process.exit(0); }
-            const raw=fs.readFileSync(path.join(dir,iife));
-            const gz=zlib.gzipSync(raw).length;
-            const minName=files.find(f=>f.endsWith(".iife.min.js"));
-            const min=minName?fs.readFileSync(path.join(dir,minName)).length:null;
-            const body=JSON.stringify({ version:process.env.VERSION, gzBytes:gz, rawBytes:raw.length, minBytes:min, ciRun:process.env.GITHUB_RUN_ID });
-            const token=process.env.SDK_SIZE_REPORT_TOKEN||"";
-            const headers={"content-type":"application/json"};
-            if(token) headers["x-ci-token"]=token;
-            fetch(process.env.SDK_SIZE_ENDPOINT,{method:"POST",headers,body})
-              .then(r=>console.log("reported SDK size, http",r.status))
-              .catch(e=>{ console.log("report failed:",e.message); process.exit(0); });
-          '
-
       # tag 必须携带版本号（vX.Y.Z），且必须与 package.json 的 version 一致。
       - name: Verify tag matches package version
         id: target
@@ -90,6 +59,66 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME (v$tag_version) does not match package version v$package_version"
             exit 1
           fi
+
+      # Next Horizon E4/E1 补齐：发版时把 SDK 体积（gzip / raw / min）上报到 /api/sdk-size，
+      # 使 sdk-health 页「SDK 体积开销」卡片在发版后自动有真实数据。
+      #
+      # ⚠️ 依赖顺序（关键，曾踩坑）：本步骤必须排在 `id: target` 之后。
+      # 历史 bug：本步骤原本位于「Verify tag matches package version」之前，而它却引用
+      # steps.target.outputs.package_version —— 此时 target 尚未运行，展开为空串，
+      # worker 侧 `if (!body.version) return 400 missing version` 直接拒绝；
+      # 再叠加 continue-on-error，失败完全静默，导致 sdk-health 页长期显示「CI 未上报」。
+      #
+      # best-effort：失败仅告警不阻断发版；worker 未配置 CI_REPORT_TOKEN 时该接口开放写入。
+      # dist 在上游「Build SDK」步骤已产出，此处只读取不构建。
+      - name: Report SDK size to monitoring endpoint
+        id: sdksize
+        if: always() && steps.target.conclusion == 'success'
+        continue-on-error: true
+        env:
+          SDK_SIZE_ENDPOINT: https://web-collection.jingguohua.cc.cd/api/sdk-size
+          SDK_SIZE_REPORT_TOKEN: ${{ secrets.SDK_SIZE_REPORT_TOKEN }}
+          TARGET_VERSION: ${{ steps.target.outputs.package_version }}
+        shell: bash
+        run: |
+          node -e '
+            const fs=require("fs"); const zlib=require("zlib"); const path=require("path");
+            const dir="packages/sdk/dist";
+            const version=process.env.TARGET_VERSION||"";
+            if(!version){ console.log("::warning::skip SDK size report: empty version"); process.exit(1); }
+            if(!fs.existsSync(dir)){ console.log("::warning::skip SDK size report: dist not built"); process.exit(1); }
+            const files=fs.readdirSync(dir);
+            const iife=files.find(f=>f.endsWith(".iife.js") && !f.endsWith(".min.js"));
+            if(!iife){ console.log("::warning::skip SDK size report: no iife bundle in dist"); process.exit(1); }
+            const raw=fs.readFileSync(path.join(dir,iife));
+            const gz=zlib.gzipSync(raw,{level:9}).length;
+            // min 列：vite.iife.config.js 已开启 minify:'terser'，iife 产物本身就是压缩后的，
+            // 因此不存在独立的 .iife.min.js —— min 与该产物同源（同为 raw.length）。
+            // 兼容：若未来额外产出 .iife.min.js，则优先取它，不会误报。
+            const minName=files.find(f=>f.endsWith(".iife.min.js"));
+            const min=minName?fs.readFileSync(path.join(dir,minName)).length:raw.length;
+            const body=JSON.stringify({
+              version,
+              gzBytes:gz,
+              rawBytes:raw.length,
+              minBytes:min,
+              ciRun:process.env.GITHUB_RUN_ID||null
+            });
+            const token=process.env.SDK_SIZE_REPORT_TOKEN||"";
+            const headers={"content-type":"application/json"};
+            if(token) headers["x-ci-token"]=token;
+            (async()=>{
+              try{
+                const r=await fetch(process.env.SDK_SIZE_ENDPOINT,{method:"POST",headers,body});
+                const text=await r.text().catch(()=>"");
+                console.log(`report sdk size: version=${version} gz=${gz} raw=${raw.length} min=${min} -> http ${r.status} ${text.slice(0,200)}`);
+                if(!r.ok){ console.log("::warning::SDK size report rejected: http "+r.status); process.exit(1); }
+              }catch(e){
+                console.log("::warning::SDK size report error: "+e.message);
+                process.exit(1);
+              }
+            })();
+          '
 
       # 幂等保护：若版本已存在于 npm，则跳过发布（兼容重跑 / 重复打 tag）。
       - name: Check npm version already published
