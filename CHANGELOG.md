@@ -1,8 +1,58 @@
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '3538dd59-ba9e-4855-9486-1204301b271c'
+  PropagateID: '3538dd59-ba9e-4855-9486-1204301b271c'
+  ReservedCode1: 'dbc2ccaa-9a34-4de4-8986-c52266b23252'
+  ReservedCode2: 'dbc2ccaa-9a34-4de4-8986-c52266b23252'
+---
+
 # Changelog
 
 本项目所有版本发布均由 `vX.Y.Z` tag 触发，GitHub Release / npm 包 / SDK tgz 由 CI 工作流（`.github/workflows/release-npm.yml`）在该 tag 推送时一体产出，版本号以 tag 与 `packages/sdk/package.json` 为准。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
+
+## [0.6.0] - 2026-09-11
+
+### ⭐ 亮点
+- **回放会话治理**：根治「1044 分钟超长会话（883 分钟挂机空白）」「只录到首屏」「回放图片/字体丢失」三类线上问题——SDK 闲置 10 分钟自动切新会话（`replayIdleResetMs`）、60s 分段循环连续录制（`replayContinuous`）、同源图片/字体录制时内联为 dataURI（`replayInlineAssets`）；后端详情 30 分钟跨度截断（截断点锚定全量快照保证可重建），前端展示截断提示条与资源失败占位。
+- **采集链路容灾**：D1 配额超限等平台故障期间，`/api/collect` 对采集端永远返回 2xx（fail-open 降级），不再出现 500 风暴；SDK 新增发送熔断——连续失败批次达阈值（默认 5）静默停采，冷却期（默认 5 分钟）后半开探测自动恢复，服务端长故障期间采集端控制台零报错。
+- **D1 行读治理（四批）**：日行读从 534 万（超免费版 500 万上限）降至 ~250 万——索引（0038 迁移）、诊断/摘要缓存、小时级预聚合表（0039 迁移）+ summary 缝合、基线日表 EOD writer、缓存 TTL 踩边缘修正（30s 轮询 vs 30s 缓存必 miss）、P75 独立缓存与大窗口跳过。
+
+### ✨ 新功能 (Features)
+- **sdk**：回放闲置切分 / 连续录制 / 资源内联三配置项，新增 `replay_session_rotated` 诊断（`8c9cafb`）
+- **sdk**：发送熔断 `collectBreakerThreshold` / `collectBreakerCooldownMs`，新增 `circuit_open` / `circuit_half_open` / `circuit_recovered` 诊断事件（`0110d14`）
+- **worker**：summary 缝合路径返回 `x-summary-stitch` 响应头，预聚合命中可观测（`cbdb32f`）
+- **worker**：`events_hourly_stats` 小时级预聚合 + summary 缝合查询（`204dc20`、`ab5742c`）
+- **ai**：`metric_daily_stats` 基线日表 EOD writer + 缺口检测自愈（`204dc20`、`cbdb32f`）
+- **web**：AI 洞察未读徽标进入页面即清零（`515ca92`）
+
+### 🐛 缺陷修复 (Fixes)
+- **全栈**：测试报告 13 项缺陷一次性修复（BUG-002/004~013）（`98b868d`）
+- **replay**：周期快照字段名错误（`checkoutEveryN`→`checkoutEveryNth`）导致首屏后画面消失（`e981734`）
+- **replay**：环形缓冲独立留存全量快照，根治回放黑屏（`5d09a04`）
+- **replay**：长会话播放中途空白——按录制实例锚定合并事件流（`bc90927`）
+- **replay**：回放聚合补全量快照兜底 + 链路入口兼容分段 session_id（`8204379`、`28fc352`）
+- **replay**：分段归属竞态（异步 flush 期间分段号已推进导致 end_reason 永不落库）（`8c9cafb`）
+- **api**：Node 版回放 gzip 上报被 sanitize 静默丢弃（`8c9cafb`）
+- **worker**：入口 HTML 强制 `no-store`，根治 CDN 缓存导致前端部署不生效（`48a2a2b`）
+- **worker**：collect 应用配置查询失败 fail-open，不再向采集端报 500（`0110d14`）
+- **mcp**：无状态 StreamableHTTP 握手挂起 60s 超时（`c810ea2`）
+- **sdk**：采集地址重构为 `baseUrl`+`collectPath`，修复 diagnostics/monitoring 404（`38945bc`）
+- **web**：API 端点健康 GET/POST 标签被 flex 压缩截断（`7b53b5c`）
+- **web**：事件表类型列截断、最近会话列表时间列截断（`624633b`、`fdbad85`）
+- **ci**：SDK 体积上报步骤引用时机过早而静默失败（`5d7a2ff`）
+
+### 🔧 发布说明 / 部署注意
+- **SDK (npm)**：`@web-collection/sdk@0.6.0`，`replayContinuous` / 熔断默认开启，`replayInlineAssets` 默认关闭（内网/防盗链场景需显式开启：`replayInlineAssets: true`）。
+- **被测页面**：需重新加载才用上 0.6.0 行为（CDN 引用刷新页面即可；npm 集成升级依赖重新构建）。存量超长回放会话已由后端 30 分钟截断兜底。
+- **D1**：本版本含 0038（查询性能索引）/ 0039（`events_hourly_stats` 小时表）迁移，已随部署 apply；小时级预聚合复用 `*/5` cron + 小时桶守卫（账户 cron 触发器满额，无法新增）。
+- **CDN**：入口 HTML 已改 `no-store`；若 Cloudflare 缓存规则此前已缓存旧 HTML，需手动 Purge Cache 一次。
+
+---
 
 ## [0.5.0] - 2026-09-10
 
@@ -94,3 +144,5 @@
 
 ## [0.3.0] - 2026-08-25
 - 前端页面与导航（PRD 01-07）、远程采集配置 + 页面参与度字段、后端 PRD 01-07 实现、知识库（KB）doc 类型与在线链接抓取升级等。详见 `git log v0.2.4..v0.3.0`。
+
+> AI生成
