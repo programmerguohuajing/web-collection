@@ -13,6 +13,7 @@ import {
   VideoPlay,
   WarningFilled
 } from '@element-plus/icons-vue'
+import OverflowTip from './OverflowTip.vue'
 
 const props = defineProps({
   replays: { type: Array, default: () => [] },
@@ -30,6 +31,8 @@ const progress = ref(0)
 const duration = ref(0)
 const playbackRate = ref(1)
 const replayError = ref('')
+const replayTruncated = ref(null)
+const replayView = ref(null)
 const currentReplayId = ref('')
 const selectedReplay = ref(null)
 const loadingReplayId = ref('')
@@ -47,6 +50,7 @@ const REASON_MAP = {
   route: '页面跳转',
   page_unload: '页面关闭',
   max_duration: '达到时长上限',
+  idle: '长时间无操作',
   normal: '正常结束'
 }
 
@@ -250,8 +254,9 @@ function ensureReplayFrameVisible(width, height) {
 async function openReplay(item, autoPlay = false) {
   if (!item?.replayId || loadingReplayId.value === item.replayId) return
   const requestId = ++playRequestId
-  replayError.value = ''
-  currentReplayId.value = String(item.replayId)
+    replayError.value = ''
+    replayTruncated.value = null
+    currentReplayId.value = String(item.replayId)
   selectedReplay.value = props.replays.find(row => String(row.replayId) === String(item.replayId)) || item
   loadingReplayId.value = item.replayId
   destroyPlayer()
@@ -261,6 +266,10 @@ async function openReplay(item, autoPlay = false) {
   try {
     const payload = await props.loadReplay(item.replayId)
     if (requestId !== playRequestId || currentReplayId.value !== String(item.replayId)) return
+    // 超长会话截断元数据（后端 30 分钟上限）：提示用户原会话跨度与截取范围
+    if (payload && typeof payload === 'object' && !Array.isArray(payload) && payload.truncated) {
+      replayTruncated.value = { originalSpanMs: Number(payload.originalSpanMs) || 0, spanMs: Number(payload.spanMs) || 0 }
+    }
     await nextTick()
     const events = Array.isArray(payload)
       ? payload
@@ -312,6 +321,7 @@ async function openReplay(item, autoPlay = false) {
     // 向 rrweb 回放 iframe 注入 CSP upgrade-insecure-requests，把 http 资源自动升级为 https 请求，
     // 消除控制台大量警告；公网 http 资源升级后可恢复显示，内网地址升级失败转为安静的网络错误。
     injectUpgradeInsecureRequests()
+    attachAssetFailurePlaceholder()
     ensureReplayFrameVisible(width, height)
     fitReplay(width, height)
     if (autoPlay) {
@@ -361,6 +371,26 @@ function injectUpgradeInsecureRequests() {
     meta.setAttribute('content', 'upgrade-insecure-requests')
     doc.head.prepend(meta)
   } catch { /* iframe 不可访问时静默降级，不影响回放 */ }
+}
+
+/**
+ * 回放资源不可达占位：被录页面的图片（内网 / 下线 / 防盗链地址）在回放 iframe 中加载
+ * 失败时给失败 img 标记并注入占位样式（浅灰块 + 虚线边框），避免破图标 / 纯空白的误导
+ * 观感。资源加载 error 不冒泡但可在捕获阶段监听；iframe 随 Replayer 重建时监听随 doc 回收。
+ */
+function attachAssetFailurePlaceholder() {
+  try {
+    const iframe = replayEl.value?.querySelector('iframe')
+    const doc = iframe?.contentDocument
+    if (!doc?.head) return
+    doc.addEventListener('error', event => {
+      const target = event?.target
+      if (target?.tagName === 'IMG') target.setAttribute('data-eys-asset-failed', '1')
+    }, true)
+    const style = doc.createElement('style')
+    style.textContent = 'img[data-eys-asset-failed]{box-sizing:border-box;min-width:36px;min-height:36px;padding:4px;border:1px dashed #c0c4cc;border-radius:4px;background:#f5f7fa;object-fit:contain}'
+    doc.head.appendChild(style)
+  } catch { /* iframe 不可访问时静默降级 */ }
 }
 
 /**
@@ -513,6 +543,9 @@ defineExpose({ play, currentSessionCode })
             <el-icon><Monitor /></el-icon>
             <span>{{ currentReplay?.url || 'about:blank' }}</span>
           </div>
+          <div v-if="replayTruncated" class="replay-truncated-tip">
+            原会话跨度 {{ formatDuration(replayTruncated.originalSpanMs) }}（含长时间挂机空白），已截取最近 {{ formatDuration(replayTruncated.spanMs) }} 播放
+          </div>
           <div ref="replayEl" class="replay-stage"></div>
           <div v-if="loadingReplayId" class="replay-stage-state">
             <el-icon class="is-loading"><RefreshRight /></el-icon>
@@ -646,7 +679,10 @@ defineExpose({ play, currentSessionCode })
               @focus="prefetch(row)"
               @click="openReplay(row, true)"
             >
-              <span><strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong><small>{{ row.url || '未记录页面地址' }}</small></span>
+              <span>
+                <strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong>
+                <OverflowTip class="session-item-url" :text="row.url || '未记录页面地址'" />
+              </span>
               <small class="session-item-side">
                 <!-- BUG-009（PRD 01 FR-5 入口 ②）：会话回放页 → 用户链路（分段 ID 提取基础会话 ID） -->
                 <router-link
@@ -695,6 +731,7 @@ defineExpose({ play, currentSessionCode })
 .replay-browser-bar { display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px; color: #98a2b3; background: #171d2b; border-bottom: 1px solid rgba(255,255,255,.07); }
 .replay-browser-bar .el-icon { flex: 0 0 auto; color: #667085; }
 .replay-browser-bar span { min-width: 0; overflow: hidden; font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.replay-truncated-tip { padding: 6px 14px; font-size: 12px; color: #b45309; background: #fffbeb; border-bottom: 1px solid #fde68a; }
 .replay-stage { position: relative; min-height: 462px; overflow: hidden; }
 /* 回放页 root 透明时，iframe 会透出外层深色面板（df23697 引入的回归，表现为「黑块」）。
    给 replayer 容器/iframe 一个白底，让透明区域像真实浏览器一样显示白底。 */
@@ -786,9 +823,13 @@ defineExpose({ play, currentSessionCode })
 .replay-session-item strong, .replay-session-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .replay-session-item strong { font-size: 12px; }
 .replay-session-item small { max-width: 104px; color: var(--c-text-muted); font-size: 10px; }
+/* 会话地址行：复用 OverflowTip（.cell-ellipsis）承载溢出 tooltip，宽度与左侧原文案一致 */
+.session-item-url { max-width: 104px; min-width: 0; color: var(--c-text-muted); font-size: 10px; }
 .replay-session-item > small { align-self: center; }
 /* BUG-009：会话项右侧的链路入口 + 日期 */
 .session-item-side { display: inline-flex; align-items: center; gap: 8px; }
+/* 右侧整块（链路 + 时间）不能被左侧文本的 104px 上限裁掉，否则日期尾部被截断 */
+.replay-session-item small.session-item-side { max-width: none; flex-shrink: 0; white-space: nowrap; overflow: visible; }
 .session-journey-link { color: var(--c-primary); font-size: 11px; text-decoration: none; padding: 2px 6px; border-radius: 4px; }
 .session-journey-link:hover { background: var(--c-primary-soft); }
 .replay-session-pager { justify-content: center; margin-top: 12px; }
