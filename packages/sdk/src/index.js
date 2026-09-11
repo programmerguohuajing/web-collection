@@ -27,6 +27,7 @@ import { ReplayRingBuffer } from './replay/ring-buffer.js'
 import { createReplayCompressor } from './replay/compress.js'
 // SDK-211 · Replay 增强：错误触发升采样 + 分页加载纯函数。
 import { replayShouldKeep, paginate } from './replay/sampler.js'
+import { createReplayAssetInliner } from './replay/inline-assets.js'
 import { setupServiceWorkerMonitor } from './runtime/sw.js'
 import { imageReport } from './core/report.js'
 import { SDK_VERSION, eventCategory, eventSource, sanitizeEvent } from './core/event.js'
@@ -219,6 +220,14 @@ export function createEys(options = {}) {
     replay: true,
     replaySegmentByRoute: true,
     replayMaxDuration: 60000,
+    // replayContinuous：单段达到 replayMaxDuration 后自动开新分段继续录制（默认开启）。
+    // 旧行为（false）在 60s 后停录，只有路由/错误才重新启动，表现为「只录到首屏/路由切换
+    // 瞬间」；持续录制下每段以全量快照开头，回放可完整覆盖整个活跃会话。
+    replayContinuous: true,
+    // replayIdleResetMs：无用户交互超过该时长即结束当前回放会话（轮换 base 会话），
+    // 后续交互重新开启新会话。防止标签页挂机十几个小时把所有分段串成一个超长
+    // 「伪会话」（线上实测 1044 分钟里 883 分钟是纯空白）。
+    replayIdleResetMs: 600000,
     // replayBatchSize 控制回放事件的批量上报数量。
     replayBatchSize: 50,
     // replayOptions 传递 rrweb 等回放模块的附加配置。
@@ -255,6 +264,14 @@ export function createEys(options = {}) {
     // 完整 Canvas 保真度需在 replayOptions.plugins 中提供 @rrweb/rrweb-plugin-canvas 实例。
     replayCanvas: false,
     replayIframe: false,
+    // replayInlineAssets：回放资源内联（默认关闭）。开启后在快照/增量入报前，把同源
+    // <img src> 与样式 _cssText 中的 url(...) 转成 data URI，使回放不依赖被录站点
+    // 资源可连性（内网 / http 源在 HTTPS 回放端必挂，浏览器安全模型下无法兑底）。
+    // 体积代价：见 maxBytes / budget 两个护栏。
+    replayInlineAssets: false,
+    // 单资源内联上限（超过则保留原 URL）与单会话累计预算（超过后本次页面加载不再内联）。
+    replayInlineAssetsMaxBytes: 1048576,
+    replayInlineAssetsBudget: 8388608,
     whiteScreenSelector: '#app > *',
     whiteScreenTimeout: 5000,
     enabled: true,
@@ -607,11 +624,17 @@ export function createEys(options = {}) {
   // 初始化阶段按 SDK 选项装配（远程配置后续可能再次调用 setupOtlpPipeline 覆盖）。
   setupOtlpPipeline(cfg.otlp)
 
-  /** 回放分段：基础会话 ID 不变，发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
-   *  每种 sessionId 对应一条独立的回放记录，不再互相叠加。 */
-  const replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  /** 回放分段：发生错误/路由切换时生成新 currentReplaySessionId（如 xxx_seg2），
+   *  每种 sessionId 对应一条独立的回放记录，不再互相叠加。
+   *  baseSessionKey 是上报时的 baseSessionId（后端按它合并整个回放会话）：
+   *  闲置超过 replayIdleResetMs 时轮换为 `{sessionId}_r{n}`，防止标签页常开把
+   *  挂机空洞也串进同一会话（线上实测 1044 分钟会话中 883 分钟为纯空白）。 */
+  let replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
   let currentReplaySessionId = replayBaseSessionId
   let replaySegIndex = 1
+  /** 当前上报 base 会话键：初始与全局事件会话一致（保持漏斗→回放关联），闲置后轮换。 */
+  let replaySessionGroupKey = sessionId
+  let replayGroupSeq = 0
   /** 当前正在录制的分段结束原因，在最后一次强制 flush 时随事件一同上报。
    *  null 表示尚未触发结束（正常录制中），结束后重置。 */
   let currentSegmentEndReason = null
@@ -620,6 +643,14 @@ export function createEys(options = {}) {
   let disposed = false
   let replayStopTimer = 0
   let replayStartTimer = 0
+  let replayIdleTimer = 0
+  /** 闲置会话切分状态：lastUserActivityAt 记录最近交互；replayIdleEnded 表示当前
+   *  处于「闲置已断会话、等待交互重新录制」状态。 */
+  let lastUserActivityAt = Date.now()
+  let replayIdleEnded = false
+  let stopReplayActivity = () => {}
+  /** 回放资源内联器（replayInlineAssets 开启时创建；采集同源图片/字体转 dataURI）。 */
+  let replayInliner = null
   let whiteScreenTimer = 0
   /** SDK-211 · 错误触发升采样状态：错误后进入全采样窗口，窗口结束后恢复常态采样率与窗口。 */
   let errorBoosted = false
@@ -919,7 +950,19 @@ export function createEys(options = {}) {
       document.removeEventListener('visibilitychange', onVisibility)
     }
     // 12) 回放录制（replay 同意被拒绝时不录制，尊重 GPC/DNT）
-    if (cfg.replay && consentMap.replay) safe('replay', () => startReplay())
+    if (cfg.replay && consentMap.replay) safe('replay', () => {
+      startReplay()
+      // 闲置会话切分：监听用户交互刷新活跃时间，闲置超时断会话，交互恢复后重新录制。
+      // 默认 10 分钟（replayIdleResetMs）；置 0 关闭（恢复旧行为：标签页常开串成一个会话）。
+      if (cfg.replayIdleResetMs > 0) setupReplayIdleWatch()
+      // 回放资源内联（默认关闭）：同源图片/字体转 dataURI，回放不再依赖被录站点可达。
+      if (cfg.replayInlineAssets) {
+        replayInliner = createReplayAssetInliner({
+          maxBytes: cfg.replayInlineAssetsMaxBytes,
+          budget: cfg.replayInlineAssetsBudget
+        })
+      }
+    })
     // 13) 可选监控模块（按需开启）
     if (cfg.keyboardTracking) stopKeyboard = safe('keyboard', () => setupKeyboardMonitor({ push, keys: cfg.keyboardTrackingKeys }))
     if (cfg.touchTracking) stopTouch = safe('touch', () => setupTouchMonitor({ push }))
@@ -1353,22 +1396,77 @@ export function createEys(options = {}) {
 
   /**
    * 结束当前回放分段。
-   * 设定结束原因 → 刷新当前缓冲区（附带原因） → 拍全量快照 → 生成新 sessionId → 清空缓存。
+   * 设定结束原因 → 刷新当前缓冲区（附带原因与分段上下文） → 生成新 sessionId。
    * 新 sessionId 使后续事件写入独立的回放记录，与上一段完全分开。
-   * @param {'error'|'route'|'max_duration'|'page_unload'} reason - 结束原因
+   * max_duration 在 replayContinuous（默认）下同样自动重启新分段，实现全时段录制；
+   * idle（闲置切分）不重启——由交互恢复监听负责重新开启（新 base 会话）。
+   * @param {'error'|'route'|'max_duration'|'page_unload'|'idle'} reason - 结束原因
    */
   function endReplaySegment(reason) {
     if (!cfg.replay) return
     clearTimeout(replayStartTimer)
     stopCurrentReplay()
-    currentSegmentEndReason = reason
-    // flushReplay 已改为异步（含压缩），此处 fire-and-forget：错误/路由切换时确保留存窗口随分段上报。
-    flushReplay(true)
+    // 显式快照本段上下文再异步 flush：旧实现 fire-and-forget 的 flushReplay 内部在
+    // await 压缩之后才读 currentReplaySessionId / currentSegmentEndReason，而本函数
+    // 同步推进了两者——上一段事件几乎必被归到新分段名下，且 endReason 被置 null 后
+    // 永不落库（线上 replays.end_reason 全空即此故）。
+    const segmentCtx = { segmentId: currentReplaySessionId, endReason: reason, baseId: replaySessionGroupKey }
+    flushReplay(true, segmentCtx)
     replaySegIndex++
     currentReplaySessionId = `${replayBaseSessionId}_seg${replaySegIndex}`
-    currentSegmentEndReason = null
-    if (reason !== 'max_duration' && reason !== 'page_unload') {
+    if (reason !== 'page_unload' && reason !== 'idle' && (reason !== 'max_duration' || cfg.replayContinuous)) {
       replayStartTimer = setTimeout(() => { startReplay() }, 120)
+    }
+  }
+
+  /**
+   * 闲置会话切分：无交互超过 replayIdleResetMs 时结束当前回放会话并轮换 base 会话键，
+   * 防止标签页常开把挂机空洞串进同一会话（表现为回放时长虚高达十几小时、大片空白）。
+   * 交互恢复后由活动监听器重新开启录制（新 base 会话的 seg1）。
+   */
+  function rotateReplayBase(reason) {
+    replayGroupSeq++
+    // 轮换上报 base 键（后端按它合并会话）；保留全局事件会话 ID 前缀，
+    // 总览/漏斗页「会话 → 回放」深链用 sessionId 检索时后端以前缀匹配兼容。
+    replaySessionGroupKey = `${sessionId}_r${replayGroupSeq}`
+    replayBaseSessionId = `${sessionId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+    replaySegIndex = 1
+    currentReplaySessionId = replayBaseSessionId
+    if (reason) diagnostic.emit('replay_session_rotated', { reason, groupSeq: replayGroupSeq })
+  }
+
+  /**
+   * 安装闲置切分监听：交互事件刷新活跃时间；闲置检查每 30s 一次（远小于阈值，
+   * 足够及时且几乎零开销）。交互恢复且当前未录制时重新开始录制（新会话）。
+   */
+  function setupReplayIdleWatch() {
+    const onActivity = () => {
+      lastUserActivityAt = Date.now()
+      if (replayIdleEnded && !stopReplay && !disposed) {
+        replayIdleEnded = false
+        replayStartTimer = setTimeout(() => { startReplay() }, 120)
+      }
+    }
+    const opts = { passive: true, capture: true }
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+      document.addEventListener(type, onActivity, opts)
+    }
+    replayIdleTimer = setInterval(() => {
+      if (disposed || !cfg.replay) return
+      if (stopReplay && Date.now() - lastUserActivityAt > cfg.replayIdleResetMs) {
+        // 结束并轮换：endReplaySegment('idle') 不重启，随后换新 base 供交互恢复后使用。
+        endReplaySegment('idle')
+        rotateReplayBase('idle')
+        replayIdleEnded = true
+      }
+    }, 30000)
+    stopReplayActivity = () => {
+      clearInterval(replayIdleTimer)
+      replayIdleTimer = 0
+      for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+        document.removeEventListener(type, onActivity, opts)
+      }
+      stopReplayActivity = () => {}
     }
   }
 
@@ -1447,18 +1545,28 @@ export function createEys(options = {}) {
   }
 
   /**
-   * 将环形缓冲中的回放事件推入上报队列，使用当前分段专属 sessionId。
+   * 将环形缓冲中的回放事件推入上报队列，使用分段专属 sessionId。
    * 强制 flush（错误/分段结束/页面卸载）时取出**全部留存**（错误前 30 秒），非强制时按批次增量。
    * SDK-211 · 分页加载：按 replayPageSize（强制）/replayBatchSize（增量）拆分为多页，
    * 每页一条独立 replay 记录并附带 page/pageCount，回放侧可渐进加载。
    * 开启 replayCompression 时逐页 gzip（Worker / 主线程），随 compression 标记上报；失败时回退原样。
+   * 开启 replayInlineAssets 时在压缩前把同源图片/字体转 dataURI（内联失败不影响上报）。
    * @param {boolean} [force=false]
+   * @param {{segmentId?: string, endReason?: string|null, baseId?: string}} [segmentCtx]
+   *        分段上下文：分段结束时由 endReplaySegment 显式快照传入，规避异步竞态
+   *        （flush 期间分段已被推进，导致事件归错段 / endReason 丢失）。
    */
-  async function flushReplay(force = false) {
+  async function flushReplay(force = false, segmentCtx = null) {
     if (!replayRing.size) return
     const pageSize = force ? cfg.replayPageSize : cfg.replayBatchSize
     const events = force ? replayRing.drain() : replayRing.take(pageSize)
     if (!events.length) return
+    if (replayInliner) {
+      try { await replayInliner.inline(events) } catch { /* 内联失败不阻断上报 */ }
+    }
+    const segId = segmentCtx?.segmentId ?? currentReplaySessionId
+    const segBaseId = segmentCtx?.baseId ?? replaySessionGroupKey
+    const segEndReason = segmentCtx?.endReason ?? currentSegmentEndReason
     const pages = paginate(events, pageSize)
     const now = Date.now()
     let compressedPages = 0
@@ -1482,16 +1590,17 @@ export function createEys(options = {}) {
       }
       const item = withBase({ type: 'replay' })
       // 回放事件使用分段 sessionId（而非全局 sessionId），每个分段独立成一条记录。
-      item.sessionId = currentReplaySessionId
-      // 显式携带全局事件会话 UUID，供后端「漏斗流失会话 → 回放」精确关联（不再依赖分段 sessionId 字符串前缀）。
-      item.baseSessionId = sessionId
+      item.sessionId = segId
+      // 显式携带回放会话键（base）：初始与全局事件会话一致（漏斗→回放关联），
+      // 闲置切分后轮换为 `{sessionId}_r{n}`，防止挂机串会话。分段上下文优先（竞态安全）。
+      item.baseSessionId = segBaseId
       item.events = payload
       item.compression = compression
       // SDK-211 · 分页加载元数据：当前页序号与总页数（从 1 计数）。
       item.page = i + 1
       item.pageCount = pages.length
-      if (force && i === pages.length - 1 && currentSegmentEndReason) {
-        item.segmentEndReason = currentSegmentEndReason
+      if (force && i === pages.length - 1 && segEndReason) {
+        item.segmentEndReason = segEndReason
       }
       sender.enqueue(item)
     }
@@ -1519,6 +1628,8 @@ export function createEys(options = {}) {
     clearInterval(timer)
     if (diagnosticTimer) clearInterval(diagnosticTimer)
     if (monitoringTimer) clearInterval(monitoringTimer)
+    clearInterval(replayIdleTimer)
+    stopReplayActivity()
     clearTimeout(replayStartTimer)
     clearTimeout(throttleTimer)
     throttleTimer = null

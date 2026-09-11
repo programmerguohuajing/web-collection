@@ -932,6 +932,13 @@ function sanitize(event) {
   if (!['track', 'perf', 'performance', 'behavior', 'error', 'replay', 'log', 'trace'].includes(rawType)) throw new Error('bad event type')
   const type = rawType === 'performance' ? 'perf' : rawType
   if (type === 'replay') {
+    // SDK 默认 gzip 压缩上报：events 是 base64 字符串（而非数组），且携带 compression 标记。
+    // 此前白名单只接受数组并把 compression 字段丢弃，导致解压入口拿不到标记 → 静默存空、
+    // 不报错（列表/详情均无数据）。此处兼容两种形态并保留标记。
+    const rawEvents = event.events
+    const events = Array.isArray(rawEvents)
+      ? rawEvents.slice(0, 200)
+      : typeof rawEvents === 'string' && rawEvents ? rawEvents.slice(0, 8_000_000) : []
     return {
       type,
       appId: clip(event.appId || 'default', 64),
@@ -943,7 +950,8 @@ function sanitize(event) {
       baseSessionId: clip(event.baseSessionId || '', 128) || null,
       url: cleanUrl(event.url || ''),
       ts: Number.isFinite(Number(event.ts)) ? Number(event.ts) : Date.now(),
-      events: Array.isArray(event.events) ? event.events.slice(0, 200) : [],
+      events,
+      compression: event.compression === 'gzip' || event.compression === 'none' ? event.compression : undefined,
       segmentEndReason: typeof event.segmentEndReason === 'string' ? clip(event.segmentEndReason, 32) : undefined
     }
   }

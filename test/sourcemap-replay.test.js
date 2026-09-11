@@ -25,7 +25,10 @@ test('sourcemap resolves errors and replay events are stored by session', async 
 
   const issue = (await store.getSummary({ appId })).issues[0]
   assert.equal(issue.original.source, 'src/App.vue')
-  assert.deepEqual((await store.getReplay(sessionId)).map(event => event.type), [4, 2])
+  // getReplay 返回截断信封 {events, truncated, ...}（对齐 Worker 端 30 分钟跨度上限契约）
+  const replay = await store.getReplay(sessionId)
+  assert.deepEqual(replay.events.map(event => event.type), [4, 2])
+  assert.equal(replay.truncated, false)
   assert.equal((await store.listReplaysPage({ appId })).items[0].sessionId, sessionId)
   assert.equal((await store.listReplaysPage({ appId: `${appId}-other` })).total, 0)
 
