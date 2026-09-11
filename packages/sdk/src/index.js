@@ -246,6 +246,12 @@ export function createEys(options = {}) {
     // 超出窗口或容量的旧事件被淘汰，保证错误前 30 秒可恢复且内存有界。
     replayBufferSize: 1500,
     replayWindowMs: 30000,
+    // 采集熔断（collect circuit breaker）：连续 collectBreakerThreshold 批发送全部失败
+    //（5xx/超时/网络错误）后打开熔断，停止主动采集与发送——服务端长故障（如 D1 rows_read
+    // 日超限）期间避免重试风暴打爆采集端控制台；冷却 collectBreakerCooldownMs 后放行一批
+    // 探测，成功即自动恢复。页面卸载 Beacon 逃生通道不受限制。置 0 关闭熔断。
+    collectBreakerThreshold: 5,
+    collectBreakerCooldownMs: 300000,
     // SDK-211 · Replay 增强：
     // replayPageSize：强制刷新（错误/分段结束/页面卸载）时单页回放事件上限，超出拆多页 → 分页加载。
     replayPageSize: 50,
@@ -479,6 +485,8 @@ export function createEys(options = {}) {
     maxQueue: cfg.maxQueue,
     maxRetries: cfg.maxRetries,
     maxBatch: cfg.batchSize,
+    breakerThreshold: cfg.collectBreakerThreshold > 0 ? cfg.collectBreakerThreshold : Infinity,
+    breakerCooldownMs: cfg.collectBreakerCooldownMs,
     collectKey: cfg.collectKey,
     diagnostic,
     // 捕获锁引用，destroy 时必须 close() 释放底层 BroadcastChannel（及其 MessagePort），

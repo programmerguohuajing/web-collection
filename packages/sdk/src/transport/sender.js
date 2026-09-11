@@ -40,6 +40,10 @@ export class ReliableSender {
    * @param {() => boolean} [opts.online]
    * @param {number} [opts.backoffBase=500] - 退避基数（ms），便于测试注入
    * @param {number} [opts.backoffMax=30000] - 退避上限（ms），便于测试注入
+   * @param {number} [opts.breakerThreshold=5] - 熔断阈值：连续失败批次数达到后打开熔断，
+   *   停止主动采集与发送（避免服务端故障期间的重试风暴打爆采集端控制台）
+   * @param {number} [opts.breakerCooldownMs=300000] - 熔断冷却时长（ms），到期后放行一批探测，
+   *   成功即恢复（半开→闭合）；页面卸载 Beacon 逃生通道不受熔断限制
    */
   constructor(opts = {}) {
     this.cold = opts.cold || null
@@ -56,10 +60,44 @@ export class ReliableSender {
     this.online = opts.online || (() => (typeof navigator !== 'undefined' ? navigator.onLine !== false : true))
     this.backoffBase = opts.backoffBase != null ? opts.backoffBase : 500
     this.backoffMax = opts.backoffMax != null ? opts.backoffMax : 30000
+    // 发送熔断（circuit breaker）：连续失败 breakerThreshold 批 → 打开熔断，冷却
+    // breakerCooldownMs 后半开探测。服务端长故障（如 D1 rows_read 日超限）期间，
+    // 指数退避上限仅 30s，重试风暴会让采集端控制台满屏 5xx——熔断后直接静默停采。
+    this.breakerThreshold = opts.breakerThreshold != null ? opts.breakerThreshold : 5
+    this.breakerCooldownMs = opts.breakerCooldownMs != null ? opts.breakerCooldownMs : 300000
+    this._fails = 0
+    this._breakerUntil = 0
     this.items = []
     this.flushing = false
     this._retryTimer = null
     this.ready = this._load()
+  }
+
+  /** 熔断是否处于打开状态（冷却未到）。 */
+  _breakerOpen() {
+    return Date.now() < this._breakerUntil
+  }
+
+  /** 批次结果反馈给熔断器：成功复位；整批失败计数，达阈值打开熔断。
+   *  半开探测失败 → _breakerUntil 为过去时刻、_breakerOpen() 为 false → 重新进入
+   *  冷却期（重新打开）；探测成功 → 复位闭合。 */
+  _breakerRecord(sent, failed) {
+    if (sent > 0) {
+      if (this._breakerUntil) this.diagnostic.emit('circuit_recovered', { failedBatches: this._fails })
+      this._fails = 0
+      this._breakerUntil = 0
+      return
+    }
+    if (!failed) return
+    this._fails++
+    if (this._fails >= this.breakerThreshold && !this._breakerOpen()) {
+      this._breakerUntil = Date.now() + this.breakerCooldownMs
+      this.diagnostic.emit('circuit_open', {
+        failedBatches: this._fails,
+        cooldownMs: this.breakerCooldownMs,
+        queued: this.items.length
+      })
+    }
   }
 
   /** 启动时从持久化冷队列恢复未发送事件。 */
@@ -99,6 +137,12 @@ export class ReliableSender {
   /** 入队一个事件，自动补全稳定 eventId 与信封字段（Phase 0 · P0-5）。 */
   enqueue(value) {
     if (!value || typeof value !== 'object') return
+    // 熔断打开：不再主动采集。新事件直接丢弃（服务端长故障期间堆队列无意义，
+    // 冷却期后会半开探测，恢复后新事件正常入库）。
+    if (this._breakerOpen()) {
+      this.diagnostic.emit('circuit_open', { dropped: 1, queued: this.items.length })
+      return
+    }
     if (!value.eventId) value.eventId = createEventId()
     // 信封版本 + 发生时间：与采集端契约对齐，便于服务端 received_at 计算上报延迟。
     if (!value.schemaVersion) value.schemaVersion = EVENT_ENVELOPE_VERSION
@@ -140,6 +184,13 @@ export class ReliableSender {
   async sendBatchOnline(force = false) {
     await this.ready
     if (!this.items.length) return { sent: 0, dropped: 0, retried: 0 }
+    // 熔断打开：冷却未到不发网络（静默跳过，不产生新请求）；冷却到期 → 半开，放行
+    // 一批探测（正常发送路径，成功即复位闭合；失败重新进入冷却）。
+    if (this._breakerOpen()) return { skipped: true, breaker: 'open', sent: 0, dropped: 0, retried: 0 }
+    if (this._breakerUntil && this.items.length) {
+      // 曾开过且已到期：半开探测（不清零 _breakerUntil，交由 _breakerRecord 判定结果）
+      this.diagnostic.emit('circuit_half_open', { queued: this.items.length })
+    }
     // 同步置位 flushing（在首个 await 之前），保证并发调用只进入一个活跃发送者。
     if (this.flushing) return { skipped: true, sent: 0, dropped: 0, retried: 0 }
     this.flushing = true
@@ -227,6 +278,8 @@ export class ReliableSender {
 
       if (sent) this.diagnostic.emit('flush_success', { sent })
       if (dropped) this.diagnostic.emit('flush_failed', { dropped })
+      // 熔断器反馈：整批无成功且有失败/重试 → 连续失败 +1；成功复位（含半开探测恢复）。
+      this._breakerRecord(sent, dropped + retried)
 
       // 仍有可重试事件 → 安排指数退避重试（不阻塞当前调用）。
       if (retried && this.items.length) {

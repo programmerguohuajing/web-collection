@@ -355,9 +355,17 @@ async function collect(request, env, ctx) {
   const inputs = payload.type === 'replay' ? [payload] : Array.isArray(payload.events) ? payload.events : Array.isArray(payload) ? payload : [payload]
   const appId = clip(inputs[0]?.appId || 'default', 64)
   if (inputs.some(item => clip(item?.appId || 'default', 64) !== appId)) return new Response('mixed app ids', { status: 400 })
-  const app = await env.DB.prepare('select enabled, sample_rate, replay_sample_rate, collect_key_hash, rules_json, team_id from applications where app_id=?').bind(appId).first()
-  if (app?.collect_key_hash && await sha256(request.headers.get('x-app-key') || '') !== app.collect_key_hash) return new Response('bad app key', { status: 401 })
   const events = inputs.slice(0, 100).map(sanitize)
+  // 采集红线（PRD R0）：采集端永远不因平台侧故障收到 5xx。应用配置查询失败（D1 rows_read
+  // 打满 / 临时不可用）时 fail-open 降级：跳过采样配置与 collect_key 校验，仍返回 200——
+  // 落库失败由 waitUntil 内部的 ingestionMonitor 计数 + 自动告警暴露，采集端零感知。
+  // 权衡：故障窗口内鉴权旁路可被注入伪造数据（sanitize 字段裁剪仍生效）；
+  // 相比「D1 配额日超限导致采集端 500 风暴 + 全天数据丢失」，遥测场景取数据不丢。
+  const app = await env.DB.prepare('select enabled, sample_rate, replay_sample_rate, collect_key_hash, rules_json, team_id from applications where app_id=?').bind(appId).first().catch(err => {
+    console.error('[collect] applications lookup failed (fail-open):', err?.message || err)
+    return null
+  })
+  if (app?.collect_key_hash && await sha256(request.headers.get('x-app-key') || '') !== app.collect_key_hash) return new Response('bad app key', { status: 401 })
   ingestionMonitor.tick()
   ingestionMonitor.received++
   ingestionMonitor.eventsAccepted += events.length
