@@ -11,7 +11,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getReplay, getSummary, initDatabase, listEvents, listEventsPage, listIssues, listIssuesPage, listReplays, listReplaysPage, recordEvents, resolveIssue, saveSourceMap } from './store.js'
-import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rotateCollectKey, saveApplication, saveRelease, saveSettings, updateAlertStatus } from './governance.js'
+import { authorizeCollect, cleanupExpiredData, deleteApplication, deleteRelease, getSettings, listAlerts, listApplications, listReleases, rollupMetricDailyStats, rotateCollectKey, saveApplication, saveRelease, saveSettings, updateAlertStatus } from './governance.js'
 import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertDeliveries, retryAlertDelivery, retryPendingDeliveries, saveAlertChannel, testAlertChannel } from './alerting.js'
 import { deleteDashboard, deleteFunnel, deleteInsight, getApiHealth, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, getSharedDashboard, shareDashboard, unshareDashboard, SPANS_HARD_LIMIT } from './services/analytics-service.js'
 import { getJourneyTimeline, searchJourneySessions } from './services/journey-service.js'
@@ -881,7 +881,11 @@ startSyntheticScheduler()
 app.listen(port, () => {
   console.log(`Web Collection listening on http://127.0.0.1:${port}`)
 })
-const cleanupTimer = setInterval(() => cleanupExpiredData().catch(error => console.error('data cleanup failed', error)), Number(process.env.CLEANUP_INTERVAL_MS || 3600000))
+const cleanupTimer = setInterval(() => {
+  cleanupExpiredData().catch(error => console.error('data cleanup failed', error))
+  // ① 基线日表 EOD 回填（幂等，无缺口时零成本；详见 governance.js rollupMetricDailyStats）
+  rollupMetricDailyStats().catch(error => console.error('metric daily rollup failed', error))
+}, Number(process.env.CLEANUP_INTERVAL_MS || 3600000))
 cleanupTimer.unref()
 const alertRetryTimer = setInterval(() => retryPendingDeliveries().catch(error => console.error('alert retry failed', error)), 60000)
 alertRetryTimer.unref()

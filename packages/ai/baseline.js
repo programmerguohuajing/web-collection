@@ -154,6 +154,76 @@ export async function getDailyMetricAggregates(db, { appId, metric, fromTs, toTs
   })
 }
 
+// ---------------- EOD 预聚合 writer（PRD 15 P2-4 / 迁移 0022 注释的 P1 待办） ----------------
+
+/** yyyyMMdd → [当日 UTC 00:00 的 epoch ms, 次日 UTC 00:00)。非法日返回 null。 */
+function dayBoundsUtc(day) {
+  const d = Number(day)
+  if (!Number.isInteger(d) || d < 19700101 || d > 99991231) return null
+  const y = Math.floor(d / 10000), m = Math.floor((d % 10000) / 100), dt = d % 100
+  if (m < 1 || m > 12 || dt < 1 || dt > 31) return null
+  const start = Date.UTC(y, m - 1, dt)
+  return Number.isFinite(start) ? [start, start + 86400000] : null
+}
+
+/**
+ * 把 events 按 UTC 日聚合为 errorRate / perfAvg / volume 写入 metric_daily_stats（权威源）。
+ *
+ * - 口径与 getDailyMetricAggregates 完全一致：errorRate=错误/总；perfAvg=perf 均值（无 perf 样本跳过）；
+ *   volume=非错误计数；samples=当日事件总数。
+ * - 同时写 per-app 行与 app_id='global' 哨兵行（对齐 getMetricDailyStats 的 appId||'global'）。
+ * - 幂等：on conflict 覆盖重算——同日重复执行、补数、重放结果一致（以 retention 清理前的 events 为准）。
+ * - 双栈：D1 / PG 适配器均可执行（标准聚合 + coalesce + upsert，无 SQLite 方言）。
+ *
+ * @param {object} db db-adapter 统一接口
+ * @param {{days?: number[]}} opts 需要写入的日列表（yyyyMMdd）
+ * @returns {Promise<{written:number, days:number[]}>} 写入行数（含覆盖）与处理日列表
+ */
+export async function writeMetricDailyStats(db, { days } = {}) {
+  const list = (Array.isArray(days) ? days : []).map(Number).filter(d => dayBoundsUtc(d))
+  if (!list.length) return { written: 0, days: [] }
+  let written = 0
+  for (const day of list) {
+    const [startTs, endTs] = dayBoundsUtc(day)
+    // 6 条 upsert：3 指标 × (per-app / global)。select 均带 where，避免 INSERT..SELECT..ON CONFLICT 的 JOIN 歧义。
+    const stmts = [
+      // per-app：按应用分组的当日口径
+      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
+      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? group by app_id having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
+      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
+      // global：全站汇总（注意 errorRate 必须总错误/总事件，而非 per-app 比率的平均）
+      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
+      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
+      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]]
+    ]
+    for (const [sql, params] of stmts) {
+      const r = await db.prepare(sql).bind(...params).run().catch(err => { throw new Error(`writeMetricDailyStats day=${day} failed: ${err?.message || err}`) })
+      written += Number(r?.changes || 0)
+    }
+  }
+  return { written, days: list }
+}
+
+/**
+ * 找出 [fromDay, toDay]（闭区间，yyyyMMdd）内 metric_daily_stats 完全缺失的日。
+ * 用于 cron 增量回填：只补缺口，不重复计算已有日。
+ * 注意：日级判定（某日只有 global 行而无新应用行时不补——该应用检测器自动降级 events，语义可接受）。
+ */
+export async function missingMetricDailyDays(db, { fromDay, toDay }) {
+  const rows = await db.prepare('select distinct day from metric_daily_stats where day>=? and day<=?').bind(fromDay, toDay).all().catch(() => [])
+  const present = new Set((rows || []).map(r => Number(r.day)))
+  const missing = []
+  let [y, m, d] = [Math.floor(fromDay / 10000), Math.floor((fromDay % 10000) / 100), fromDay % 100]
+  let cursor = Date.UTC(y, m - 1, d)
+  const end = dayBoundsUtc(toDay)?.[0]
+  while (Number.isFinite(cursor) && end != null && cursor <= end) {
+    const day = yyyymmdd(cursor)
+    if (!present.has(day)) missing.push(day)
+    cursor += 86400000
+  }
+  return missing
+}
+
 /**
  * 实测值（最近 sinceHours 窗口），按 metric 口径聚合。
  * @returns {number|null} errorRate=比率; perfAvg=均值; volume=计数; 无样本返回 null

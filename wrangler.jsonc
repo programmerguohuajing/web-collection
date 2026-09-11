@@ -22,6 +22,6 @@
       "migrations_dir": "cloudflare/migrations"
     }
   ],
-  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "17 3 * * *"] },
+  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "17 3 * * *", "0 * * * *"] },
   "observability": { "enabled": true }
 }
