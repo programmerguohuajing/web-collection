@@ -129,12 +129,16 @@ async function ingestionMonitorSnapshot(env) {
 // alert_history count 无索引全表扫 1733 行，单端点日耗 156 万行读——2026-09-10 D1 配额事故主因）。
 // 现 ① 0038 迁移补 (metric, app_id, created_at) 索引；② 按 appId 做 30s 结果缓存（对齐
 // dbIngestionHealth 既有模式）：诊断数据秒级新鲜度足够，重复查询直接命中内存。
+// 性能：SDK 健康页每 30s 轮询本端点（实测 902-1246 次/天）。2026-09-11 复盘：30s 缓存
+// 与 30s 轮询是「踩 TTL 边缘」的最坏组合——几乎每次轮询都刚好过期必 miss，缓存形同虚设
+// （当日 1246+1312 次查询合计 198 万行读）。诊断数据（末次事件时间 / 1h 计数 / 错误数）
+// 5 分钟新鲜度完全够用，TTL 拉长至 300s，行读降为原来的 1/10。
 const _diagCache = new Map() // appId -> { at, payload }
 async function diagnostics(request, env, url) {
   const appId = clip(url.searchParams.get('appId') || 'default', 64)
   const now = Date.now()
   const cached = _diagCache.get(appId)
-  if (cached && now - cached.at < 30000) {
+  if (cached && now - cached.at < 300000) {
     return json({ ...cached.payload, stalledMs: cached.payload.lastEventTs != null ? now - cached.payload.lastEventTs : null, cached: true })
   }
   const [last, cnt, errs] = await Promise.all([
@@ -1205,12 +1209,16 @@ async function summaryStitchedAggregates(env, plan) {
 
 // 性能缓存：summary 是控制台各页首屏聚合（insights 实测 105 次/天，P75 窗口函数 +
 // group by 每次读 1.2 万+ 行，日耗约 223 万行读——D1 配额事故第二大项）。
-// 同筛选条件 30s 内复用上次结果：遥看板秒级新鲜度足够，与前端 30s 轮询节奏对齐。
+// 同筛选条件 60s 内复用上次结果：前端 30s 轮询下约半数命中（30s TTL 与 30s 轮询踩边
+// 缘必 miss，缓存形同虚设——2026-09-11 复盘修正）；遥看板分钟级新鲜度足够。
 const _summaryCache = new Map() // searchKey -> { at, text }
+// P75 分位数独立缓存（searchKey -> { at, rows }）：TTL 5 分钟，比 summary 整体缓存更长。
+const _summaryP75Cache = new Map()
+function summaryP75Cache() { return _summaryP75Cache }
 async function summary(env,url){
   const cacheKey = url.search
   const hit = _summaryCache.get(cacheKey)
-  if (hit && Date.now() - hit.at < 30000) return new Response(hit.text, { headers: { 'content-type': 'application/json; charset=utf-8', 'x-summary-cache': 'hit' } })
+  if (hit && Date.now() - hit.at < 60000) return new Response(hit.text, { headers: { 'content-type': 'application/json; charset=utf-8', 'x-summary-cache': 'hit' } })
   const {where,values}=filters(url),perfFilter=filters(url,'perf'),issueFilter=issueFilters(url),apdexFilter=filters(url,'perf',["metric='lcp'"])
   // P0-6 性能预算优化：原实现拉取 5000 条全列事件 + 50000 条 perf 事件到应用层聚合，
   // 现将 byType/behavior/事件总数/perf 计数与均值下推为 SQL GROUP BY，p75 用窗口函数
@@ -1221,12 +1229,26 @@ async function summary(env,url){
   // 统一兜底为空数组/null，避免 for...of 抛 "X is not iterable" 把整个接口打 500。
   const all=(s)=>s.all().catch(()=>({results:[]})).then(r=>(r&&r.results)||[])
   const one=(s)=>s.first().catch(()=>null)
-  // ② 预聚合缝合：仅 appId+时间 且窗口 ≤7d 且小时表全覆盖时，byType/behavior/perfStats
+  // 预聚合缝合：仅 appId+时间 且窗口 ≤7d 且小时表全覆盖时，byType/behavior/perfStats
   // 改读 events_hourly_stats（体积约为 events 同窗的 1/50）+ 两端 <1h 直扫，免三次全窗扫描。
   const stitchPlan = await hourlyStitchPlan(env, url)
+  // P75 独立缓存：窗口函数是 summary 最贵的子查询（窗口内全行编号，7 天窗单次 1.2 万行、
+  // 90 天窗 9.7 万行；2026-09-11 实测三变体合计 340 万行读/天，配额事故最大单项）。
+  // ① 窗口 >30 天跳过精确 P75（返回空 → 前端该项不展示；大窗口分位数对排障价值低）；
+  // ② ≤30 天结果独立缓存 5 分钟（分位数变化极慢，可比 summary 整体 60s 缓存更长）。
+  const _p75Cache = summaryP75Cache()
+  const p75WindowSkip = (() => { const p = url.searchParams, n = Date.now(); const f = Number(p.get('startTime')) || n - 90 * 86400000, t = Number(p.get('endTime')) || n; return t - f > 30 * 86400000 })()
   const [eventStats,p75Rows,apiRows,issueResult,issueStats,browserRows, directAgg, apdexRow] = await Promise.all([
     one(env.DB.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values)),
-    all(env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values)),
+    (async () => {
+      if (p75WindowSkip) return []
+      const hit = _p75Cache.get(cacheKey)
+      if (hit && Date.now() - hit.at < 300000) return hit.rows
+      const rows = await all(env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values))
+      if (_p75Cache.size > 32) _p75Cache.clear()
+      _p75Cache.set(cacheKey, { at: Date.now(), rows })
+      return rows
+    })(),
     all(env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 1000`).bind(...perfFilter.values)),
     all(env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values)),
     one(env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values)),
