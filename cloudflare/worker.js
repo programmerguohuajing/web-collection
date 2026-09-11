@@ -310,7 +310,16 @@ export default {
       else if (url.pathname.startsWith('/api/')) response = await adminApi(request, env, url)
       else if (url.pathname.startsWith('/embed/')) response = await embedShell(request, env)
       else if (url.pathname.startsWith('/sdk/')) response = await env.ASSETS.fetch(new Request(new URL(url.pathname, request.url), request))
-      else response = await env.ASSETS.fetch(request)
+      else {
+        const res = await env.ASSETS.fetch(request)
+        // CDN 缓存事故根治：入口 HTML（SPA 路由）必须 no-store。此前仅靠 _headers 的 no-cache，
+        // 而 Cloudflare 的 Cache Everything 类规则会无视 no-cache 缓存 HTML（线上实测 HIT），
+        // 导致前端部署后长时间不生效（旧 HTML 持续引用旧 chunk）。no-store 是更强的不可缓存信号；
+        // /assets/* 哈希资源不经 worker（run_worker_first 未包含），仍走 _headers 的 immutable 长缓存。
+        const headers = new Headers(res.headers)
+        headers.set('cache-control', 'no-store')
+        response = new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+      }
       return cors(response, request)
     } catch (error) {
       return cors(new Response(error?.message || 'server error', { status: 500 }), request)
