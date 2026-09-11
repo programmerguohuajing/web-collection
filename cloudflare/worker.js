@@ -185,14 +185,21 @@ async function reportSdkMonitoring(request, env) {
   const sdkVersion = clip(String(body.sdkVersion || ''), 32)
   const health = clip(String(body.health || ''), 16)
   const payload = typeof body.payload === 'object' && body.payload ? JSON.stringify(body.payload).slice(0, 4000) : null
-  await env.DB.prepare(
-    'insert into sdk_monitoring(app_id,sdk_version,session_id,ts,sent,dropped,retried,timeouts,rate_limited,queue_full,storage_quota,health,payload) values(?,?,?,?,?,?,?,?,?,?,?,?,?)'
-  ).bind(
-    appId, sdkVersion || null, sessionId || null, now,
-    num(body.sent), num(body.dropped), num(body.retried), num(body.timeouts),
-    num(body.rateLimited), num(body.queueFull), num(body.storageQuota),
-    health || null, payload
-  ).run().catch(err => { throw err })
+  // 采集红线（对齐 collect fail-open）：自监控快照是 best-effort 数据，写库失败（D1 配额
+  // 超限 / 临时不可用）不得向 SDK 端报 500——SDK 每 5 分钟会再报，丢一拍无妨。
+  // 失败仅 console.error（wrangler tail 可见），始终返回 200。
+  try {
+    await env.DB.prepare(
+      'insert into sdk_monitoring(app_id,sdk_version,session_id,ts,sent,dropped,retried,timeouts,rate_limited,queue_full,storage_quota,health,payload) values(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+    ).bind(
+      appId, sdkVersion || null, sessionId || null, now,
+      num(body.sent), num(body.dropped), num(body.retried), num(body.timeouts),
+      num(body.rateLimited), num(body.queueFull), num(body.storageQuota),
+      health || null, payload
+    ).run()
+  } catch (err) {
+    console.error('[monitoring] sdk snapshot insert failed (fail-open):', err?.message || err)
+  }
   return json({ ok: true, ts: now })
 }
 
@@ -242,11 +249,17 @@ async function reportSdkSize(request, env) {
   const num = v => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : null)
   const version = clip(String(body.version), 32)
   const runtimeMem = typeof body.runtimeMem === 'object' && body.runtimeMem ? JSON.stringify(body.runtimeMem).slice(0, 2000) : null
-  await env.DB.prepare(
-    'insert into sdk_size(version,gz_bytes,raw_bytes,min_bytes,runtime_mem,reported_at,ci_run) values(?,?,?,?,?,?,?)'
-  ).bind(
-    version, num(body.gzBytes), num(body.rawBytes), num(body.minBytes), runtimeMem, Date.now(), clip(String(body.ciRun || ''), 64) || null
-  ).run().catch(err => { throw err })
+  // 同采集红线：体积上报 best-effort，写库失败（D1 配额超限等）不向 CI 报 500，
+  // 仅打日志（发版流程有 continue-on-error，但返回 5xx 会让脚本日志告警误导排障）。
+  try {
+    await env.DB.prepare(
+      'insert into sdk_size(version,gz_bytes,raw_bytes,min_bytes,runtime_mem,reported_at,ci_run) values(?,?,?,?,?,?,?)'
+    ).bind(
+      version, num(body.gzBytes), num(body.rawBytes), num(body.minBytes), runtimeMem, Date.now(), clip(String(body.ciRun || ''), 64) || null
+    ).run()
+  } catch (err) {
+    console.error('[monitoring] sdk size insert failed (fail-open):', err?.message || err)
+  }
   return json({ ok: true })
 }
 
