@@ -28,7 +28,10 @@ export const DIAGNOSTIC_TYPES = Object.freeze([
   'dropped_non_retryable', // 超过最大重试次数或 4xx 契约错误，永久丢弃
   'offline', // 处于离线状态，暂缓发送
   'capability_missing', // 模块需要某平台能力但该适配器未声明支持，已静默跳过（P1-4）
-  'pending_replayed' // 采集就绪前缓冲的事件在 ready 后回放的数量（P2-5 启动排队）
+  'pending_replayed', // 采集就绪前缓冲的事件在 ready 后回放的数量（P2-5 启动排队）
+  'circuit_open', // 发送熔断已打开：连续失败批次达到阈值，停止主动采集与发送
+  'circuit_half_open', // 熔断冷却到期，放行一批探测请求
+  'circuit_recovered' // 探测成功，熔断关闭，恢复正常采集
 ])
 
 /**

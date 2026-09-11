@@ -348,6 +348,133 @@ test('ReliableSender 并发 flush 仅单活跃发送者', async () => {
   assert.ok(a.skipped || b.skipped)
 })
 
+// ---------------------------------------------------------------------------
+// 发送熔断（circuit breaker）：服务端长故障（如 D1 rows_read 打满返回 5xx）期间，
+// 连续失败 N 批后停止主动采集与发送；冷却到期半开探测，成功恢复。
+// ---------------------------------------------------------------------------
+
+test('熔断：连续失败达阈值后打开，enqueue 丢弃、send 静默跳过', async () => {
+  const seen = []
+  let fetchCalls = 0
+  const transport = new FetchTransport({ endpoint: '/api/collect', fetchImpl: async () => { fetchCalls++; return jsonResponse(500) } })
+  const s = new ReliableSender({
+    transport,
+    maxQueue: 50,
+    maxBatch: 10,
+    maxRetries: 1, // 失败两批后丢弃，使熔断打开时队列仍残留事件
+    backoffBase: 1,
+    backoffMax: 1,
+    breakerThreshold: 3,
+    breakerCooldownMs: 300000,
+    diagnostic: createDiagnosticSink((e) => seen.push(e))
+  })
+  s.enqueue({ type: 'track', name: 'a' })
+  await s.sendBatchOnline(false) // 批 1 失败（retry=1 保留）（retry=1 保留）
+  s.enqueue({ type: 'track', name: 'b' })
+  await s.sendBatchOnline(false) // 批 2 失败（a 超限丢弃，b 保留）
+  s.enqueue({ type: 'track', name: 'c' })
+  await s.sendBatchOnline(false) // 批 3 失败（b 丢弃，c 保留）→ 打开熔断，队列仍残留 c
+  assert.ok(seen.some((e) => e.type === 'circuit_open'), '第 3 批失败后应发 circuit_open')
+  assert.ok(s.size() >= 1, '熔断打开时队列中仍有残留事件')
+  const fetchCallsAtOpen = fetchCalls
+  // 熔断打开：新事件直接丢弃（不再堆积），发送调用静默跳过（不打网络）
+  s.enqueue({ type: 'track', name: 'dropped-by-breaker' })
+  assert.ok(seen.some((e) => e.type === 'circuit_open' && e.dropped === 1), '丢弃时应带 dropped 标记')
+  const res = await s.sendBatchOnline(false)
+  assert.equal(res.skipped, true)
+  assert.equal(res.breaker, 'open')
+  assert.equal(fetchCalls, fetchCallsAtOpen, '熔断期间不应产生新网络请求')
+  clearTimeout(s._retryTimer)
+})
+
+test('熔断：冷却到期半开探测，成功后恢复采集', async () => {
+  const seen = []
+  let status = 500
+  const transport = new FetchTransport({ endpoint: '/api/collect', fetchImpl: async () => jsonResponse(status) })
+  const s = new ReliableSender({
+    transport,
+    maxQueue: 50,
+    maxBatch: 10,
+    maxRetries: 0,
+    backoffBase: 1,
+    backoffMax: 1,
+    breakerThreshold: 2,
+    breakerCooldownMs: 60000,
+    diagnostic: createDiagnosticSink((e) => seen.push(e))
+  })
+  s.enqueue({ type: 'track', name: 'a' })
+  await s.sendBatchOnline(false)
+  s.enqueue({ type: 'track', name: 'b' })
+  await s.sendBatchOnline(false) // 两批失败 → 熔断打开
+  assert.ok(s._breakerOpen())
+  // 模拟冷却到期
+  s._breakerUntil = Date.now() - 1
+  status = 200
+  s.enqueue({ type: 'track', name: 'recovered' })
+  assert.equal(s.size(), 1, '冷却到期后 enqueue 不再丢弃')
+  const res = await s.sendBatchOnline(false)
+  assert.ok(seen.some((e) => e.type === 'circuit_half_open'), '应发 circuit_half_open')
+  assert.equal(res.sent, 1, '半开探测应真实发送')
+  assert.ok(seen.some((e) => e.type === 'circuit_recovered'), '探测成功应发 circuit_recovered')
+  assert.equal(s._breakerOpen(), false)
+  // 恢复后正常入队
+  s.enqueue({ type: 'track', name: 'after' })
+  assert.equal(s.size(), 1)
+  clearTimeout(s._retryTimer)
+})
+
+test('熔断：成功批次复位失败计数（间歇失败不误熔断）', async () => {
+  let call = 0
+  const transport = new FetchTransport({ endpoint: '/api/collect', fetchImpl: async () => jsonResponse(call++ % 2 === 0 ? 200 : 500) })
+  const s = new ReliableSender({
+    transport,
+    maxQueue: 50,
+    maxBatch: 10,
+    maxRetries: 0,
+    backoffBase: 1,
+    backoffMax: 1,
+    breakerThreshold: 2,
+    breakerCooldownMs: 300000,
+    diagnostic: createDiagnosticSink(() => {})
+  })
+  for (let i = 0; i < 6; i++) {
+    s.enqueue({ type: 'track', name: 'e' + i })
+    await s.sendBatchOnline(false)
+  }
+  assert.equal(s._breakerOpen(), false, '交替成功/失败不应累计触发熔断')
+  clearTimeout(s._retryTimer)
+})
+
+test('熔断：半开探测失败 → 重新进入冷却（不丢事件风暴保护）', async () => {
+  const seen = []
+  const transport = new FetchTransport({ endpoint: '/api/collect', fetchImpl: async () => jsonResponse(500) })
+  const s = new ReliableSender({
+    transport,
+    maxQueue: 50,
+    maxBatch: 10,
+    maxRetries: 1,
+    backoffBase: 1,
+    backoffMax: 1,
+    breakerThreshold: 2,
+    breakerCooldownMs: 300000,
+    diagnostic: createDiagnosticSink((e) => seen.push(e.type))
+  })
+  s.enqueue({ type: 'track', name: 'a' })
+  await s.sendBatchOnline(false)
+  s.enqueue({ type: 'track', name: 'b' })
+  await s.sendBatchOnline(false) // 两批失败 → 熔断打开
+  assert.equal(s._breakerOpen(), true)
+  // 冷却到期 → 半开探测仍失败 → 重新打开熔断
+  s._breakerUntil = Date.now() - 1
+  s.enqueue({ type: 'track', name: 'c' })
+  await s.sendBatchOnline(false)
+  assert.equal(s._breakerOpen(), true, '探测失败应重新进入冷却期')
+  assert.ok(seen.includes('circuit_half_open'))
+  const opens = seen.filter((t) => t === 'circuit_open').length
+  assert.ok(opens >= 2, 'circuit_open 应至少出现两次（初次打开 + 重开）')
+  clearTimeout(s._retryTimer)
+})
+
 test('ReliableSender 退出 flush 并发仅单活跃发送者（与 sendBatchOnline 共用锁）', async () => {
   let beaconCalls = 0
   let fetchCalls = 0
