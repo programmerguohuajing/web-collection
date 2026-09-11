@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { computeBaseline, detectBaselineDeviations } from '../packages/ai/baseline.js'
+import { computeBaseline, detectBaselineDeviations, missingMetricDailyDays, writeMetricDailyStats } from '../packages/ai/baseline.js'
 import { runScan, createFindingsRepo } from '../packages/ai/findings.js'
 
 const HOUR_MS = 3600 * 1000
@@ -170,4 +170,83 @@ test('createFindingsRepo + baseline：list 按 scope 过滤', async () => {
   const list = await repo.list({ scope: 'baseline-deviation' })
   assert.equal(list.length, 1)
   assert.equal(list[0].detail.metric, 'errorRate')
+})
+
+// ---------------- EOD writer（writeMetricDailyStats / missingMetricDailyDays） ----------------
+
+test('writeMetricDailyStats：每日 6 条 upsert（3 指标 × per-app/global），日界为 UTC 整日', async () => {
+  const issued = []
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...v) { issued.push([sql, v]); return this },
+        async run() { return { changes: 2 } }
+      }
+    }
+  }
+  const day = 20260910
+  const r = await writeMetricDailyStats(db, { days: [day] })
+  assert.equal(issued.length, 6)
+  assert.equal(r.written, 12)
+  assert.deepEqual(r.days, [day])
+  const startTs = Date.UTC(2026, 8, 10), endTs = startTs + 86400000
+  for (const [sql, v] of issued) {
+    assert.equal(v[0], day, '首参为日键')
+    assert.equal(v[1], startTs, '次参为当日 UTC 00:00')
+    assert.equal(v[2], endTs, '三参为次日 UTC 00:00（左闭右开）')
+    assert.match(sql, /on conflict\(app_id, metric, day\) do update set value=excluded\.value, samples=excluded\.samples/, '幂等 upsert')
+    assert.match(sql, /where ts>=\? and ts<?/, 'INSERT..SELECT 带 where（规避 upsert JOIN 解析歧义）')
+  }
+  // 3 指标 × 双作用域（per-app 分组 + global 哨兵）
+  const metrics = [...new Set(issued.map(([sql]) => (sql.match(/'(errorRate|perfAvg|volume)'/) || [])[1]))].sort()
+  assert.deepEqual(metrics, ['errorRate', 'perfAvg', 'volume'])
+  assert.equal(issued.filter(([sql]) => sql.includes('group by app_id')).length, 3, 'per-app 按应用分组')
+  assert.equal(issued.filter(([sql]) => sql.includes("select 'global',")).length, 3, 'global 哨兵行')
+  // global errorRate 是总错误/总事件（而非 per-app 比率平均）
+  const globalErr = issued.find(([sql]) => sql.includes("'global', 'errorRate'"))[0]
+  assert.match(globalErr, /sum\(case when type='error' then 1 else 0 end\)\*1\.0\/count\(\*\)/)
+  // perfAvg 无样本日跳过（having is not null）
+  assert.match(issued.find(([sql]) => sql.includes("'perfAvg'"))[0], /having avg\(case when type='perf' then value else null end\) is not null/)
+  // 非法日过滤（月份 13 / 0 / 非数值）
+  const r2 = await writeMetricDailyStats(db, { days: [20261301, 0, 'x', 20260910] })
+  assert.deepEqual(r2.days, [20260910])
+  // 空入参零执行
+  const r3 = await writeMetricDailyStats(db, {})
+  assert.equal(r3.written, 0)
+  assert.deepEqual(r3.days, [])
+})
+
+test('missingMetricDailyDays：闭区间报缺失日（含跨月边界与空库）', async () => {
+  // 存在 dayAgo(2)/dayAgo(3)，请求 [dayAgo(4), dayAgo(1)] → 缺 dayAgo(4) 与 dayAgo(1)
+  const db = {
+    prepare() {
+      return {
+        bind() { return this },
+        async all() { return [{ day: dayAgo(2) }, { day: dayAgo(3) }] }
+      }
+    }
+  }
+  const missing = await missingMetricDailyDays(db, { fromDay: dayAgo(4), toDay: dayAgo(1) })
+  assert.deepEqual(missing, [dayAgo(4), dayAgo(1)])
+  // 跨月：8/30–9/2 共 4 天（UTC），空库全缺
+  const emptyDb = {
+    prepare() {
+      return {
+        bind() { return this },
+        async all() { return [] }
+      }
+    }
+  }
+  const crossMonth = await missingMetricDailyDays(emptyDb, { fromDay: 20260830, toDay: 20260902 })
+  assert.deepEqual(crossMonth, [20260830, 20260831, 20260901, 20260902])
+  // 全存在 → 无缺口
+  const fullDb = {
+    prepare() {
+      return {
+        bind() { return this },
+        async all() { return [{ day: 20260830 }, { day: 20260831 }, { day: 20260901 }, { day: 20260902 }] }
+      }
+    }
+  }
+  assert.deepEqual(await missingMetricDailyDays(fullDb, { fromDay: 20260830, toDay: 20260902 }), [])
 })

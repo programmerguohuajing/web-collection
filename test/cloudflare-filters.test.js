@@ -118,6 +118,88 @@ assert.equal(issueSqls.length, 2)
 // issueFilters 默认追加 last_seen>=?（90 天窗），appId 不再是首位参数
 assert.ok(issueQueries.filter(([sql]) => sql.includes('from issues')).every(([sql, values]) => sql.includes('last_seen>=? and app_id=?') && values.includes('web')))
 
+// ② 预聚合缝合：仅 appId+时间、窗口 ≤7d、小时表全覆盖时，byType/behavior/perfStats 读
+// events_hourly_stats + 两端 <1h 直扫；不再对 events 发全窗 group by（D1 行读优化第二批）。
+const stitchQueries = []
+const stitchFrom = 1000000000000, stitchTo = 1000060000000 // 16.7h 窗口，含 16 个整小时
+const stitchResponse = await worker.fetch(new Request(`https://example.com/api/summary?appId=web&startTime=${stitchFrom}&endTime=${stitchTo}`), {
+  DB: {
+    prepare(sql) {
+      let values = []
+      return {
+        bind(...bound) { values = bound; return this },
+        async all() {
+          stitchQueries.push(sql)
+          if (sql.includes('from events_hourly_stats') && sql.includes('count(distinct hour_ts)')) return { results: [{ n: 16 }] }
+          if (sql.includes('from events_hourly_stats') && sql.includes("type in ('behavior','track')")) return { results: [{ name: 'pv', count: 7 }] }
+          if (sql.includes('from events_hourly_stats') && sql.includes("type='perf'")) return { results: [{ metric: 'lcp', count: 16, value_sum: 3200 }, { metric: 'slow_api_rate', count: 8, value_sum: 4 }] }
+          if (sql.includes('from events_hourly_stats')) return { results: [{ type: 'behavior', count: 7 }] }
+          if (sql.includes('group by 1,2,3')) return { results: [] } // 两端边角无数据
+          return { results: [] }
+        },
+        async first() {
+          if (sql.includes('count(distinct hour_ts)')) return { n: 16 }
+          if (sql.includes('count(*) total')) return { total: 7, last_seen: stitchTo - 60000 }
+          if (sql.includes('issue_count')) return { issue_count: 0, regression_count: 0 }
+          return null
+        }
+      }
+    }
+  }
+})
+const stitched = await stitchResponse.json()
+assert.equal(stitched.byType.behavior, 7, 'byType 来自小时表缝合')
+assert.equal(stitched.behavior.pv, 7, 'behavior 来自小时表缝合')
+assert.equal(stitched.perfCounts.lcp, 16, 'perfCounts.count 来自小时表缝合')
+assert.equal(stitched.perfCounts.slow_api_rate, 8)
+// _rate 指标均值经现有展示语义 toFixed(0)（与直扫路径完全一致，不因缝合改变）
+assert.equal(stitched.perf.slow_api_rate, Number((4 / 8).toFixed(0)))
+// 缝合路径不得对 events 发全窗 group by type/name/metric（只允许 ≤2 条边角的 group by 1,2,3）
+const directAggs = stitchQueries.filter(s => /^select (type|name|metric),count\(\*\) count from events /.test(s))
+assert.equal(directAggs.length, 0, `缝合时不应直扫聚合，实际发出：${directAggs[0]?.slice(0, 60)}`)
+const edgeScans = stitchQueries.filter(s => s.includes('group by 1,2,3'))
+assert.ok(edgeScans.length <= 2, '边角直扫不超过两条（<1h）')
+
+// 覆盖不足（小时表 distinct 小时数 < 期望）→ 回退直扫（与原实现一致；URL 与上面错开以避开 30s 结果缓存）
+const fallbackQueries = []
+const fallbackResponse = await worker.fetch(new Request(`https://example.com/api/summary?appId=web&startTime=${stitchFrom}&endTime=${stitchTo + 1}`), {
+  DB: {
+    prepare(sql) {
+      let values = []
+      return {
+        bind(...bound) { values = bound; return this },
+        async all() {
+          fallbackQueries.push(sql)
+          return { results: [] }
+        },
+        async first() {
+          if (sql.includes('count(distinct hour_ts)')) return { n: 3 } // 仅覆盖 3/16 小时
+          if (sql.includes('issue_count')) return { issue_count: 0, regression_count: 0 }
+          return null
+        }
+      }
+    }
+  }
+})
+assert.equal(fallbackResponse.status, 200)
+assert.ok(fallbackQueries.some(s => /^select type,count\(\*\) count from events /.test(s)), '覆盖不足回退直扫 byType')
+
+// 带非 appId/时间 筛选（如 release）→ 不缝合（小时表无该维度），直接走直扫
+const filteredQueries = []
+await worker.fetch(new Request(`https://example.com/api/summary?appId=web&release=1.2.3&startTime=${stitchFrom}&endTime=${stitchTo}`), {
+  DB: {
+    prepare(sql) {
+      return {
+        bind() { return this },
+        async all() { filteredQueries.push(sql); return { results: [] } },
+        async first() { if (sql.includes('issue_count')) return { issue_count: 0, regression_count: 0 }; return null }
+      }
+    }
+  }
+})
+assert.ok(!filteredQueries.some(s => s.includes('events_hourly_stats')), '带 release 筛选不查询小时表')
+assert.ok(filteredQueries.some(s => /^select type,count\(\*\) count from events /.test(s)), '带 release 筛选直扫聚合')
+
 const traceQueries = []
 const tracesResponse = await worker.fetch(new Request('https://example.com/api/traces?page=2&pageSize=25'), {
   DB: {

@@ -3,6 +3,8 @@ import { alertContext, channelMatches, decryptSecrets, encryptSecrets, normalize
 import { buildCapabilities, WORKER_CAPABILITIES } from '../packages/deployment-capabilities.js'
 import { maybeAutoDiagnose } from '../packages/ai/alert-diagnosis.js'
 import { buildDistributedTrace } from '../packages/ai/queries.js'
+import { missingMetricDailyDays, writeMetricDailyStats } from '../packages/ai/baseline.js'
+import { createD1Adapter } from '../packages/ai/db-adapter.js'
 import { DEFAULT_COLLECT_CONFIG, diffConfigs, resolveCollectConfig, sanitizeCollectConfigInput } from '../packages/collect-config.js'
 import { applyAccessLevel, normalizeLevel } from '../packages/access-level.js'
 // D2：认证加密原语与 RBAC 真相源直接复用共享包（与 Node 同源，不复制逻辑）
@@ -316,7 +318,14 @@ export default {
   },
   async scheduled(controller, env) {
     await retryPendingAlertDeliveries(env)
-    if (controller.cron === '17 3 * * *') await cleanup(env)
+    if (controller.cron === '17 3 * * *') {
+      // D1 行读优化 ①②：日表 EOD 回填 + 小时表 48h 自愈（防部署空窗漏算），再执行保留期清理
+      await metricDailyRollupW(env)
+      await hourlyRollupRangeW(env, Date.now() - 48 * 3600000, Date.now()).catch(() => {})
+      await cleanup(env)
+    }
+    // D1 行读优化 ②：小时级预聚合（上一小时已完结 + 当前小时部分覆盖；首部署回填 14d；顺带 ① 日表缺口回填）
+    if (controller.cron === '0 * * * *') await hourlyRollupW(env)
     // B2 · SLO：每 5 分钟快照 + 燃尽判定（sloEnabledW 内部自检，未开启时空转）
     if (controller.cron === '*/5 * * * *') await sloTickW(env)
     // B3 · 合成监控：每分钟探针 tick（SYNTHETIC_ENABLED≠1 时首行空转返回，零开销）
@@ -1049,6 +1058,124 @@ async function paged(env, table, url, order) {
   return json({items:rows.results.map(mapIssue),total:total.count,page,pageSize})
 }
 
+// ==================== D1 行读优化：预聚合 writer（① metric_daily_stats 日表 / ② events_hourly_stats 小时表） ====================
+// 背景：D1 免费版 rows_read 按扫描行数计费，2026-09-10 曾日耗 534 万超 500 万上限导致全站读端点 500。
+// ① AI 基线检测器（baseline-deviation）权威源 metric_daily_stats 长期空置，每次降级扫 events 全表
+//   （insights 实测 3.1 万行/次 × 17 次/天）；② summary 的 byType/behavior/perfStats 聚合随 events
+//   增长线性变贵。两个 writer 均幂等（upsert 覆盖重算），cron 驱动，不依赖请求流量。
+
+/** UTC 日键 yyyyMMdd（与 baseline.js yyyymmdd 同口径，worker 侧独立实现避免导出扩散）。 */
+function utcDayKeyW(ts) { const d = new Date(ts); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate() }
+
+/** ① 日表 EOD 回填：补最近 lookbackDays 个完整日（UTC）的缺口。不写“今天”（未完结日会污染基线观测日语义）。 */
+async function metricDailyRollupW(env, lookbackDays = 7) {
+  try {
+    const db = createD1Adapter({ DB: env.DB })
+    const now = Date.now(), today = utcDayKeyW(now)
+    const missing = await missingMetricDailyDays(db, { fromDay: utcDayKeyW(now - lookbackDays * 86400000), toDay: today })
+    const days = missing.filter(d => d < today)
+    if (!days.length) return { written: 0, days: [] }
+    const r = await writeMetricDailyStats(db, { days })
+    console.log(`[metric-daily] rollup done: days=${days.join(',')} written=${r.written}`)
+    return r
+  } catch (error) {
+    console.error('[metric-daily] rollup failed:', error?.message || error)
+    return { written: 0, days: [] }
+  }
+}
+
+/** 与 summary perfStats 完全同口径的 perf 守卫（预聚合写入与在线查询必须一致，否则缝合结果漂移）。 */
+const PERF_GUARD_W = "typeof(value) in ('integer','real') and (ifnull(metric,'')<>'page_load' or value>0)"
+
+/** ② 小时表幂等重算 [fromTs, toTs) 的每小时聚合（upsert 覆盖）。 */
+async function hourlyRollupRangeW(env, fromTs, toTs) {
+  const g = PERF_GUARD_W
+  await env.DB.prepare(`insert into events_hourly_stats (app_id, hour_ts, type, metric, name, cnt, perf_cnt, value_sum)
+    select app_id, cast(ts/3600000 as integer)*3600000, ifnull(type,''), ifnull(metric,''), ifnull(name,''),
+      count(*),
+      count(case when type='perf' and ${g} then 1 end),
+      coalesce(sum(case when type='perf' and ${g} then value else null end), 0)
+    from events where ts>=? and ts<?
+    group by 1,2,3,4,5
+    on conflict(app_id, hour_ts, type, metric, name) do update set cnt=excluded.cnt, perf_cnt=excluded.perf_cnt, value_sum=excluded.value_sum`).bind(fromTs, toTs).run()
+}
+
+/** ② 小时级 cron（0 * * * *）：刷新上一小时（已完结）+ 当前小时（部分，下轮覆盖）；首部署回填 14d；顺带 ① 日表回填。 */
+async function hourlyRollupW(env) {
+  try {
+    const now = Date.now(), HOUR = 3600000, curHour = Math.floor(now / HOUR) * HOUR
+    await hourlyRollupRangeW(env, curHour - HOUR, now)
+    const existing = await env.DB.prepare('select count(*) as c from events_hourly_stats').first().catch(() => null)
+    if (Number(existing?.c || 0) === 0) {
+      // 首次部署：一次性回填 14 天历史（之后由每小时增量 + 每日 48h 自愈维持全覆盖）
+      await hourlyRollupRangeW(env, curHour - 14 * 86400000, curHour - HOUR)
+      console.log('[hourly-rollup] initial 14d backfill done')
+    }
+    await metricDailyRollupW(env)
+  } catch (error) { console.error('[hourly-rollup] failed:', error?.message || error) }
+}
+
+/**
+ * ② summary 缝合计划：筛选仅含 appId/时间 且窗口 ≤7d 且小时表全覆盖时返回拼接参数，否则 null（走直扫）。
+ * 小时表无 release/user/session/path/keyword 维度——带这些筛选的查询不缝合（口径不一致会出错）。
+ * “全覆盖”= [h1,h2) 内 distinct hour 数与期望一致；当前小时（部分数据）恒被排除在缝合区间外。
+ */
+async function hourlyStitchPlan(env, url) {
+  try {
+    const p = url.searchParams
+    for (const key of p.keys()) if (!['appId', 'startTime', 'endTime'].includes(key)) return null
+    const HOUR = 3600000, now = Date.now()
+    const fromTs = Number(p.get('startTime')) || now - 90 * 86400000
+    const toTs = Number(p.get('endTime')) || now
+    if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || toTs - fromTs > 7 * 86400000) return null
+    const h1 = Math.ceil(fromTs / HOUR) * HOUR, h2 = Math.floor(toTs / HOUR) * HOUR
+    if (h2 - h1 < HOUR) return null
+    const appId = p.get('appId') || ''
+    const expected = Math.round((h2 - h1) / HOUR)
+    const cov = await env.DB.prepare(`select count(distinct hour_ts) as n from events_hourly_stats where hour_ts>=? and hour_ts<?${appId ? ' and app_id=?' : ''}`).bind(...(appId ? [h1, h2, appId] : [h1, h2])).first().catch(() => null)
+    if (Number(cov?.n || 0) < expected) return null
+    return { h1, h2, fromTs, toTs, appId }
+  } catch { return null }
+}
+
+/**
+ * ② 缝合执行：整小时读 events_hourly_stats（体积约为 events 的 1/50），两端不足 1 小时直扫 events。
+ * 返回与直扫同构的三组行：byTypeRows / behaviorRows / perfStats（含 count 与 avg）。
+ */
+async function summaryStitchedAggregates(env, plan) {
+  const g = PERF_GUARD_W
+  const appCond = plan.appId ? ' and app_id=?' : ''
+  const appVals = plan.appId ? [plan.appId] : []
+  const edgeSql = `select type, ifnull(metric,'') metric, ifnull(name,'') name, count(*) cnt,
+    count(case when type='perf' and ${g} then 1 end) perf_cnt,
+    sum(case when type='perf' and ${g} then value else null end) value_sum
+    from events where ts>=? and ts<?${appCond} group by 1,2,3`
+  const jobs = [
+    env.DB.prepare(`select type, sum(cnt) count from events_hourly_stats where hour_ts>=? and hour_ts<?${appCond} group by type`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`select name, sum(cnt) count from events_hourly_stats where hour_ts>=? and hour_ts<? and type in ('behavior','track')${appCond} group by name`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`select metric, sum(perf_cnt) count, sum(value_sum) value_sum from events_hourly_stats where hour_ts>=? and hour_ts<? and type='perf'${appCond} group by metric`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })),
+    plan.fromTs < plan.h1 ? env.DB.prepare(edgeSql).bind(plan.fromTs, plan.h1, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
+    plan.h2 < plan.toTs ? env.DB.prepare(edgeSql).bind(plan.h2, plan.toTs, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] })
+  ]
+  const [byTypeH, behaviorH, perfH, edgeL, edgeR] = await Promise.all(jobs)
+  const edges = [...((edgeL && edgeL.results) || []), ...((edgeR && edgeR.results) || [])]
+  // 合并（小时表 name/metric 存 ''，直扫为 null——统一映射回 null 保持响应键一致）
+  const byType = new Map()
+  for (const r of (byTypeH && byTypeH.results) || []) byType.set(r.type, (byType.get(r.type) || 0) + Number(r.count))
+  for (const r of edges) byType.set(r.type, (byType.get(r.type) || 0) + Number(r.cnt))
+  const behavior = new Map()
+  for (const r of (behaviorH && behaviorH.results) || []) { const k = r.name || null; behavior.set(k, (behavior.get(k) || 0) + Number(r.count)) }
+  for (const r of edges) if (r.type === 'behavior' || r.type === 'track') { const k = r.name || null; behavior.set(k, (behavior.get(k) || 0) + Number(r.cnt)) }
+  const perf = new Map()
+  for (const r of (perfH && perfH.results) || []) { const k = r.metric || null; const e = perf.get(k) || { count: 0, valueSum: 0 }; e.count += Number(r.count); e.valueSum += Number(r.value_sum || 0); perf.set(k, e) }
+  for (const r of edges) { const k = r.metric || null; const e = perf.get(k) || { count: 0, valueSum: 0 }; e.count += Number(r.perf_cnt); e.valueSum += Number(r.value_sum || 0); perf.set(k, e) }
+  return {
+    byTypeRows: [...byType].map(([type, count]) => ({ type, count })),
+    behaviorRows: [...behavior].map(([name, count]) => ({ name, count })),
+    perfStats: [...perf].map(([metric, e]) => ({ metric, count: e.count, avg: e.count > 0 ? e.valueSum / e.count : null }))
+  }
+}
+
 // 性能缓存：summary 是控制台各页首屏聚合（insights 实测 105 次/天，P75 窗口函数 +
 // group by 每次读 1.2 万+ 行，日耗约 223 万行读——D1 配额事故第二大项）。
 // 同筛选条件 30s 内复用上次结果：遥看板秒级新鲜度足够，与前端 30s 轮询节奏对齐。
@@ -1067,16 +1194,29 @@ async function summary(env,url){
   // 统一兜底为空数组/null，避免 for...of 抛 "X is not iterable" 把整个接口打 500。
   const all=(s)=>s.all().catch(()=>({results:[]})).then(r=>(r&&r.results)||[])
   const one=(s)=>s.first().catch(()=>null)
-  const [byTypeRows,behaviorRows,eventStats,perfStats,p75Rows,apiRows,issueResult,issueStats]=await Promise.all([
-    all(env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values)),
-    all(env.DB.prepare(`select name,count(*) count from events ${where}${where?' and':' where'} type in ('behavior','track') group by name`).bind(...values)),
+  // ② 预聚合缝合：仅 appId+时间 且窗口 ≤7d 且小时表全覆盖时，byType/behavior/perfStats
+  // 改读 events_hourly_stats（体积约为 events 同窗的 1/50）+ 两端 <1h 直扫，免三次全窗扫描。
+  const stitchPlan = await hourlyStitchPlan(env, url)
+  const [eventStats,p75Rows,apiRows,issueResult,issueStats, directAgg] = await Promise.all([
     one(env.DB.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values)),
-    all(env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values)),
     all(env.DB.prepare(`select metric,value,n,rn from (select metric,value,count(*) over (partition by metric) n,row_number() over (partition by metric order by value) rn from events ${perfFilter.where} and ${perfGuard}) where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(...perfFilter.values)),
     all(env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 1000`).bind(...perfFilter.values)),
     all(env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values)),
-    one(env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values))
+    one(env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values)),
+    // 非缝合路径的三项聚合（缝合时该 Promise 结果被忽略，直扫代价与原实现一致）
+    stitchPlan ? Promise.resolve(null) : Promise.all([
+      all(env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values)),
+      all(env.DB.prepare(`select name,count(*) count from events ${where}${where?' and':' where'} type in ('behavior','track') group by name`).bind(...values)),
+      all(env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values))
+    ])
   ])
+  let byTypeRows, behaviorRows, perfStats
+  if (stitchPlan) {
+    const stitched = await summaryStitchedAggregates(env, stitchPlan)
+    byTypeRows = stitched.byTypeRows; behaviorRows = stitched.behaviorRows; perfStats = stitched.perfStats
+  } else {
+    [byTypeRows, behaviorRows, perfStats] = directAgg
+  }
   const issues=issueResult,byType={},behavior={},perf={},perfCounts={}
   for(const row of byTypeRows)byType[row.type]=Number(row.count)
   for(const row of behaviorRows)behavior[row.name ?? 'null']=Number(row.count)
@@ -3009,7 +3149,7 @@ function workerAlert(row){
 
 function alertError(error){return String(error?.message||error).slice(0,1000)}
 
-async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['alerts','delete from alert_history where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays],['syntheticResults','delete from synthetic_results where checked_at<?',config.syntheticResultsDays||30],['experimentExposures','delete from experiment_exposures where exposed_at<?',config.eventsDays||30]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
+async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['hourlyStats',`delete from events_hourly_stats where hour_ts<?`,config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['alerts','delete from alert_history where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays],['syntheticResults','delete from synthetic_results where checked_at<?',config.syntheticResultsDays||30],['experimentExposures','delete from experiment_exposures where exposed_at<?',config.eventsDays||30]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
 async function exportCsv(env,kind,url){const filter=kind==='issues'?issueFilters(url):kind==='replays'?replayFilters(url):filters(url),select=kind==='replays'?'select app_id,session_id,max(user_id) user_id,max(user_name) user_name,max(user_phone) user_phone,min(created_at) first_seen,max(created_at) last_seen,max(url) url,max(release_name) release_name,max(end_reason) end_reason,count(*) event_count from replays':`select * from ${kind}`,group=kind==='replays'?' group by app_id,session_id':'',order=kind==='issues'?'last_seen':kind==='replays'?'last_seen':'ts',rows=(await env.DB.prepare(`${select} ${filter.where}${group} order by ${order} desc limit 10000`).bind(...filter.values).all()).results,keys=rows.length?Object.keys(rows[0]):[],cell=v=>`"${String(v??'').replaceAll('"','""')}"`,csv=rows.length?'\ufeff'+[keys.map(cell).join(','),...rows.map(r=>keys.map(k=>cell(r[k])).join(','))].join('\r\n'):'';return new Response(csv,{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':`attachment; filename="web-collection-${kind}.csv"`}})}
 
 export function filters(url,forcedType,fixed=[],fixedValues=[]){const p=url.searchParams,parts=[...fixed],values=[...fixedValues];const _hasTs=fixed.some(f=>/\bts\s*[<>]=?\s*\?/.test(f))||p.has('startTime')||p.has('endTime');if(!_hasTs){parts.push('ts>=?');values.push(Date.now()-90*86400000)}for(const [field,key,value] of [['app_id','appId'],['release_name','release'],['type','type',forcedType],['name','name'],['user_id','userId'],['session_id','sessionId']]){const v=value||p.get(key);if(v){const items=field==='type'?String(v).split(',').filter(Boolean):[v];parts.push(items.length>1?`${field} in (${items.map(()=>'?').join(',')})`:`${field}=?`);values.push(...items)}}if(p.get('traceId')){parts.push('trace_id like ?');values.push(`%${p.get('traceId')}%`)}if(p.get('path')){parts.push('(path like ? or url like ?)');values.push(...Array(2).fill(`%${p.get('path')}%`))}if(p.get('startTime')){parts.push('ts>=?');values.push(Number(p.get('startTime')))}if(p.get('endTime')){parts.push('ts<=?');values.push(Number(p.get('endTime')))}if(p.get('keyword')){parts.push('(name like ? or message like ? or props_json like ? or trace_id like ?)');values.push(...Array(4).fill(`%${p.get('keyword')}%`))}return{where:parts.length?`where ${parts.join(' and ')}`:'',values}}

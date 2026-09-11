@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { all, run, scalar } from './db.js'
 import { buildAlertContext, createAlertDeliveries } from './alerting.js'
+import { createPgAdapter } from '../../../packages/ai/db-adapter.js'
+import { missingMetricDailyDays, writeMetricDailyStats } from '../../../packages/ai/baseline.js'
 
 export const defaultSettings = {
   retention: { eventsDays: 30, logsDays: 14, replaysDays: 7, resolvedIssuesDays: 90, sourcemapsDays: 180, alertsDays: 90, syntheticResultsDays: 30 },
@@ -233,11 +235,34 @@ export async function cleanupExpiredData() {
   deleted.issues = (await run(`delete from issues where status = 'resolved' and last_seen < ?`, [cutoff(now, retention.resolvedIssuesDays)])).rowCount
   deleted.sourcemaps = (await run('delete from sourcemaps where created_at < ?', [cutoff(now, retention.sourcemapsDays)])).rowCount
   deleted.alerts = (await run('delete from alert_history where created_at < ?', [cutoff(now, retention.alertsDays)])).rowCount
-  // B3 · 合成监控：探针结果默认保留 30d（挂现有 cleanup，PRD FR-9）
+  // B3 路 合成监控：探针结果默认保留 30d（挂现有 cleanup，PRD FR-9）
   deleted.syntheticResults = (await run('delete from synthetic_results where checked_at < ?', [cutoff(now, retention.syntheticResultsDays)])).rowCount
-  // A3 · 实验分析：曝光记录默认 30d（与 events 保留期对齐，PRD 14 §7.2；保留期复用 eventsDays 口径）
+  // A3 路 实验分析：曝光记录默认保留 30d（与 events 保留期对齐，PRD 14 §7.2；保留期复用 eventsDays 口径）
   deleted.experimentExposures = (await run('delete from experiment_exposures where exposed_at < ?', [cutoff(now, retention.eventsDays)])).rowCount
   return deleted
+}
+
+/**
+ * ① metric_daily_stats EOD 回填（Node 自托管侧；与 Cloudflare worker cron 同口径，幂等）。
+ * 迁移 0022 注释承诺的 P1 writer：AI 基线检测器（baseline-deviation）权威源，
+ * 未回填时检测器降级扫 events 滚动窗口（贵且置信度打折）。挂在清理周期（默认 1h）执行，
+ * 内部只补最近 7 个完整日的缺口——无缺口时零查询成本。
+ */
+export async function rollupMetricDailyStats(lookbackDays = 7) {
+  const db = createPgAdapter({ all, run })
+  const now = Date.now()
+  const today = utcDayKey(now)
+  const missing = await missingMetricDailyDays(db, { fromDay: utcDayKey(now - lookbackDays * 86400000), toDay: today })
+  const days = missing.filter(d => d < today) // 不写今天：未完结日会污染基线"观测日"语义
+  if (!days.length) return { written: 0, days: [] }
+  const result = await writeMetricDailyStats(db, { days })
+  console.log(`[metric-daily] rollup done: days=${days.join(',')} written=${result.written}`)
+  return result
+}
+
+function utcDayKey(ts) {
+  const d = new Date(ts)
+  return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate()
 }
 
 function alertTrigger(event, issue, config) {
