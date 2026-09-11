@@ -186,18 +186,21 @@ export async function writeMetricDailyStats(db, { days } = {}) {
   for (const day of list) {
     const [startTs, endTs] = dayBoundsUtc(day)
     // 6 条 upsert：3 指标 × (per-app / global)。select 均带 where，避免 INSERT..SELECT..ON CONFLICT 的 JOIN 歧义。
+    // 关键：无 GROUP BY 的聚合查询在零行匹配时仍返回一行（聚合值为 NULL/0）——
+    // global errorRate 的 sum*1.0/count 会得 NULL，违反 value 非空约束（线上 Sep4 零事件日实测触发）。
+    // 故 global 语句必须 having count(*)>0 跳过空日；per-app 有 group by，零行自然无输出。
     const stmts = [
       // per-app：按应用分组的当日口径
-      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
-      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? group by app_id having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
-      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
-      // global：全站汇总（注意 errorRate 必须总错误/总事件，而非 per-app 比率的平均）
-      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
-      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]],
-      ["insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples", [day, startTs, endTs]]
+      ["errorRate:app", `insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
+      ["perfAvg:app", `insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? group by app_id having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
+      ["volume:app", `insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
+      // global：全站汇总（注意 errorRate 必须总错误/总事件，而非 per-app 比率的平均）；having 跳过零事件日
+      ["errorRate:global", `insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? having count(*)>0 on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
+      ["perfAvg:global", `insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
+      ["volume:global", `insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? having count(*)>0 on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]]
     ]
-    for (const [sql, params] of stmts) {
-      const r = await db.prepare(sql).bind(...params).run().catch(err => { throw new Error(`writeMetricDailyStats day=${day} failed: ${err?.message || err}`) })
+    for (const [label, sql, params] of stmts) {
+      const r = await db.prepare(sql).bind(...params).run().catch(err => { throw new Error(`writeMetricDailyStats ${label} day=${day} failed: ${err?.message || err}`) })
       written += Number(r?.changes || 0)
     }
   }

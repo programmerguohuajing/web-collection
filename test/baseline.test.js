@@ -205,8 +205,16 @@ test('writeMetricDailyStats：每日 6 条 upsert（3 指标 × per-app/global�
   // global errorRate 是总错误/总事件（而非 per-app 比率平均）
   const globalErr = issued.find(([sql]) => sql.includes("'global', 'errorRate'"))[0]
   assert.match(globalErr, /sum\(case when type='error' then 1 else 0 end\)\*1\.0\/count\(\*\)/)
+  // 零事件日防护：无 GROUP BY 的聚合在空范围仍返回一行（聚合值为 NULL/0），
+  // global errorRate 的 sum*1.0/count 会得 NULL 违反 value 非空约束 → having count(*)>0 跳过空日
+  assert.match(globalErr, /having count\(\*\)>0/)
+  assert.match(issued.find(([sql]) => sql.includes("'global', 'volume'"))[0], /having count\(\*\)>0/)
   // perfAvg 无样本日跳过（having is not null）
   assert.match(issued.find(([sql]) => sql.includes("'perfAvg'"))[0], /having avg\(case when type='perf' then value else null end\) is not null/)
+  assert.match(issued.find(([sql]) => sql.includes("'global', 'perfAvg'"))[0], /having avg\(case when type='perf' then value else null end\) is not null/)
+  // 错误信息含指标标签（线上排障定位用）
+  const _labels = ['errorRate', 'perfAvg', 'volume']
+  for (const label of _labels) assert.ok(issued.some(([sql]) => sql.includes(`'${label}'`)), `应包含 ${label} 语句`)
   // 非法日过滤（月份 13 / 0 / 非数值）
   const r2 = await writeMetricDailyStats(db, { days: [20261301, 0, 'x', 20260910] })
   assert.deepEqual(r2.days, [20260910])
