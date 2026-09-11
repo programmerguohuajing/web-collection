@@ -279,6 +279,49 @@ test('BeaconTransport 无 Beacon 且配置 collectKey → 回退 fetch keepalive
 })
 
 // ---------------------------------------------------------------------------
+// 回退 fetch keepalive 的超时保护：无超时的 keepalive fetch 在服务端/网络挂起时
+// 永远 pending（线上实测：移动端切后台连接被挂起 + 每次 visibilitychange 再发一个，
+// Network 面板累积一排僵尸请求）。超时 abort 后返回 fallback_timeout，事件仍在
+// 持久队列（非破坏性语义），下轮在线发送重试。
+// ---------------------------------------------------------------------------
+test('BeaconTransport 回退 fetch 挂起 → 超时中止，不再永远 pending', async () => {
+  const seen = []
+  const t = new BeaconTransport({
+    endpoint: '/api/collect',
+    collectKey: 'k1',
+    timeout: 30, // 注入小超时
+    fetchImpl: (url, init) => new Promise((resolve, reject) => {
+      // 模拟服务端/网络挂起：响应永不返回；abort 时 fetch 语义应 reject AbortError
+      if (init && init.signal) {
+        init.signal.addEventListener('abort', () => {
+          const e = new Error('The operation was aborted')
+          e.name = 'AbortError'
+          reject(e)
+        })
+      }
+    })
+  })
+  const started = Date.now()
+  const res = await t.send([{ a: 1 }], { diagnostic: createDiagnosticSink((e) => seen.push(e.type)) })
+  const took = Date.now() - started
+  assert.equal(res.outcome, 'fallback_timeout', '挂起的 keepalive fetch 应被超时中止')
+  assert.ok(took >= 25 && took < 2000, `应在超时阈值附近返回，实际 ${took}ms`)
+  assert.ok(seen.includes('timeout'), '应发 timeout 诊断')
+})
+
+test('BeaconTransport 回退 fetch 正常响应不受超时影响', async () => {
+  const t = new BeaconTransport({
+    endpoint: '/api/collect',
+    collectKey: 'k1',
+    timeout: 2000,
+    fetchImpl: async () => jsonResponse(200)
+  })
+  const res = await t.send([{ a: 1 }], { diagnostic: createDiagnosticSink(() => {}) })
+  assert.equal(res.outcome, 'fallback')
+  assert.equal(res.status, 200)
+})
+
+// ---------------------------------------------------------------------------
 // ReliableSender
 // ---------------------------------------------------------------------------
 test('ReliableSender enqueue 自动补全 eventId', () => {

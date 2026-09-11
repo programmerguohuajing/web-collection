@@ -149,16 +149,30 @@ export class BeaconTransport {
     const body = JSON.stringify({ events })
     const headers = { 'content-type': 'application/json' }
     if (this.collectKey) headers['x-app-key'] = this.collectKey
+    // 超时保护（AbortController）：keepalive fetch 若无超时，一旦服务端/网络挂起
+    // （如移动端切后台连接被基站挂起但 TCP 未断），请求会永远停留在 pending，
+    // 且每次 visibilitychange 都会再发一个，Network 面板累积出一排僵尸请求。
+    // 超时中止后本通道返回 fallback_failed：退出 flush 是非破坏性的，
+    // 事件仍留在持久队列，下一次在线发送（或下个会话）会重试，无数据丢失。
+    const ac = typeof AbortController !== 'undefined' ? new AbortController() : null
+    let timedOut = false
+    const timer = ac
+      ? setTimeout(() => { timedOut = true; ac.abort() }, this.timeout)
+      : null
     try {
       const res = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers,
         body,
-        keepalive: true
+        keepalive: true,
+        ...(ac ? { signal: ac.signal } : {})
       })
       return { outcome: 'fallback', status: res.status, ok: res.ok, retryAfter: parseRetryAfter(res.headers?.get?.('retry-after')) }
     } catch (err) {
-      return { outcome: 'fallback_failed', error: String((err && err.message) || err) }
+      if (timedOut) diagnostic?.emit('timeout', { transport: 'beacon_fallback' })
+      return { outcome: timedOut ? 'fallback_timeout' : 'fallback_failed', error: String((err && err.message) || err) }
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 }
