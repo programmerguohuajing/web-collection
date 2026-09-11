@@ -248,6 +248,9 @@ watch(refreshVersion, () => load(), { immediate: true })
 .api-health-range-hint { color: var(--c-text-muted); font-size: 12px; }
 .table-error { margin-bottom: 12px; }
 .endpoint-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* 方法标签（GET/POST…）不参与 flex 收缩：URL 过长时标签会被压缩成「G…」「PO…」，
+   flex:0 0 auto + nowrap 保证方法名始终全文展示，溢出省略交给右侧 OverflowTip（悬浮全文）。 */
+.endpoint-cell .el-tag { flex: 0 0 auto; white-space: nowrap; }
 .status-cell { display: flex; flex-wrap: wrap; gap: 5px; }
 .muted { color: var(--c-text-muted); }
 .topology-note { margin-bottom: 12px; }

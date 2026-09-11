@@ -102,7 +102,7 @@ function isError(node) {
 .wf-row { display: grid; grid-template-columns: minmax(280px, 1fr) 1fr 90px; align-items: center; padding: 6px 14px; border-bottom: 1px solid #f0f3f7; cursor: pointer; transition: background .12s; }
 .wf-row:hover { background: #f8fafc; }
 .sp-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
-.sp-name .svc { color: #409eff; font-family: 'Segoe UI','Microsoft YaHei',sans-serif; font-size: 11px; padding: 1px 7px; border-radius: 5px; background: #f0f4fa; border: 1px solid #dfe5ec; white-space: nowrap; }
+.sp-name .svc { color: #409eff; font-family: 'Segoe UI','Microsoft YaHei',sans-serif; font-size: 11px; padding: 1px 7px; border-radius: 5px; background: #f0f4fa; border: 1px solid #dfe5ec; white-space: nowrap; flex: 0 0 auto; }
 .sp-name .op { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .err-dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444; flex: none; }
 .wf-track { position: relative; height: 18px; }
