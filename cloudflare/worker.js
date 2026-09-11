@@ -1072,7 +1072,7 @@ async function paged(env, table, url, order) {
 function utcDayKeyW(ts) { const d = new Date(ts); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate() }
 
 /** ① 日表 EOD 回填：补最近 lookbackDays 个完整日（UTC）的缺口。不写“今天”（未完结日会污染基线观测日语义）。 */
-async function metricDailyRollupW(env, lookbackDays = 7) {
+async function metricDailyRollupW(env, lookbackDays = 14) {
   try {
     const db = createD1Adapter({ DB: env.DB })
     const now = Date.now(), today = utcDayKeyW(now)
@@ -1083,7 +1083,7 @@ async function metricDailyRollupW(env, lookbackDays = 7) {
     console.log(`[metric-daily] rollup done: days=${days.join(',')} written=${r.written}`)
     return r
   } catch (error) {
-    console.error('[metric-daily] rollup failed:', error?.message || error)
+    console.error('[metric-daily] rollup failed:', error?.message || error, error?.stack || '')
     return { written: 0, days: [] }
   }
 }
@@ -1108,15 +1108,17 @@ async function hourlyRollupRangeW(env, fromTs, toTs) {
 async function hourlyRollupW(env) {
   try {
     const now = Date.now(), HOUR = 3600000, curHour = Math.floor(now / HOUR) * HOUR
-    await hourlyRollupRangeW(env, curHour - HOUR, now)
+    // 首部署探空必须在常规刷新之前——刷新写入后表恒非空，14d 回填将永不触发（线上实测踩坑）
     const existing = await env.DB.prepare('select count(*) as c from events_hourly_stats').first().catch(() => null)
-    if (Number(existing?.c || 0) === 0) {
+    const firstRun = Number(existing?.c || 0) === 0
+    await hourlyRollupRangeW(env, curHour - HOUR, now)
+    if (firstRun) {
       // 首次部署：一次性回填 14 天历史（之后由每小时增量 + 每日 48h 自愈维持全覆盖）
       await hourlyRollupRangeW(env, curHour - 14 * 86400000, curHour - HOUR)
       console.log('[hourly-rollup] initial 14d backfill done')
     }
     await metricDailyRollupW(env)
-  } catch (error) { console.error('[hourly-rollup] failed:', error?.message || error) }
+  } catch (error) { console.error('[hourly-rollup] failed:', error?.message || error, error?.stack || '') }
 }
 
 /**
@@ -1250,7 +1252,8 @@ async function summary(env,url){
   const summaryBody=JSON.stringify({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
   if (_summaryCache.size > 32) _summaryCache.clear() // 防泄漏：筛选组合有限，保守上限
   _summaryCache.set(cacheKey, { at: Date.now(), text: summaryBody })
-  return new Response(summaryBody, { headers: { 'content-type': 'application/json; charset=utf-8' } })
+  // 缝合可观测性：与 x-summary-cache 同思路，凭响应头即可确认命中小时表预聚合路径（排障/验证用）
+  return new Response(summaryBody, { headers: { 'content-type': 'application/json; charset=utf-8', ...(stitchPlan ? { 'x-summary-stitch': 'hourly' } : {}) } })
 }
 
 function percentile75(values){if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b),index=(sorted.length-1)*.75,lower=Math.floor(index),upper=Math.ceil(index);return lower===upper?sorted[lower]:sorted[lower]+(sorted[upper]-sorted[lower])*(index-lower)}

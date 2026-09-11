@@ -159,6 +159,8 @@ const directAggs = stitchQueries.filter(s => /^select (type|name|metric),count\(
 assert.equal(directAggs.length, 0, `缝合时不应直扫聚合，实际发出：${directAggs[0]?.slice(0, 60)}`)
 const edgeScans = stitchQueries.filter(s => s.includes('group by 1,2,3'))
 assert.ok(edgeScans.length <= 2, '边角直扫不超过两条（<1h）')
+// 缝合命中标识：响应头可观测（运维验证预聚合路径是否生效）
+assert.equal(stitchResponse.headers.get('x-summary-stitch'), 'hourly', '缝合路径应带 x-summary-stitch 响应头')
 
 // 覆盖不足（小时表 distinct 小时数 < 期望）→ 回退直扫（与原实现一致；URL 与上面错开以避开 30s 结果缓存）
 const fallbackQueries = []
@@ -183,6 +185,7 @@ const fallbackResponse = await worker.fetch(new Request(`https://example.com/api
 })
 assert.equal(fallbackResponse.status, 200)
 assert.ok(fallbackQueries.some(s => /^select type,count\(\*\) count from events /.test(s)), '覆盖不足回退直扫 byType')
+assert.equal(fallbackResponse.headers.get('x-summary-stitch'), null, '回退直扫不应带缝合响应头')
 
 // 带非 appId/时间 筛选（如 release）→ 不缝合（小时表无该维度），直接走直扫
 const filteredQueries = []

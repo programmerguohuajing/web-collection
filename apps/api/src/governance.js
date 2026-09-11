@@ -248,7 +248,7 @@ export async function cleanupExpiredData() {
  * 未回填时检测器降级扫 events 滚动窗口（贵且置信度打折）。挂在清理周期（默认 1h）执行，
  * 内部只补最近 7 个完整日的缺口——无缺口时零查询成本。
  */
-export async function rollupMetricDailyStats(lookbackDays = 7) {
+export async function rollupMetricDailyStats(lookbackDays = 14) {
   const db = createPgAdapter({ all, run })
   const now = Date.now()
   const today = utcDayKey(now)
