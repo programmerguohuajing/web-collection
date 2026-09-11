@@ -327,7 +327,11 @@ test('结构性热请求预算：健康数据与分页模拟响应分别小于 2
   const health = await workerJson('/health', quickEnv)
   const healthElapsed = performance.now() - healthStarted
   assert.equal(health.response.status, 200)
-  assert.deepEqual(health.body, { ok: true, runtime: 'cloudflare-workers' })
+  // /health 契约：{ ok, runtime, ingestion:{...} }——ingestion 为动态监控快照（e5bb9a5 起加入），
+  // 只断言存活字段与 ingestion 块存在，不做动态值深度全等。
+  assert.equal(health.body.ok, true)
+  assert.equal(health.body.runtime, 'cloudflare-workers')
+  assert.ok(health.body.ingestion && typeof health.body.ingestion.status === 'string')
   assert.ok(healthElapsed < 250, `health 结构性预算超时：${healthElapsed.toFixed(1)}ms`)
 
   const listStarted = performance.now()
