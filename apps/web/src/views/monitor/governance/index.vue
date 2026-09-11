@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteApplication, deleteRelease, loadGovernance, loadReleases, normalizePageResponse, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease, toList } from '../../../dashboard.js'
 // PRD 04 · 远程采集配置（采集治理内嵌 Tab）
 import RemoteConfigPanel from '../../../components/prd/RemoteConfigPanel.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 const activeTab = ref('apps')
 
@@ -292,8 +293,8 @@ onMounted(load)
   </el-dialog>
   <el-dialog v-model="collectKeyDialog" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input :model-value="newCollectKey" readonly style="margin-top:12px" /></el-dialog>
 
-  <el-dialog v-model="mcpDialog" title="MCP 接入（调用时采集秘钥）" width="720px">
-    <el-alert type="info" :closable="false" title="MCP 客户端直接用本应用的「采集秘钥」作为 Authorization: Bearer 鉴权，无需任何额外配置；鉴权后仅能访问该应用数据。" />
+  <el-dialog v-model="mcpDialog" width="720px">
+    <template #title>MCP 接入（调用时采集秘钥）<el-tooltip content="MCP 客户端直接用本应用的「采集秘钥」作为 Authorization: Bearer 鉴权，无需任何额外配置；鉴权后仅能访问该应用数据。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></template>
     <div style="margin:12px 0">应用 App ID：<code>{{ mcpAppId }}</code></div>
     <el-form label-width="100px">
       <el-form-item label="采集秘钥">

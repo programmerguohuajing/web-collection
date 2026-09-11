@@ -10,6 +10,7 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../../composables/useAuth'
 import { canManageBrand } from '../../composables/useBrand'
 import { getBrand, saveBrand, resetBrand } from '../../api/brand.js'
@@ -205,17 +206,7 @@ onMounted(load)
 
     <!-- BUG-012 修复：能力位未开启时整页只渲染占位提示（与 slo/synthetic/dsr/experiment 统一），
          不发任何请求、不渲染表单——而非此前的「alert + disabled 表单」半开放形态。 -->
-    <el-alert
-      v-if="!whiteLabelEnabled"
-      class="section"
-      type="info"
-      show-icon
-      :closable="false"
-      title="当前部署不支持白标（capability: whiteLabel）"
-      description="Cloudflare Worker 部署需设置 WHITE_LABEL_ENABLED=1 后重启实例方可启用；Node 自托管部署默认支持。"
-    />
-
-    <div v-else class="brand-grid">
+    <div v-if="whiteLabelEnabled" class="brand-grid">
       <!-- 左：表单 -->
       <el-card class="section form-card" :body-style="{ padding: '18px 20px' }">
         <el-form :model="form" label-width="92px" label-position="right" :disabled="!whiteLabelEnabled">

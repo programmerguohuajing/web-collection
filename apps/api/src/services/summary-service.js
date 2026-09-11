@@ -16,7 +16,8 @@ import { percentile, scorePerf } from '../utils/domain.js'
  *   - totalEvents / issueCount / regressionCount：核心计数
  *   - perf：各性能指标的 P75 值
  *   - perfScore：性能评分与等级
- *   - byType / behavior：事件类型和行为排行
+ *   - apdex：Apdex 体验分（基于 LCP 样本，satisfied ≤2500ms / tolerating ≤4000ms）
+ *   - byType / behavior / byBrowser：事件类型、行为和浏览器分布排行
  *   - api / resources：慢接口和慢资源 Top 10
  *   - alerts：性能和回归告警列表
  *   - issues：错误列表
@@ -31,6 +32,7 @@ export function buildSummary(events, issuesById, replays, performanceEvents = ev
     if (value !== null) perf[metric] = Number(value.toFixed(metric === 'cls' ? 4 : 0))
   }
   const issues = Object.values(issuesById).sort((a, b) => b.lastSeen - a.lastSeen)
+  const lcpValues = perfEvents.filter(e => e.metric === 'lcp').map(e => Number(e.value))
   return {
     totalEvents: events.length,
     issueCount: issues.filter(i => i.status !== 'resolved').length,
@@ -39,8 +41,10 @@ export function buildSummary(events, issuesById, replays, performanceEvents = ev
     perf,
     perfCounts,
     perfScore: scorePerf(perf),
+    apdex: apdexScore(lcpValues),
     byType: countBy(events, 'type'),
     behavior: countBy(events.filter(e => e.type === 'behavior' || e.type === 'track'), 'name'),
+    byBrowser: countBy(events, 'browser'),
     api: topApi(perfEvents),
     resources: topResources(perfEvents),
     replays,
@@ -56,6 +60,19 @@ function countBy(items, field) {
     acc[key] = (acc[key] || 0) + 1
     return acc
   }, {})
+}
+
+/**
+ * 标准 Apdex 公式：(satisfied + tolerating/2) / total。
+ * 阈值与 scorePerf 的 LCP 口径一致：satisfied ≤2500ms，tolerating ≤4000ms；无样本返回 null。
+ * @param {number[]} lcpValues - LCP 样本毫秒值列表
+ * @returns {number|null} Apdex 分值（0~1，保留两位小数）
+ */
+function apdexScore(lcpValues) {
+  if (!lcpValues.length) return null
+  const satisfied = lcpValues.filter(v => v <= 2500).length
+  const tolerating = lcpValues.filter(v => v > 2500 && v <= 4000).length
+  return Number(((satisfied + tolerating / 2) / lcpValues.length).toFixed(2))
 }
 
 /** 聚合 Fetch/XHR 请求，按 URL 分组统计次数、平均值和 P75，取 Top 10 */

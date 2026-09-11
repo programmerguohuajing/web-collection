@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, pageLoading } from '../../../dashboard.js'
 import { useAuth } from '../../../composables/useAuth'
 import OverflowTip from '../../../components/OverflowTip.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * D1 工单详情页（PRD §7）：
@@ -210,20 +211,11 @@ onMounted(load)
 <template>
   <div class="dsr-detail">
     <!-- BUG-005 修复：能力位关闭时显式占位（对齐 slo/synthetic/experiment 详情页模式），不发请求。 -->
-    <el-alert
-      v-if="!dsrEnabled"
-      class="section"
-      type="info"
-      :closable="false"
-      show-icon
-      title="当前部署未开启 DSR 能力（capability: dsr）"
-      description="数据主体权利功能需要后端开启 dsr 能力位后使用；本页当前为只读占位，不会发起任何请求。"
-    />
-    <template v-else>
+    <template>
     <div class="detail-head">
       <el-button text @click="router.push('/dsr')">← 返回列表</el-button>
       <div class="head-main" v-if="request">
-        <h2><OverflowTip :text="request.id" /></h2>
+        <h2><OverflowTip :text="request.id" /><el-tooltip content="数据主体权利（DSR）工单：查询 / 导出 / 擦除，需后端开启 dsr 能力位并依赖账号 RBAC。双人制衡审批、全程审计留痕。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h2>
         <div class="sub">
           <el-tag :type="request.requestType === 'erasure' ? 'danger' : 'primary'" effect="light">{{ typeLabel(request) }}</el-tag>
           <el-tag class="head-tag" :type="statusMeta(request.status).tag" effect="light">{{ statusMeta(request.status).label }}</el-tag>

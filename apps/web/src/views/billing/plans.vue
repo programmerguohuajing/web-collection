@@ -10,6 +10,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuth } from '../../composables/useAuth'
 import OverflowTip from '../../components/OverflowTip.vue'
 import { getPlans, getCurrentPlan, putPlan } from '../../api/metering.js'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 const { me } = useAuth()
 
@@ -161,13 +162,6 @@ onMounted(load)
           <span v-if="current.updatedBy">最近变更人：{{ current.updatedBy }}</span>
           <span v-if="current.updatedAt"> · 生效时间：{{ new Date(Number(current.updatedAt)).toLocaleString() }}</span>
         </div>
-        <el-alert
-          class="cp-note"
-          type="info"
-          :closable="false"
-          show-icon
-          title="配额超限提醒为团队级，请使用未限定应用的通知渠道；企业版可按团队定制配额覆盖（由运营配置）。"
-        />
       </div>
     </el-card>
 
@@ -197,12 +191,12 @@ onMounted(load)
     <el-drawer v-model="drawerOpen" title="变更套餐" size="460px">
       <el-alert v-if="!canManage" type="warning" :closable="false" show-icon title="当前角色无套餐变更权限（需要 Admin 及以上）" />
       <el-form v-else label-width="80px">
-        <el-form-item label="目标套餐">
+        <el-form-item>
+          <template #label>目标套餐<el-tooltip content="降配额将立即生效，历史用量不做追溯减免；升档请直接选择更高档位。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></template>
           <el-select v-model="selectedCode" placeholder="选择套餐" style="width: 100%">
             <el-option v-for="p in plans" :key="p.code" :label="p.name" :value="p.code" />
           </el-select>
         </el-form-item>
-        <el-alert type="info" :closable="false" show-icon title="降配额将立即生效，历史用量不做追溯减免；升档请直接选择更高档位。" />
       </el-form>
       <template #footer>
         <el-button @click="drawerOpen = false">取消</el-button>

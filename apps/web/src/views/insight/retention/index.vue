@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, pageLoading } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 const store = useFilterStore()
 
@@ -66,7 +67,7 @@ watch([days, () => store.appId], load)
     <el-card shadow="never" class="section panel">
       <template #header>
         <div class="panel-head">
-          <b>留存 / 同期群分析</b>
+          <b>留存 / 同期群分析<el-tooltip :content="caliber || '统计口径：按首访日期分组计算留存率'" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></b>
           <div class="head-actions">
             <el-select v-model="days" size="small" style="width: 120px">
               <el-option v-for="item in RANGE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
@@ -76,11 +77,6 @@ watch([days, () => store.appId], load)
           </div>
         </div>
       </template>
-
-      <el-alert v-if="caliber" type="info" :closable="false" show-icon class="caliber">
-        <template #title>统计口径</template>
-        {{ caliber }}
-      </el-alert>
 
       <el-empty v-if="!rows.length" description="暂无留存数据（请确认时间范围内有 PV 事件）" />
 

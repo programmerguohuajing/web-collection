@@ -23,11 +23,13 @@ const items = computed(() => {
   const total = rows.reduce((sum, item) => sum + item.value, 0)
   return rows.sort((a, b) => b.value - a.value).slice(0, 4).map(item => ({ ...item, percent: total ? Math.round(item.value / total * 100) : 0 }))
 })
-const browsers = [
-  { label: 'Chrome', percent: 74, color: '#4f46e5' },
-  { label: 'Safari', percent: 16, color: '#0ea5e9' },
-  { label: '其他', percent: 10, color: '#9aa3b2' }
-]
+const BROWSER_COLORS = { Chrome: '#4f46e5', Safari: '#0ea5e9', Firefox: '#f97316', Edge: '#22c55e', Unknown: '#9aa3b2' }
+const browsers = computed(() => {
+  const raw = props.summary?.byBrowser || {}
+  const entries = Object.entries(raw).map(([key, value]) => ({ label: key, value: Number(value) || 0, color: BROWSER_COLORS[key] || BROWSER_COLORS.Unknown }))
+  const total = entries.reduce((sum, e) => sum + e.value, 0)
+  return entries.sort((a, b) => b.value - a.value).map(e => ({ ...e, percent: total ? Math.round(e.value / total * 100) : 0 }))
+})
 </script>
 
 <template>

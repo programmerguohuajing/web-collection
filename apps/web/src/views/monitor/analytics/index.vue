@@ -1,6 +1,6 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, ArrowRight, ArrowUp } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, ArrowUp, QuestionFilled } from '@element-plus/icons-vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading, toList } from '../../../dashboard.js'
@@ -251,9 +251,6 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
   <el-tabs v-model="tab" class="panel section analytics-tabs" @tab-change="changeTab">
     <el-tab-pane :disabled="!insightsSupported" label="事件分析" name="insights">
       <EventInsightPanel v-if="insightsSupported" :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
-      <el-alert v-else type="info" :closable="false" show-icon title="当前部署暂不支持事件分析">
-        <template #default>当前部署（Cloudflare Worker）未实现事件分析能力，已切换到 Node API 部署或等待后续版本后将自动开放，不会静默隐藏此入口。</template>
-      </el-alert>
     </el-tab-pane>
     <el-tab-pane label="用户会话" name="sessions">
       <el-table ref="sessionTableRef" :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession" @expand-change="onSessionExpandChange" style="cursor:pointer">
@@ -314,8 +311,8 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
     <el-table :data="sessionEvents" border><el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column><el-table-column prop="type" label="类型" width="100" /><el-table-column label="名称" width="160"><template #default="{ row }">{{ row.name || row.metric }}</template></el-table-column><el-table-column label="内容" min-width="240"><template #default="{ row }"><OverflowTip :text="row.message" /></template></el-table-column><el-table-column prop="path" label="页面" min-width="220" /></el-table>
     <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionEventPager.page" :page-size="sessionEventPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionEventPager.total" @current-change="value => { sessionEventPager.page = value; loadSessionEvents() }" @size-change="value => { sessionEventPager.page = 1; sessionEventPager.pageSize = value; loadSessionEvents() }" />
   </el-drawer>
-  <el-dialog v-model="shareDialogVisible" title="分享仪表盘" width="560px">
-    <el-alert type="info" :closable="false" show-icon title="任何持有链接者均可只读查看该看板（仅看板定义与聚合数据，不含原始事件）；取消分享后链接立即失效。" class="share-note" />
+  <el-dialog v-model="shareDialogVisible" width="560px">
+    <template #title>分享仪表盘<el-tooltip content="任何持有链接者均可只读查看该看板（仅看板定义与聚合数据，不含原始事件）；取消分享后链接立即失效。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></template>
     <template v-if="shareInfo">
       <div class="share-row">
         <div class="share-link"><OverflowTip :text="shareInfo.url" /></div>

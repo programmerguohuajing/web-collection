@@ -6,6 +6,7 @@ import { api, pageLoading } from '../../../dashboard.js'
 import { useAuth } from '../../../composables/useAuth'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import MiniLineChart from '../../../components/MiniLineChart.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * B3 · 合成监控详情页：可用率/时延 KPI + 最近 N 次结果时间线 + 结果表。
@@ -128,7 +129,6 @@ onMounted(load)
       </div>
     </div>
 
-    <el-alert v-if="!syntheticEnabled" class="section" type="info" :closable="false" show-icon title="当前部署不支持合成监控，数据可能不可用" />
     <el-alert v-if="loadError" class="section" type="error" :title="loadError" show-icon />
 
     <section class="section kpi-row">

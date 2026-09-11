@@ -13,7 +13,7 @@ const primaryIssue = computed(() => issues.value.find(item => item.status !== 'r
 const overviewKpis = computed(() => [
   { label: '今日错误数', value: Number(summary.value?.errors ?? summary.value?.issueCount ?? issues.value.length).toLocaleString(), delta: '当前筛选范围内', valueClass: 'value-danger' },
   { label: '平均首屏 FCP', value: summary.value?.perf?.fcp != null ? formatDuration(summary.value.perf.fcp) : '-', delta: 'Core Web Vitals', valueClass: 'value-primary' },
-  { label: 'Apdex 体验分', value: summary.value?.apdex != null ? Number(summary.value.apdex).toFixed(2) : '-', delta: '体验评分', valueClass: 'value-purple' },
+  { label: 'Apdex 体验分', value: summary.value?.apdex != null ? Number(summary.value.apdex).toFixed(2) : '-', delta: '基于 LCP 样本（≤2.5s 满意 / ≤4s 容忍）', valueClass: 'value-purple' },
   { label: '在线用户', value: Number(summary.value?.users ?? replays.value.length).toLocaleString(), delta: '实时', valueClass: 'value-success' }
 ])
 const selectedRange = ref('7d')

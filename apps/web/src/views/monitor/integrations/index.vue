@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, normalizePageResponse, pageLoading } from '../../../dashboard.js'
 import OverflowTip from '../../../components/OverflowTip.vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 
 // C2 集成市场：Slack / PagerDuty 通知集成（入口）+ Sentry issue 导入（指纹对齐）
 
@@ -58,9 +59,9 @@ onMounted(loadApplications)
 
 <template>
   <div v-loading="pageLoading">
-    <el-alert class="section" type="info" :closable="false" show-icon
-      title="集成中心：把 Web Collection 接入现有 DevOps 通知与迁移链路"
-      description="Slack / PagerDuty 作为一等告警通道复用告警中心配置；Sentry issue 导入采用与本站采集事件一致的指纹公式，命中历史错误自动合并计数，迁移不产生重复 issue。" />
+    <div class="page-heading">
+      <h1>集成中心<el-tooltip content="集成中心：把 Web Collection 接入现有 DevOps 通知与迁移链路。Slack / PagerDuty 作为一等告警通道复用告警中心配置；Sentry issue 导入采用与本站采集事件一致的指纹公式，命中历史错误自动合并计数，迁移不产生重复 issue。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
+    </div>
 
     <el-row :gutter="14" class="section">
       <el-col :span="8">
