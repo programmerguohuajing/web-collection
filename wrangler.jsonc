@@ -22,6 +22,8 @@
       "migrations_dir": "cloudflare/migrations"
     }
   ],
-  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "17 3 * * *", "0 * * * *"] },
+  // 注意：Workers 免费版限制 5 个 cron/账户（API 10072），本 worker 3 个 + ai/mcp worker 已满额。
+  // 新增周期任务须复用既有 cron + 代码内频率守卫（参考 maybeHourlyRollupW），不能加新触发器。
+  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "17 3 * * *"] },
   "observability": { "enabled": true }
 }
