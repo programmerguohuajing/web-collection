@@ -123,9 +123,18 @@ async function ingestionMonitorSnapshot(env) {
 }
 
 // PRD R2-1：端到端回传校验——供 SDK/控制台确认「我发的事件到底有没有落库」。
+// 性能：SDK 健康页每 30s 轮询本端点（实测 902 次/天），此前每次 3 连查（其中
+// alert_history count 无索引全表扫 1733 行，单端点日耗 156 万行读——2026-09-10 D1 配额事故主因）。
+// 现 ① 0038 迁移补 (metric, app_id, created_at) 索引；② 按 appId 做 30s 结果缓存（对齐
+// dbIngestionHealth 既有模式）：诊断数据秒级新鲜度足够，重复查询直接命中内存。
+const _diagCache = new Map() // appId -> { at, payload }
 async function diagnostics(request, env, url) {
   const appId = clip(url.searchParams.get('appId') || 'default', 64)
   const now = Date.now()
+  const cached = _diagCache.get(appId)
+  if (cached && now - cached.at < 30000) {
+    return json({ ...cached.payload, stalledMs: cached.payload.lastEventTs != null ? now - cached.payload.lastEventTs : null, cached: true })
+  }
   const [last, cnt, errs] = await Promise.all([
     env.DB.prepare('select max(ts) as m from events where app_id=?').bind(appId).first().catch(() => null),
     env.DB.prepare('select count(*) as c from events where app_id=? and ts>=?').bind(appId, now - 3600 * 1000).first().catch(() => null),
@@ -136,14 +145,17 @@ async function diagnostics(request, env, url) {
   let status = 'healthy'
   if ((lastEventTs != null && Date.now() - lastEventTs > 15 * 60 * 1000) || Number(errs?.c || 0) > 0) status = 'critical'
   else if (lastEventTs != null && Date.now() - lastEventTs > 5 * 60 * 1000) status = 'degraded'
-  return json({
+  const payload = {
     appId,
     lastEventTs,
     stalledMs,
     receivedLast1h: Number(cnt?.c || 0),
     ingestErrorCount: Number(errs?.c || 0),
     status
-  })
+  }
+  if (_diagCache.size > 64) _diagCache.clear() // 防泄漏：appId 理论有限，保守上限
+  _diagCache.set(appId, { at: now, payload })
+  return json(payload)
 }
 
 // ===== Next Horizon E4/E1 补齐：SDK 端交付自监控 + SDK 体积开销 =====
@@ -1037,7 +1049,14 @@ async function paged(env, table, url, order) {
   return json({items:rows.results.map(mapIssue),total:total.count,page,pageSize})
 }
 
+// 性能缓存：summary 是控制台各页首屏聚合（insights 实测 105 次/天，P75 窗口函数 +
+// group by 每次读 1.2 万+ 行，日耗约 223 万行读——D1 配额事故第二大项）。
+// 同筛选条件 30s 内复用上次结果：遥看板秒级新鲜度足够，与前端 30s 轮询节奏对齐。
+const _summaryCache = new Map() // searchKey -> { at, text }
 async function summary(env,url){
+  const cacheKey = url.search
+  const hit = _summaryCache.get(cacheKey)
+  if (hit && Date.now() - hit.at < 30000) return new Response(hit.text, { headers: { 'content-type': 'application/json; charset=utf-8', 'x-summary-cache': 'hit' } })
   const {where,values}=filters(url),perfFilter=filters(url,'perf'),issueFilter=issueFilters(url)
   // P0-6 性能预算优化：原实现拉取 5000 条全列事件 + 50000 条 perf 事件到应用层聚合，
   // 现将 byType/behavior/事件总数/perf 计数与均值下推为 SQL GROUP BY，p75 用窗口函数
@@ -1072,7 +1091,10 @@ async function summary(env,url){
     if(value!==null)perf[metric]=Number(value.toFixed(metric==='cls'?4:0))
   }
   const perfRows=apiRows.map(row=>({metric:row.metric,value:Number(row.value),name:row.name,props:parse(row.props_json,{})}))
-  return json({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
+  const summaryBody=JSON.stringify({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
+  if (_summaryCache.size > 32) _summaryCache.clear() // 防泄漏：筛选组合有限，保守上限
+  _summaryCache.set(cacheKey, { at: Date.now(), text: summaryBody })
+  return new Response(summaryBody, { headers: { 'content-type': 'application/json; charset=utf-8' } })
 }
 
 function percentile75(values){if(!values.length)return null;const sorted=[...values].sort((a,b)=>a-b),index=(sorted.length-1)*.75,lower=Math.floor(index),upper=Math.ceil(index);return lower===upper?sorted[lower]:sorted[lower]+(sorted[upper]-sorted[lower])*(index-lower)}

@@ -89,9 +89,8 @@ watch([days, () => store.appId], load)
           <el-table-column prop="cohortDate" label="首访日期" width="120" />
           <el-table-column prop="size" label="群规模" width="90" align="right">
             <template #default="{ row }">
-              <el-tooltip v-if="row.sampleNote" :content="row.sampleNote" placement="top">
-                <span class="sample-warn">{{ row.size }}</span>
-              </el-tooltip>
+              <!-- 样本量警告用原生 title（EP 2.14 红线：表格内禁用未统一定位的 el-tooltip） -->
+              <span v-if="row.sampleNote" class="sample-warn" :title="row.sampleNote">{{ row.size }}</span>
               <span v-else>{{ row.size }}</span>
             </template>
           </el-table-column>

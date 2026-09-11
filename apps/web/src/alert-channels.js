@@ -1,4 +1,10 @@
-import { alertSubjectPrefix } from './composables/useBrand'
+// 品牌告警主题前缀：惰性读取 window.__BRAND__（/brand.js 同步注入，白标未启用时回落内置名）。
+// 不再 import useBrand.ts：纯 JS 工具模块依赖 .ts + Vue 响应式会让 node --test 原生 ESM 无法解析（无扩展名 .ts 导入），
+// 且每次调用读最新值，与 computed 语义一致。
+function alertSubjectPrefix() {
+  const brand = typeof window !== 'undefined' && window.__BRAND__
+  return `${(brand && brand.name) || 'Web Collection'} 告警`
+}
 
 const DEFAULT_LEVELS = ['error', 'critical']
 const DEFAULT_METRICS = ['error', 'log_error', 'regression']
@@ -23,7 +29,7 @@ export function createAlertChannelForm(row = {}) {
     subjectTemplate: config.subjectTemplate || config.subject || '',
     titleTemplate: config.titleTemplate || '',
     messageType: config.messageType || '',
-    subject: config.subject || alertSubjectPrefix.value,
+    subject: config.subject || alertSubjectPrefix(),
     templateId: config.templateId || '',
     authType: config.authType || 'none',
     token: '',

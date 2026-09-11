@@ -3,16 +3,18 @@ import worker, { alertMessage, buildDistributedTrace, filters, issueFilters, iss
 
 const result = filters(new URL('https://example.com/api/events?type=error&path=%2Flogin%2Flogin'))
 
-assert.equal(result.where, 'where type=? and (path like ? or url like ?)')
-assert.deepEqual(result.values, ['error', '%/login/login%', '%/login/login%'])
+// 默认时间窗：无 startTime/endTime 时自动追加 ts>=?（90 天，防全表扫描），首位参数为动态时间戳
+assert.equal(result.where, 'where ts>=? and type=? and (path like ? or url like ?)')
+assert.ok(Math.abs(result.values[0] - (Date.now() - 90 * 86400000)) < 60000)
+assert.deepEqual(result.values.slice(1), ['error', '%/login/login%', '%/login/login%'])
 
 const behavior = filters(new URL('https://example.com/api/events?type=behavior,track'))
-assert.equal(behavior.where, 'where type in (?,?)')
-assert.deepEqual(behavior.values, ['behavior', 'track'])
+assert.equal(behavior.where, 'where ts>=? and type in (?,?)')
+assert.deepEqual(behavior.values.slice(1), ['behavior', 'track'])
 
 const logs = filters(new URL('https://example.com/api/logs?name=warn'), 'log')
-assert.equal(logs.where, 'where type=? and name=?')
-assert.deepEqual(logs.values, ['log', 'warn'])
+assert.equal(logs.where, 'where ts>=? and type=? and name=?')
+assert.deepEqual(logs.values.slice(1), ['log', 'warn'])
 
 const traceFilters = filters(new URL('https://example.com/api/traces?traceId=abc&release=1.2.3&path=%2Fcheckout&startTime=10&endTime=20'), null, ["trace_id<>''"])
 assert.equal(traceFilters.where, "where trace_id<>'' and release_name=? and trace_id like ? and (path like ? or url like ?) and ts>=? and ts<=?")
@@ -31,18 +33,13 @@ assert.equal(alertMessage({ type: 'error', appId: 'web', name: 'TypeError', mess
 assert.equal(issueKey({ appId: 'web', name: 'SseError', stack: 'sdk line', props: { source: 'https://example.com/events' } }), 'web|SseError|https://example.com/events')
 
 const capabilityResponse = await worker.fetch(new Request('https://example.com/api/capabilities'), {})
-assert.deepEqual(await capabilityResponse.json(), {
-  productAnalyticsV2: false,
-  traffic: false,
-  insights: false,
-  funnels: true,
-  dashboards: true,
-  paths: true,
-  live: true,
-  releases: true,
-  eventDefinitions: false,
-  journeys: false
-})
+// 能力位清单随版本演进（accounts/dsr/experiments/metering/whiteLabel 等陆续加入），
+// 这里只断言本测试关注的键值，避免新增能力位即破坏测试。
+const capabilities = await capabilityResponse.json()
+assert.equal(capabilities.insights, false)
+assert.equal(capabilities.eventDefinitions, true)
+assert.equal(capabilities.journeys, true)
+for (const key of ['funnels', 'dashboards', 'paths', 'live', 'releases']) assert.equal(capabilities[key], true)
 
 let writes = 0
 let pending
@@ -92,7 +89,8 @@ const eventNamesResponse = await worker.fetch(new Request('https://example.com/a
 })
 assert.match(eventNamesSql, /type in \('behavior','track'\)/)
 assert.doesNotMatch(eventNamesSql, /type=\?/)
-assert.deepEqual(eventNamesValues, ['web'])
+// 首位为默认 90 天窗时间戳（filters 无显式时间参数时追加），末位才是 appId
+assert.deepEqual(eventNamesValues.slice(1), ['web'])
 assert.deepEqual(await eventNamesResponse.json(), [{ name: 'click', count: 12 }])
 
 const issueQueries = []
@@ -117,7 +115,8 @@ const summaryResponse = await worker.fetch(new Request('https://example.com/api/
 assert.equal((await summaryResponse.json()).issueCount, 2)
 const issueSqls = issueQueries.map(([sql]) => sql).filter(sql => sql.includes('from issues'))
 assert.equal(issueSqls.length, 2)
-assert.ok(issueQueries.every(([sql, values]) => sql.includes('where app_id=?') && values[0] === 'web'))
+// issueFilters 默认追加 last_seen>=?（90 天窗），appId 不再是首位参数
+assert.ok(issueQueries.filter(([sql]) => sql.includes('from issues')).every(([sql, values]) => sql.includes('last_seen>=? and app_id=?') && values.includes('web')))
 
 const traceQueries = []
 const tracesResponse = await worker.fetch(new Request('https://example.com/api/traces?page=2&pageSize=25'), {
@@ -241,8 +240,11 @@ const deleteApplicationResponse = await worker.fetch(new Request('https://exampl
   }
 })
 assert.equal(deleteApplicationResponse.status, 200)
+// 级联清理：releases → experiment_exposures → experiments → applications（A3 实验分析上线后扩展）
 assert.deepEqual(applicationDeletes, [
   ['delete from releases where app_id=?', ['test-app']],
+  ['delete from experiment_exposures where app_id=?', ['test-app']],
+  ['delete from experiments where app_id=?', ['test-app']],
   ['delete from applications where app_id=?', ['test-app']]
 ])
 
@@ -262,7 +264,8 @@ for (const kind of ['events', 'issues', 'replays']) {
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('content-disposition'), `attachment; filename="web-collection-${kind}.csv"`)
 }
-assert.ok(exportQueries.every(([, sql, values]) => sql.includes('where app_id=?') && values[0] === 'web'))
+// exportCsv 的 filters 带 90 天默认时间窗（issues 为 last_seen、replays 为 created_at），appId 不一定是首位
+assert.ok(exportQueries.every(([, sql, values]) => sql.includes('app_id=?') && values.includes('web')))
 assert.doesNotMatch(exportQueries.find(([kind]) => kind === 'replays')[1], /events_json/)
 
 console.log('cloudflare filters tests passed')
