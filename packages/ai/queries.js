@@ -7,6 +7,10 @@
  */
 import { maskPhone, parse } from './pii.js'
 
+// 单个 trace 若被业务侧长期复用，事件数会无界增长。D1 按读取行计费，且把数万条
+// 事件交给诊断模型既昂贵也不会增加有效上下文；保留最近 5,000 条足以覆盖一次正常链路。
+export const MAX_TRACE_EVENTS = 5000
+
 // ---------------- 纯映射（worker.js 抽取） ----------------
 
 export function mapEvent(r) {
@@ -179,14 +183,14 @@ function traceCriticalPath(roots, spanMap) {
 export async function getDistributedTrace(db, traceId) {
   if (!traceId?.trim()) return { root: null, nodes: [], edges: [], criticalPath: [], errorSpans: [] }
   const [events, backendSpans] = await Promise.all([
-    db.prepare('select * from events where trace_id=? order by ts').bind(traceId).all(),
-    db.prepare('select * from spans where trace_id=? order by start_ts').bind(traceId).all().catch(() => [])
+    db.prepare('select * from (select * from events where trace_id=? order by ts desc limit ?) order by ts').bind(traceId, MAX_TRACE_EVENTS).all(),
+    db.prepare('select * from (select * from spans where trace_id=? order by start_ts desc limit ?) order by start_ts').bind(traceId, MAX_TRACE_EVENTS).all().catch(() => [])
   ])
   return buildDistributedTrace(events || [], backendSpans || [])
 }
 
 export async function getTrace(db, traceId) {
-  const rows = (await db.prepare('select * from events where trace_id=? order by ts').bind(traceId).all()) || []
+  const rows = (await db.prepare('select * from (select * from events where trace_id=? order by ts desc limit ?) order by ts').bind(traceId, MAX_TRACE_EVENTS).all()) || []
   return rows.map(mapEvent)
 }
 
@@ -229,13 +233,16 @@ export async function getReleaseStats(db, releaseName, appId) {
 }
 
 /**
- * 版本时间线（首次出现时间升序），供「上一版本」定位。
- * 仅统计 events 中实际出现过的 release_name（releases 表未必全）。
+ * 版本时间线（首次登记时间升序），供「上一版本」定位。
+ *
+ * releases 在采集路径中按 (app_id, release_name) 幂等登记，规模约等于版本数；此前从
+ * events 做 min(ts)+group by，会为每次发布回归检测扫描整张事件表（线上 4.6 万行/次）。
+ * 全局模式仍需按 release_name 合并不同应用，但只扫描很小的 releases 目录表。
  */
 export async function getReleaseList(db, appId) {
   const sql = appId
-    ? 'select release_name, min(ts) as first_ts from events where app_id=? and release_name is not null group by release_name order by first_ts asc'
-    : 'select release_name, min(ts) as first_ts from events where release_name is not null group by release_name order by first_ts asc'
+    ? 'select release_name, created_at as first_ts from releases where app_id=? order by created_at asc'
+    : 'select release_name, min(created_at) as first_ts from releases group by release_name order by first_ts asc'
   const params = appId ? [appId] : []
   const rows = await db.prepare(sql).bind(...params).all()
   return (rows || []).map(r => ({ release_name: r.release_name, firstTs: Number(r.first_ts) || 0 }))

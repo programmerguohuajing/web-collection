@@ -19,7 +19,7 @@ function buildDb(fixtures = {}) {
           if (sql.includes('from events where trace_id=')) return fixtures.events || []
           if (sql.includes('from events where session_id=')) return fixtures.sessionEvents || []
           if (sql.includes('from events where release_name=') && sql.includes('group by type')) return fixtures.releaseStats || []
-          if (sql.includes('min(ts)') && sql.includes('group by release_name')) return fixtures.releaseList || []
+          if (sql.includes('from releases')) return fixtures.releaseList || []
           if (sql.includes('ai_kb_chunks')) return []
           return []
         },
@@ -126,7 +126,7 @@ test('P0 release 诊断：上下文含版本对比与变化率', async () => {
             const name = this._v[this._v.length - 1]
             return name === 'v1' ? RELEASE_STATS_PREV : RELEASE_STATS
           }
-          if (sql.includes('min(ts)')) return RELEASE_LIST
+          if (sql.includes('from releases')) return RELEASE_LIST
           return []
         },
         async first() { return null },
@@ -186,7 +186,7 @@ test('P1 深诊断 scope=finding：release-regression → release 引擎', async
             const name = this._v[this._v.length - 1]
             return name === 'v1' ? RELEASE_STATS_PREV : RELEASE_STATS
           }
-          if (sql.includes('min(ts)')) return RELEASE_LIST
+          if (sql.includes('from releases')) return RELEASE_LIST
           return []
         },
         async first() { return null },
@@ -241,7 +241,7 @@ test('P1 深诊断 scope=finding：release-regression 已受支持（不再抛 4
             const name = this._v[this._v.length - 1]
             return name === 'v1' ? RELEASE_STATS_PREV : RELEASE_STATS
           }
-          if (sql.includes('min(ts)')) return RELEASE_LIST
+          if (sql.includes('from releases')) return RELEASE_LIST
           return []
         },
         async first() { return null },

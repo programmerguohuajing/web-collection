@@ -2,7 +2,7 @@ import { SourceMapConsumer } from 'source-map-js'
 import { alertContext, channelMatches, decryptSecrets, encryptSecrets, normalizeChannel, publicChannel, publishDelivery, sendChannel, verifyQStash } from '../packages/alerting.js'
 import { buildCapabilities, WORKER_CAPABILITIES } from '../packages/deployment-capabilities.js'
 import { maybeAutoDiagnose } from '../packages/ai/alert-diagnosis.js'
-import { buildDistributedTrace } from '../packages/ai/queries.js'
+import { buildDistributedTrace, MAX_TRACE_EVENTS } from '../packages/ai/queries.js'
 import { missingMetricDailyDays, writeMetricDailyStats } from '../packages/ai/baseline.js'
 import { createD1Adapter } from '../packages/ai/db-adapter.js'
 import { DEFAULT_COLLECT_CONFIG, diffConfigs, resolveCollectConfig, sanitizeCollectConfigInput } from '../packages/collect-config.js'
@@ -343,7 +343,6 @@ export default {
     }
   },
   async scheduled(controller, env) {
-    await retryPendingAlertDeliveries(env)
     if (controller.cron === '17 3 * * *') {
       // D1 行读优化 ①②：日表 EOD 回填 + 小时表 48h 自愈（防部署空窗漏算），再执行保留期清理
       await metricDailyRollupW(env)
@@ -359,7 +358,12 @@ export default {
       await maybeHourlyRollupW(env, controller.scheduledTime)
     }
     // B3 · 合成监控：每分钟探针 tick（SYNTHETIC_ENABLED≠1 时首行空转返回，零开销）
-    if (controller.cron === '* * * * *') await syntheticTickW(env)
+    if (controller.cron === '* * * * *') {
+      // 告警重试只挂分钟 cron：避免与 */5、每日 cron 重复抢同一批记录。每批 5 条为
+      // 无 QStash 时的最坏路径预留 D1 免费版单次 50 queries 预算（每条约 5 次 DB 操作）。
+      await retryPendingAlertDeliveries(env)
+      await syntheticTickW(env)
+    }
   }
 }
 
@@ -795,6 +799,56 @@ async function resolveReplayEvents(event) {
   return []
 }
 
+// D1 单个字符串/行硬上限为 2,000,000 bytes。线上已有回放段的 JSON 最大约 3 MB，
+// 继续明文写入会在大页面全量快照处触发 D1_SIZE_AFTER_LIMIT。新数据统一以 gzip+base64
+// 存储；读取端同时兼容历史明文 JSON。预留约 10% 余量给行内其它字段与实现差异。
+const REPLAY_GZIP_PREFIX = 'gzip:'
+const REPLAY_D1_VALUE_LIMIT = 1800000
+
+function bytesToBase64(bytes) {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768))
+  return btoa(binary)
+}
+
+async function gzipReplayEvents(events) {
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(events))
+  const stream = new Blob([jsonBytes]).stream().pipeThrough(new CompressionStream('gzip'))
+  const compressed = new Uint8Array(await new Response(stream).arrayBuffer())
+  return REPLAY_GZIP_PREFIX + bytesToBase64(compressed)
+}
+
+/**
+ * 编码为 D1 安全大小的若干段。通常复用 SDK 已生成的 gzip；仅超限或 fallback 数据才重压缩。
+ * 极端情况下递归按事件边界切段，确保每个 events_json 都低于 D1 单值上限且仍是完整 JSON。
+ */
+export async function encodeReplayEventsForStorage(events, sdkGzipBase64 = '') {
+  if (!Array.isArray(events) || !events.length) return []
+  const reused = typeof sdkGzipBase64 === 'string' ? REPLAY_GZIP_PREFIX + sdkGzipBase64 : ''
+  if (sdkGzipBase64 && reused.length <= REPLAY_D1_VALUE_LIMIT) return [reused]
+  const encoded = await gzipReplayEvents(events)
+  if (encoded.length <= REPLAY_D1_VALUE_LIMIT) return [encoded]
+  if (events.length === 1) return []
+  const middle = Math.ceil(events.length / 2)
+  return [
+    ...await encodeReplayEventsForStorage(events.slice(0, middle)),
+    ...await encodeReplayEventsForStorage(events.slice(middle))
+  ]
+}
+
+/** 读取新 gzip 段或历史明文 JSON 段。 */
+export async function decodeReplayEventsFromStorage(value) {
+  if (typeof value !== 'string' || !value.startsWith(REPLAY_GZIP_PREFIX)) return parse(value, [])
+  try {
+    const bytes = Uint8Array.from(atob(value.slice(REPLAY_GZIP_PREFIX.length)), c => c.charCodeAt(0))
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+    const parsed = JSON.parse(await new Response(stream).text())
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 async function record(env, event, application, ctx) {
   const now = Date.now()
   if (event.type === 'error' && event.props?.name) event.name = clip(event.props.name, 160)
@@ -806,7 +860,11 @@ async function record(env, event, application, ctx) {
   if (rules.blockedTypes?.includes(event.type) || rules.blockedNames?.includes(event.name) || (rules.allowedOrigins?.length && !rules.allowedOrigins.includes('*') && !rules.allowedOrigins.includes(origin(event.url)))) return false
   if (event.type === 'replay') {
     const events = await resolveReplayEvents(event)
-    if (event.sessionId && events.length) await storageWrite(env, `insert into replays (session_id,app_id,user_id,user_name,user_phone,created_at,url,release_name,end_reason,events_json,base_session_id,user_agent) values (?,?,?,?,?,?,?,?,?,?,?,?)`, [event.sessionId,event.appId,event.userId,event.userName,event.userPhone,event.ts,event.url,event.release,event.segmentEndReason||null,JSON.stringify(events),event.baseSessionId||null,event.userAgent||null])
+    if (event.sessionId && events.length) {
+      const chunks = await encodeReplayEventsForStorage(events, event.compression === 'gzip' ? event.events : '')
+      if (!chunks.length) console.error('[replay] segment exceeds D1 row limit after gzip:', event.sessionId)
+      for (const chunk of chunks) await storageWrite(env, `insert into replays (session_id,app_id,user_id,user_name,user_phone,created_at,url,release_name,end_reason,events_json,base_session_id,user_agent) values (?,?,?,?,?,?,?,?,?,?,?,?)`, [event.sessionId,event.appId,event.userId,event.userName,event.userPhone,event.ts,event.url,event.release,event.segmentEndReason||null,chunk,event.baseSessionId||null,event.userAgent||null])
+    }
     return true
   }
   const id = crypto.randomUUID()
@@ -1111,7 +1169,9 @@ async function metricDailyRollupW(env, lookbackDays = 14) {
     const db = createD1Adapter({ DB: env.DB })
     const now = Date.now(), today = utcDayKeyW(now)
     const missing = await missingMetricDailyDays(db, { fromDay: utcDayKeyW(now - lookbackDays * 86400000), toDay: today })
-    const days = missing.filter(d => d < today)
+    // 每日 cron 同一 invocation 还要做 48h 小时表自愈和 11 张表清理；每个日桶需 6 条
+    // upsert，最多处理 5 天可把最坏查询数控制在 Workers Free 的 50 次以内。
+    const days = missing.filter(d => d < today).slice(0, 5)
     if (!days.length) return { written: 0, days: [] }
     const r = await writeMetricDailyStats(db, { days })
     console.log(`[metric-daily] rollup done: days=${days.join(',')} written=${r.written}`)
@@ -1138,7 +1198,7 @@ async function hourlyRollupRangeW(env, fromTs, toTs) {
     on conflict(app_id, hour_ts, type, metric, name) do update set cnt=excluded.cnt, perf_cnt=excluded.perf_cnt, value_sum=excluded.value_sum`).bind(fromTs, toTs).run()
 }
 
-/** ② 小时级 cron（0 * * * *）：刷新上一小时（已完结）+ 当前小时（部分，下轮覆盖）；首部署回填 14d；顺带 ① 日表回填。 */
+/** ② 小时级 cron（0 * * * *）：刷新上一小时（已完结）+ 当前小时（部分，下轮覆盖）；首部署回填 14d。 */
 async function hourlyRollupW(env) {
   try {
     const now = Date.now(), HOUR = 3600000, curHour = Math.floor(now / HOUR) * HOUR
@@ -1151,19 +1211,21 @@ async function hourlyRollupW(env) {
       await hourlyRollupRangeW(env, curHour - 14 * 86400000, curHour - HOUR)
       console.log('[hourly-rollup] initial 14d backfill done')
     }
-    await metricDailyRollupW(env)
   } catch (error) { console.error('[hourly-rollup] failed:', error?.message || error, error?.stack || '') }
 }
 
 /**
- * ② 小时桶守卫：复用「每 5 分钟」cron 执行小时级预聚合（账户 cron 触发器达免费版 5 个上限，
- * 无法新增独立小时触发器）。同一小时桶只跑一次；隔离冷启动后守卫归零最多多跑一次（幂等无害）。
+ * ② 整点守卫：复用「每 5 分钟」cron 执行小时级预聚合（账户 cron 触发器达免费版 5 个上限，
+ * 无法新增独立小时触发器）。scheduledTime 是 cron 计划时间，即使实际执行延迟也稳定；只允许 UTC
+ * minute=0 的触发进入，避免旧版内存桶在隔离冷启动后归零而把同一小时重复写 2~3 次。
  */
-let _lastHourlyBucketW = 0
+export function shouldRunHourlyRollupW(scheduledTime) {
+  const scheduledAt = Number(scheduledTime) || Date.now()
+  return new Date(scheduledAt).getUTCMinutes() === 0
+}
+
 async function maybeHourlyRollupW(env, scheduledTime) {
-  const bucket = Math.floor(Number(scheduledTime) || Date.now()) / 3600000 | 0
-  if (bucket === _lastHourlyBucketW) return
-  _lastHourlyBucketW = bucket
+  if (!shouldRunHourlyRollupW(scheduledTime)) return
   await hourlyRollupW(env)
 }
 
@@ -1406,7 +1468,7 @@ async function replayEvents(env,id){
   const merged=[];
   let segId=null,anchored=false;
   for(const row of rows){
-    const evs=parse(row.events_json,[]);
+    const evs=await decodeReplayEventsFromStorage(row.events_json);
     if(!Array.isArray(evs)||!evs.length)continue;
     if(row.session_id!==segId){segId=row.session_id;anchored=false}
     const snapIdx=evs.findIndex(e=>e&&e.type===2);
@@ -1451,7 +1513,7 @@ async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get
   const spanEv="not(type='perf' and(metric='memory' or substr(metric,-5)='_rate' or metric='redirect_count'))";
   const[rows,total]=await Promise.all([env.DB.prepare(`select trace_id,min(case when ${spanEv} then ts end) started_at,max(case when ${spanEv} then ts end) ended_at,sum(case when ${spanEv} then 1 else 0 end) span_count,sum(case when type='error' or json_extract(props_json,'$.status')>=400 then 1 else 0 end) error_count,max(app_id) app_id,max(release_name) release_name,max(url) url from events ${where} group by trace_id order by started_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by trace_id)`).bind(...values).first()]);return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at})),total:Number(total.count),page,pageSize})}
 async function traceEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const[rows,total]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts limit ? offset ?').bind(id,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from events where trace_id=?').bind(id).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
-async function distributedTrace(env,id){if(!id?.trim())return json({root:null,nodes:[],edges:[],criticalPath:[],errorSpans:[]});const[events,backendSpans]=await Promise.all([env.DB.prepare('select * from events where trace_id=? order by ts').bind(id).all(),env.DB.prepare('select * from spans where trace_id=? order by start_ts').bind(id).all().catch(()=>({results:[]}))]);return json(buildDistributedTrace(events.results||[],backendSpans.results||[]))}
+async function distributedTrace(env,id){if(!id?.trim())return json({root:null,nodes:[],edges:[],criticalPath:[],errorSpans:[]});const[events,backendSpans]=await Promise.all([env.DB.prepare('select * from (select * from events where trace_id=? order by ts desc limit ?) order by ts').bind(id,MAX_TRACE_EVENTS).all(),env.DB.prepare('select * from (select * from spans where trace_id=? order by start_ts desc limit ?) order by start_ts').bind(id,MAX_TRACE_EVENTS).all().catch(()=>({results:[]}))]);return json(buildDistributedTrace(events.results||[],backendSpans.results||[]))}
 
 // BUG-013 修复：topology-plan F1 —— GET /api/traces/:traceId/topology（调用拓扑，页面节点 → API 节点）。
 // 归并逻辑对齐文档 §4.1：① 根节点取 trace 的 url/path（page:<path>）；② fetch/xhr 按
@@ -3194,7 +3256,7 @@ async function consumeAlertDelivery(request,env){
 }
 
 async function retryPendingAlertDeliveries(env){
-  const rows=(await env.DB.prepare(`select id from alert_deliveries where status='pending' and queue_message_id is null and updated_at<? order by updated_at limit 100`).bind(Date.now()-60000).all()).results
+  const rows=(await env.DB.prepare(`select id from alert_deliveries where status='pending' and queue_message_id is null and updated_at<? order by updated_at limit 5`).bind(Date.now()-60000).all()).results
   for(const row of rows)await queueOrDeliverAlert(env,Number(row.id))
   return rows.length
 }
@@ -3248,7 +3310,7 @@ function workerAlert(row){
 
 function alertError(error){return String(error?.message||error).slice(0,1000)}
 
-async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['hourlyStats',`delete from events_hourly_stats where hour_ts<?`,config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['alerts','delete from alert_history where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays],['syntheticResults','delete from synthetic_results where checked_at<?',config.syntheticResultsDays||30],['experimentExposures','delete from experiment_exposures where exposed_at<?',config.eventsDays||30]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
+async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['hourlyStats',`delete from events_hourly_stats where hour_ts<?`,config.eventsDays],['spans','delete from spans where ts<?',config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['issues',`delete from issues where status='resolved' and last_seen<?`,config.resolvedIssuesDays],['alerts','delete from alert_history where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays],['sdkMonitoring','delete from sdk_monitoring where ts<?',config.sdkMonitoringDays||30],['syntheticResults','delete from synthetic_results where checked_at<?',config.syntheticResultsDays||30],['experimentExposures','delete from experiment_exposures where exposed_at<?',config.eventsDays||30]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
 async function exportCsv(env,kind,url){const filter=kind==='issues'?issueFilters(url):kind==='replays'?replayFilters(url):filters(url),select=kind==='replays'?'select app_id,session_id,max(user_id) user_id,max(user_name) user_name,max(user_phone) user_phone,min(created_at) first_seen,max(created_at) last_seen,max(url) url,max(release_name) release_name,max(end_reason) end_reason,count(*) event_count from replays':`select * from ${kind}`,group=kind==='replays'?' group by app_id,session_id':'',order=kind==='issues'?'last_seen':kind==='replays'?'last_seen':'ts',rows=(await env.DB.prepare(`${select} ${filter.where}${group} order by ${order} desc limit 10000`).bind(...filter.values).all()).results,keys=rows.length?Object.keys(rows[0]):[],cell=v=>`"${String(v??'').replaceAll('"','""')}"`,csv=rows.length?'\ufeff'+[keys.map(cell).join(','),...rows.map(r=>keys.map(k=>cell(r[k])).join(','))].join('\r\n'):'';return new Response(csv,{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':`attachment; filename="web-collection-${kind}.csv"`}})}
 
 export function filters(url,forcedType,fixed=[],fixedValues=[]){const p=url.searchParams,parts=[...fixed],values=[...fixedValues];const _hasTs=fixed.some(f=>/\bts\s*[<>]=?\s*\?/.test(f))||p.has('startTime')||p.has('endTime');if(!_hasTs){parts.push('ts>=?');values.push(Date.now()-90*86400000)}for(const [field,key,value] of [['app_id','appId'],['release_name','release'],['type','type',forcedType],['name','name'],['user_id','userId'],['session_id','sessionId']]){const v=value||p.get(key);if(v){const items=field==='type'?String(v).split(',').filter(Boolean):[v];parts.push(items.length>1?`${field} in (${items.map(()=>'?').join(',')})`:`${field}=?`);values.push(...items)}}if(p.get('traceId')){parts.push('trace_id like ?');values.push(`%${p.get('traceId')}%`)}if(p.get('path')){parts.push('(path like ? or url like ?)');values.push(...Array(2).fill(`%${p.get('path')}%`))}if(p.get('startTime')){parts.push('ts>=?');values.push(Number(p.get('startTime')))}if(p.get('endTime')){parts.push('ts<=?');values.push(Number(p.get('endTime')))}if(p.get('keyword')){parts.push('(name like ? or message like ? or props_json like ? or trace_id like ?)');values.push(...Array(4).fill(`%${p.get('keyword')}%`))}return{where:parts.length?`where ${parts.join(' and ')}`:'',values}}
