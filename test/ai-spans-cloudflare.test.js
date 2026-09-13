@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildDistributedTrace, getDistributedTrace } from '../packages/ai/queries.js'
+import { buildDistributedTrace, getDistributedTrace, getReleaseList, MAX_TRACE_EVENTS } from '../packages/ai/queries.js'
 import { buildDistributedTrace as workerBuild } from '../cloudflare/worker.js'
 
 /**
@@ -53,10 +53,11 @@ test('worker.js 与 queries.js 的 buildDistributedTrace 是同一实现（re-ex
 
 test('getDistributedTrace 并行查 events 与 spans 并合并', async () => {
   let queries = []
+  const bindings = []
   const db = {
     prepare(sql) {
       const stmt = {
-        bind(...v) { this._v = v; return this },
+        bind(...v) { this._v = v; bindings.push(v); return this },
         async all() {
           queries.push(sql)
           if (sql.includes('from spans')) return [
@@ -75,8 +76,36 @@ test('getDistributedTrace 并行查 events 与 spans 并合并', async () => {
   const t = await getDistributedTrace(db, 't')
   assert.ok(queries.some(q => q.includes('from spans')))
   assert.ok(queries.some(q => q.includes('from events')))
+  assert.ok(queries.every(q => q.includes('desc limit ?')), '超长 trace 查询必须有硬上限')
+  assert.ok(bindings.every(values => values[1] === MAX_TRACE_EVENTS))
   // 合并了后端 svc-cart span
   assert.ok(t.nodes.some(n => n.service === 'svc-cart'))
   assert.ok(t.nodes.some(n => n.service === 'frontend'))
   assert.ok(t.errorSpans.length >= 2) // frontend error + backend error
+})
+
+test('getReleaseList 从小型 releases 目录读取，不再聚合扫描 events', async () => {
+  const calls = []
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...values) {
+          calls.push({ sql, values })
+          return this
+        },
+        async all() { return [{ release_name: 'v1', first_ts: 100 }, { release_name: 'v2', first_ts: 200 }] }
+      }
+    }
+  }
+  assert.deepEqual(await getReleaseList(db, 'app-1'), [
+    { release_name: 'v1', firstTs: 100 },
+    { release_name: 'v2', firstTs: 200 }
+  ])
+  assert.match(calls[0].sql, /from releases where app_id=\? order by created_at asc/)
+  assert.ok(!calls[0].sql.includes('from events'))
+  assert.deepEqual(calls[0].values, ['app-1'])
+
+  await getReleaseList(db)
+  assert.match(calls[1].sql, /min\(created_at\).*from releases group by release_name/)
+  assert.deepEqual(calls[1].values, [])
 })

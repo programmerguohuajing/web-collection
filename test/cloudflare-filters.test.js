@@ -250,10 +250,10 @@ let distributedTraceId = ''
 const distributedResponse = await worker.fetch(new Request('https://example.com/api/traces/trace-1/distributed'), {
   DB: {
     prepare(sql) {
-      // events 按 ts、spans 按 start_ts 排序，两条都必须带 trace_id 参数化过滤
-      assert.match(sql, /where trace_id=\? order by (start_)?ts/)
+      // 只取最近 5,000 条再恢复正序：阻断业务长期复用 trace_id 导致的无界 D1 行读。
+      assert.match(sql, /where trace_id=\? order by (start_)?ts desc limit \?\) order by (start_)?ts/)
       return {
-        bind(value) { distributedTraceId = value; return this },
+        bind(...values) { distributedTraceId = values[0]; assert.deepEqual(values, ['trace-1', 5000]); return this },
         async all() { return { results: [{ id: 'event-1', trace_id: 'trace-1', span_id: 'span-1', type: 'perf', metric: 'fetch', ts: 1, value: 12, props_json: '{}' }] } }
       }
     }
