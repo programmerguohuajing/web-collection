@@ -233,8 +233,8 @@ onMounted(load)
       <el-alert v-if="governanceError" class="table-error" type="error" :title="governanceError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
       <el-table :data="applications" border v-loading="governanceLoading" empty-text="暂无应用数据">
         <el-table-column prop="app_id" label="App ID" min-width="150" />
-        <el-table-column prop="name" label="应用名称" min-width="150" />
-        <el-table-column prop="platform" label="平台" width="100" />
+        <el-table-column prop="name" label="应用名称" min-width="160" cell-class-name="nowrap-cell" />
+        <el-table-column prop="platform" label="平台" width="140" cell-class-name="nowrap-cell" />
         <el-table-column prop="owner" label="负责人" min-width="120" />
         <el-table-column label="事件采样率" width="120"><template #default="{ row }">{{ formatRate(row.sample_rate ?? row.sampleRate) }}</template></el-table-column>
         <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ formatRate(row.replay_sample_rate ?? row.replaySampleRate) }}</template></el-table-column>

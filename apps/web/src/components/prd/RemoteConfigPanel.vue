@@ -43,6 +43,7 @@ async function loadPreview() {
     }
     previewHit.value = await api(`/api/collect-config?${params}`, { requestKey: 'rc:preview' })
   } catch { previewHit.value = null }
+  return previewHit.value
 }
 
 function fillFromConfig(config) {
@@ -61,10 +62,11 @@ function fillFromConfig(config) {
   if (Number.isFinite(limit) && limit > 0) configForm.rateLimit = limit
 }
 
-function onScopeChange() {
-  void loadPreview()
+async function onScopeChange() {
+  // 必须先 await 再回填：不等待会读到上一次的 previewHit（陈旧值）
+  const hit = await loadPreview()
   // 切范围时回填该范围当前生效值作为编辑基线
-  if (previewHit.value?.matched && previewHit.value?.config) fillFromConfig(previewHit.value.config)
+  if (hit?.matched && hit?.config) fillFromConfig(hit.config)
 }
 
 /** 更具体配置冲突提示（FR：最具体者生效，冲突高亮） */
@@ -176,6 +178,9 @@ const maxDistSessions = () => Math.max(1, ...(stats.value?.distribution || []).m
 
 onMounted(async () => {
   await Promise.all([loadPreview(), loadHistory(), loadStats()])
+  // 进入页面即回填当前生效配置：此前只拉取不回填，编辑器一直停在组件默认值，
+  // 用户保存后再次进入会误以为「改动没生效」（实际已落库，需点「命中查询」才可见）。
+  if (previewHit.value?.matched && previewHit.value?.config) fillFromConfig(previewHit.value.config)
 })
 </script>
 

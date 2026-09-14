@@ -1,8 +1,8 @@
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api, pageLoading } from '../../../dashboard.js'
+import { api, pageLoading, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 
 const route = useRoute()
@@ -10,10 +10,10 @@ const router = useRouter()
 const store = useFilterStore()
 
 // ---------------- 检索区（FR-1：URL 带参可分享） ----------------
+// 时间范围不再是页面条件：统一沿用顶部全局筛选（store.range），页内不再自建时间选择器。
 const searchForm = reactive({
   type: ['user', 'device', 'session', 'trace'].includes(route.query.type) ? route.query.type : 'session',
-  value: String(route.query.value || ''),
-  range: ['24h', '7d', 'all'].includes(route.query.range) ? route.query.range : '24h'
+  value: String(route.query.value || '')
 })
 const TYPE_OPTIONS = [
   { value: 'session', label: '会话 ID' },
@@ -33,10 +33,11 @@ const timelineLoading = ref(false)
 const selectedEvent = ref(null)
 const aiDrawer = ref(false)
 
-const rangeStart = () => searchForm.range === '7d' ? Date.now() - 7 * 86400000 : searchForm.range === 'all' ? 0 : Date.now() - 86400000
-
+/** 同步检索条件到地址栏（保持可分享）；历史遗留的 range 参数一并剔除。 */
 function syncUrl() {
-  router.replace({ query: { ...route.query, type: searchForm.type, value: searchForm.value || undefined, range: searchForm.range !== '24h' ? searchForm.range : undefined } })
+  const query = { ...route.query, type: searchForm.type, value: searchForm.value || undefined }
+  delete query.range
+  router.replace({ query })
 }
 
 async function loadSessions() {
@@ -45,15 +46,11 @@ async function loadSessions() {
   loadError.value = ''
   pageLoading.value = true
   try {
-    const params = new URLSearchParams({ type: searchForm.type })
+    // 时间范围统一沿用顶部全局筛选（store.range → startTime/endTime，走 queryFromFilters）。
+    const params = new URLSearchParams(queryFromFilters({ type: searchForm.type }, ['type', 'appId']))
     const value = searchForm.value.trim()
     // value 为空时后端进入「浏览最近会话」模式，进入页面即有数据（无需先输入标识）
     if (value) params.set('value', value)
-    if (store.appId) params.set('appId', store.appId)
-    if (searchForm.range !== 'all') {
-      params.set('startTime', String(rangeStart()))
-      params.set('endTime', String(Date.now()))
-    }
     const data = await api(`/api/journey/sessions?${params}`, { requestKey: 'journey:sessions' })
     sessions.value = Array.isArray(data?.sessions) ? data.sessions : []
     sessionStats.events = sessions.value.reduce((sum, item) => sum + Number(item.eventCount || 0), 0)
@@ -237,6 +234,9 @@ onMounted(() => {
   // 进入页面即加载「最近会话」，无需先输入标识（修复空白首屏）
   void loadSessions()
 })
+
+// 顶部全局条件（含时间范围）切换时 refreshVersion 自增，统一在此重载。
+watch(refreshVersion, () => { void loadSessions() })
 </script>
 
 <template>
@@ -260,12 +260,8 @@ onMounted(() => {
           <el-option v-for="item in TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
         <el-input v-model="searchForm.value" placeholder="粘贴标识，自动 trim" clearable style="flex: 1; min-width: 260px" @keyup.enter="loadSessions" />
-        <el-select v-model="searchForm.range" style="width: 120px">
-          <el-option label="近 24 小时" value="24h" />
-          <el-option label="近 7 天" value="7d" />
-          <el-option label="全部时间" value="all" />
-        </el-select>
         <el-button type="primary" :loading="loading" @click="loadSessions">查询</el-button>
+        <span class="journey-range-hint">时间范围沿用顶部全局筛选 · {{ store.rangeLabel }}</span>
       </div>
       <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-top: 10px" />
     </el-card>
@@ -290,7 +286,10 @@ onMounted(() => {
               <span v-if="session.hasReplay">⏯</span>
             </div>
           </div>
-          <div v-if="!loading && !sessions.length" class="j-empty">暂无会话数据，可输入标识检索</div>
+          <div v-if="!loading && !sessions.length" class="j-empty">
+            <p>暂无会话数据，可输入标识检索</p>
+            <p v-if="searchForm.value" class="j-empty-hint">当前时间范围内未匹配到该标识；可在顶部把时间范围放宽（如「最近90天」或「全部时间」）后重试。</p>
+          </div>
         </div>
       </div>
 
@@ -398,6 +397,9 @@ onMounted(() => {
 
 <style scoped>
 .journey-search { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.journey-range-hint { color: var(--c-text-muted); font-size: 12px; }
 .j-empty { padding: 40px 0; color: var(--c-text-faint); font-size: 12.5px; text-align: center; }
+.j-empty p { margin: 0; }
+.j-empty-hint { margin-top: 6px !important; line-height: 1.7; }
 .health.fluctuating { font-size: 11px; }
 </style>

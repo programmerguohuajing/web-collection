@@ -135,7 +135,7 @@ onMounted(load)
     <!-- 审计抽屉（只读） -->
     <el-drawer v-model="auditDrawer" title="数据访问审计" size="480px">
       <el-table :data="auditItems" size="small" border empty-text="暂无审计记录">
-        <el-table-column label="时间" width="160">
+        <el-table-column label="时间" width="180" cell-class-name="time-cell">
           <template #default="{ row }">{{ row.createdAt ? new Date(Number(row.createdAt)).toLocaleString() : '-' }}</template>
         </el-table-column>
         <el-table-column label="操作者" width="140">

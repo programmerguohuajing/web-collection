@@ -221,7 +221,7 @@ onMounted(load)
           <el-table-column label="审批人" width="110">
             <template #default="{ row }"><OverflowTip :text="row.approvedBy || '-'" /></template>
           </el-table-column>
-          <el-table-column label="发起时间" width="170">
+          <el-table-column label="发起时间" width="180" cell-class-name="time-cell">
             <template #default="{ row }">
               <span :class="{ 'overdue-text': isOverdue(row) }">{{ formatTime(row.createdAt) }}</span>
             </template>

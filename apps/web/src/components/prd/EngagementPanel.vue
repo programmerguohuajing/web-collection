@@ -156,7 +156,7 @@ defineExpose({ reload: load })
         <el-table-column label="75% 触达率" width="110" align="right"><template #default="{ row }">{{ percent(row.reach75Rate) }}</template></el-table-column>
         <el-table-column label="跳出率" width="90" align="right"><template #default="{ row }">{{ percent(row.bounceRate) }}</template></el-table-column>
         <el-table-column label="分享会话率" width="110" align="right"><template #default="{ row }">{{ percent(row.shareSessionRate) }}</template></el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="操作" width="180" cell-class-name="action-cell">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)" data-test="engagement-detail">单页详情</el-button>
             <el-button link type="primary" @click="openCompare(row)" data-test="engagement-compare">改版对比</el-button>

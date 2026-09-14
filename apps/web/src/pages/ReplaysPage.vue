@@ -5,6 +5,6 @@ import { getReplay, replayPager, replays, setPage, tableLoading } from '../dashb
 </script>
 
 <template>
-  <SearchPanel :fields="['range', 'appId', 'release', 'path', 'userId', 'userName', 'userPhone']" />
+  <SearchPanel :fields="['appId', 'release', 'path', 'userId', 'userName', 'userPhone']" />
   <ReplayPanel :replays="replays" :load-replay="getReplay" :loading="tableLoading.replays" :total="replayPager.total" :page="replayPager.page" :page-size="replayPager.pageSize" @page-change="setPage('replays', $event)" />
 </template>

@@ -16,7 +16,7 @@ const behaviorKpis = computed(() => [
 
 <template>
   <KpiGrid :items="behaviorKpis" />
-  <SearchPanel :fields="['range', 'appId', 'release', 'path', 'userId', 'keyword']" />
+  <SearchPanel :fields="['appId', 'release', 'path', 'userId', 'keyword']" />
   <RankPanel title="行为排行" subtitle="behavior / track" :items="behavior" />
   <EventTable title="行为事件" :rows="behaviorEvents" :loading="tableLoading.behavior" :total="behaviorPager.total" :page="behaviorPager.page" :page-size="behaviorPager.pageSize" stream :show-user="false" @page-change="setPage('behavior', $event)" />
 </template>

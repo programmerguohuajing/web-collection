@@ -10,7 +10,7 @@ import { behavior, byType, latestErrors, resolveIssue, summary } from '../dashbo
 </script>
 
 <template>
-  <SearchPanel :fields="['range', 'appId', 'release']" />
+  <SearchPanel :fields="['appId', 'release']" />
   <MetricCards :summary="summary" />
   <AlertsPanel :alerts="summary?.alerts || []" />
   <section class="grid">

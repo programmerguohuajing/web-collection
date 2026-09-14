@@ -10,12 +10,11 @@ const emit = defineEmits(['search'])
 
 const store = useFilterStore()
 const searching = ref(false)
-const globalFieldNames = ['appId', 'release', 'range']
 const visibleFields = computed(() => props.fields)
 
+// 时间范围属于顶部全局筛选（stores/filters.js），本组件不再提供页级时间选择器。
 const fieldMap = {
   traceId: { label: 'Trace ID' },
-  range: { label: '时间' },
   release: { label: '版本' },
   path: { label: 'URL / path' },
   userId: { label: '用户 ID' },
@@ -33,8 +32,7 @@ function search() {
 
 function reset() {
   for (const name of visibleFields.value) {
-    if (name === 'range') store.range = []
-    else if (name === 'release' || name === 'appId') store[name] = ''
+    if (name === 'release' || name === 'appId') store[name] = ''
     else filters.value[name] = ''
   }
   search()
@@ -45,8 +43,7 @@ function reset() {
   <el-card v-if="visibleFields.length" shadow="never" class="query-card">
     <el-form class="ruoyi-query" label-width="82px" @submit.prevent="search">
       <el-form-item v-for="name in visibleFields" :key="name" :label="fieldMap[name]?.label">
-        <el-date-picker v-if="name === 'range'" v-model="store.range" type="datetimerange" value-format="x" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间" />
-        <el-select v-else-if="name === 'type'" v-model="filters.type" placeholder="请选择" clearable>
+        <el-select v-if="name === 'type'" v-model="filters.type" placeholder="请选择" clearable>
           <el-option label="错误" value="error" />
           <el-option label="性能" value="perf" />
           <el-option label="行为" value="behavior" />
