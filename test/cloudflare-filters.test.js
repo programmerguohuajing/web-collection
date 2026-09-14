@@ -162,6 +162,33 @@ assert.ok(edgeScans.length <= 2, '边角直扫不超过两条（<1h）')
 // 缝合命中标识：响应头可观测（运维验证预聚合路径是否生效）
 assert.equal(stitchResponse.headers.get('x-summary-stitch'), 'hourly', '缝合路径应带 x-summary-stitch 响应头')
 
+// 事件分页的 total 同样复用小时表；列表明细仍按 ts 索引精确读取。
+// 两端各不足 1h 的边角各返回 2 条，整小时区间返回 100 条，总数应精确为 104。
+const pagedCountQueries = []
+const countFrom = Date.UTC(2026, 8, 1, 0, 10)
+const countTo = Date.UTC(2026, 8, 1, 16, 50)
+const pagedCountResponse = await worker.fetch(new Request(`https://example.com/api/events?appId=web&type=behavior,track&startTime=${countFrom}&endTime=${countTo}&page=1&pageSize=10`), {
+  DB: {
+    prepare(sql) {
+      let values = []
+      return {
+        bind(...bound) { values = bound; return this },
+        async all() { pagedCountQueries.push([sql, values]); return { results: [] } },
+        async first() {
+          pagedCountQueries.push([sql, values])
+          if (sql.includes('count(distinct hour_ts)')) return { n: 16 }
+          if (sql.includes('coalesce(sum(cnt),0)')) return { count: 100 }
+          if (sql.startsWith('select count(*) as count from events where ts')) return { count: 2 }
+          return null
+        }
+      }
+    }
+  }
+})
+assert.equal((await pagedCountResponse.json()).total, 104)
+assert.ok(pagedCountQueries.some(([sql]) => sql.includes('coalesce(sum(cnt),0)') && sql.includes('events_hourly_stats')))
+assert.ok(!pagedCountQueries.some(([sql]) => /^select count\(\*\) count from events where app_id=/.test(sql)), '分页总数不得再执行全窗 events COUNT')
+
 // 覆盖不足（小时表 distinct 小时数 < 期望）→ 回退直扫（与原实现一致；URL 与上面错开以避开 30s 结果缓存）
 const fallbackQueries = []
 const fallbackResponse = await worker.fetch(new Request(`https://example.com/api/summary?appId=web&startTime=${stitchFrom}&endTime=${stitchTo + 1}`), {

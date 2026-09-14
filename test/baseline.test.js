@@ -147,6 +147,22 @@ test('detectBaselineDeviations：events 降级路径（日表不足时）产出 
   assert.ok(findings[0].detail.z >= 3)
 })
 
+test('detectBaselineDeviations：D1 日表预热不足时不扫描 events', async () => {
+  let eventScans = 0
+  const db = baselineMemDb({
+    metricDailyStats: [{ app_id: 'global', metric: 'errorRate', day: dayAgo(0), value: 0.01, samples: 10 }],
+    eventDaily: [{ day: dayAgo(0), total: 10, errors: 1, perf_avg: 100, non_error: 9 }]
+  })
+  db.dialect = 'sqlite'
+  const originalPrepare = db.prepare.bind(db)
+  db.prepare = sql => {
+    if (sql.includes('from events')) eventScans++
+    return originalPrepare(sql)
+  }
+  assert.deepEqual(await detectBaselineDeviations(db, { metrics: ['errorRate'] }), [])
+  assert.equal(eventScans, 0)
+})
+
 test('runScan：基线洞察去重——同类 open 不重复写入', async () => {
   const db = baselineMemDb({ metricDailyStats: dailyStatsSeed(0.018) })
   const r1 = await runScan(db, {})

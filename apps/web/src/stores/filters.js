@@ -12,7 +12,8 @@ export const useFilterStore = defineStore('filters', {
     // 采集环境（prod/staging/trial/dev）。默认空：不写死“生产环境”，
     // 后续由全局上下文从真实应用配置或聚合查询填充；为空时顶栏不展示环境药丸。
     environment: '',
-    // 默认最近 7 天，避免监控页默认“全部时间”触发 events 全表扫描（曾导致 D1 读取行数激增）。
-    range: [Date.now() - 7 * 86400000, Date.now()]
+    // 顶栏快速范围默认显示“24 小时”，查询状态也必须保持同一口径。
+    // 此前 UI 显示 24h、实际却查询 7d，一次首屏会把 D1 扫描量无声放大约 7 倍。
+    range: [Date.now() - 24 * 3600000, Date.now()]
   })
 })

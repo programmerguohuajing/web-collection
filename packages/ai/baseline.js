@@ -279,6 +279,12 @@ async function getBaselineSource(db, { appId, metric, windowDays, minDays, since
     }
   }
 
+  // D1 已由主 Worker 的每日 EOD 任务持续维护 metric_daily_stats。日表样本不足表示应用
+  // 确实还在预热；此时再扫最多 30 天 events 也不可能凭空增加自然日样本，只会消耗
+  // 大量 rows_read（线上曾出现单次约 31 万行后仍返回 null）。PostgreSQL 没有 D1 日配额，
+  // 保留历史 events 降级路径，兼容未部署 EOD writer 的自托管实例。
+  if (db.dialect === 'sqlite') return null
+
   // B. 降级 events（≤30d，events 保留期）
   const fallbackDays = Math.min(windowDays, 30)
   const aggFrom = now - fallbackDays * DAY_MS
