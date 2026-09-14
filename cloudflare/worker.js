@@ -936,6 +936,18 @@ async function upsertIssue(env, event) {
 
 export function issueKey(event) { const source=['FetchError','ResourceError','SseError','WebSocketError'].includes(event.name)?event.props?.source:'';return`${event.appId}|${event.name}|${source||String(event.stack||event.message).split('\n').slice(0,3).join('\n')}` }
 
+// 网络类错误名单：SDK 请求级监控捕获的连接层失败（fetch/XHR/资源加载/SSE/WebSocket）。
+const NETWORK_ERROR_NAMES=['FetchError','XhrError','ResourceError','SseError','WebSocketError']
+// 告警指纹（风暴聚合）：网络类错误去掉 source URL 维度。issue 指纹按 URL 细分（问题列表
+// 仍可逐接口定位），但告警若也按 URL 去重，断网/代理故障时应用全部请求同时失败，同一故障
+// 会被拆成几十条内容相同的告警刷屏——2026-09-14 线上事故：24 秒内 24 个静态资源/接口
+// 同时 fetch 失败，飞书连收 24 条「FetchError: Failed to fetch」。聚合为「应用|错误名|
+// 错误类型|消息」后，同一冷却窗口内只发一条；issues 表不受影响。
+export async function alertFingerprint(event,issue){
+  if(NETWORK_ERROR_NAMES.includes(event.name)&&['network','aborted','timeout'].includes(event.props?.errorType))return sha256(`${event.appId}|${event.name}|${event.props.errorType}|${clip(event.message||'',120)}`)
+  return issue?.fingerprint||await sha256(event.type==='error'?issueKey(event):`${event.metric||event.name||event.type}:${event.url||event.path||''}`)
+}
+
 // 将前端 /api/ai/* 请求代理到独立 ai-worker（web-collection-ai）。
 // ai-worker 提供 D1 + Vectorize(ai-kb) + Workers AI 的诊断能力，隔离 LLM/向量故障对采集热路径的影响。
 // ai-worker 鉴权是「同源免 key，开放调用需 x-ai-key」；主 worker 服务端转发时：
@@ -3210,9 +3222,14 @@ async function alert(env,event,issue,ctx){
   if(event.type==='perf'&&(!Number.isFinite(threshold)||event.value<=threshold))return
   if(event.type==='log'&&!config.logError||metric==='regression'&&!config.regression||metric==='error'&&(!config.error||Number(issue?.count||1)<Number(config.errorCount||1)))return
   const since=Date.now()-config.cooldownMinutes*60000
-  const fingerprint=issue?.fingerprint||await sha256(event.type==='error'?issueKey(event):`${event.metric||event.name||event.type}:${event.url||event.path||''}`)
+  const fingerprint=await alertFingerprint(event,issue)
   const recent=await env.DB.prepare('select id from alert_history where app_id=? and metric=? and fingerprint=? and created_at>=?').bind(event.appId,metric,fingerprint,since).first()
-  if(recent)return
+  if(recent){
+    // 冷却窗口内命中去重：渠道不重复推送；错误类告警累加 value（=窗口内发生次数），
+    // 平台告警列表可见聚合量。perf 类 value 是测量值（如 LCP 毫秒数）不可累加，跳过。
+    if(metric==='error'||metric==='regression'||metric==='log_error'){try{await env.DB.prepare('update alert_history set value=value+1 where id=?').bind(recent.id).run()}catch{}}
+    return
+  }
   const now=Date.now(),level=metric==='regression'?'critical':event.type==='perf'?'warning':'error'
   const result=await env.DB.prepare('insert into alert_history(app_id,metric,fingerprint,level,value,message,threshold,notified,context_json,created_at) values(?,?,?,?,?,?,?,0,?,?)').bind(event.appId,metric,fingerprint,level,event.value||1,alertMessage(event,metric,threshold),threshold,JSON.stringify(alertContext(event,event.type==='perf'?threshold:undefined)),now).run()
   await createAlertDeliveries(env,Number(result.meta.last_row_id))
@@ -3226,7 +3243,7 @@ async function alert(env,event,issue,ctx){
     traceId:event.traceId
   }))
 }
-export function alertMessage(event,metric,threshold){const page=event.path||event.url||'-';if(event.type==='perf'){const unit=metric==='cls'?'':'ms';return`[Web Collection] ${event.appId} ${metric.toUpperCase()} ${event.value}${unit}，超过阈值 ${threshold}${unit}，页面 ${page}`}return`[Web Collection] ${event.appId} ${event.name||metric}: ${event.message||'未知错误'}，页面 ${page}，版本 ${event.release||'-'}，Trace ${event.traceId||'-'}`}
+export function alertMessage(event,metric,threshold){const page=event.path||event.url||'-';if(event.type==='perf'){const unit=metric==='cls'?'':'ms';return`[Web Collection] ${event.appId} ${metric.toUpperCase()} ${event.value}${unit}，超过阈值 ${threshold}${unit}，页面 ${page}`}const source=NETWORK_ERROR_NAMES.includes(event.name)&&event.props?.source?`，请求 ${clip(event.props.source,160)}`:'';return`[Web Collection] ${event.appId} ${event.name||metric}: ${event.message||'未知错误'}${source}，页面 ${page}，版本 ${event.release||'-'}，Trace ${event.traceId||'-'}`}
 
 async function alertChannelList(env,url){
   const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.max(1,Math.min(100,Number(url.searchParams.get('pageSize')||10)))
