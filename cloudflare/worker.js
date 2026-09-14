@@ -1141,7 +1141,16 @@ async function adminApi(request, env, url) {
 async function pagedEvents(env, url, forcedType) {
   const { where, values } = filters(url, forcedType)
   const page = Math.max(1, Number(url.searchParams.get('page') || 1)), pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || 10)))
-  const [items, total] = await Promise.all([env.DB.prepare(`select * from events ${where} order by ts desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(), env.DB.prepare(`select count(*) count from events ${where}`).bind(...values).first()])
+  // 控制台默认请求只含 app/type/time/page。此类总数从小时读模型 + 两端不足一小时的
+  // events 边角精确缝合，避免每个事件页签都对 24h/7d 原始表执行一次全窗 COUNT。
+  const countPlan = await hourlyStitchPlan(env, url, { extraKeys: ['type', 'page', 'pageSize', '_t'], checkBrowser: false })
+  const types = String(forcedType || url.searchParams.get('type') || '').split(',').filter(Boolean)
+  const [items, total] = await Promise.all([
+    env.DB.prepare(`select * from events ${where} order by ts desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),
+    countPlan
+      ? stitchedEventCount(env, countPlan, types).then(count => ({ count }))
+      : env.DB.prepare(`select count(*) count from events ${where}`).bind(...values).first()
+  ])
   return json({ items: items.results.map(mapEvent), total: total.count, page, pageSize })
 }
 
@@ -1188,14 +1197,26 @@ const PERF_GUARD_W = "typeof(value) in ('integer','real') and (ifnull(metric,'')
 /** ② 小时表幂等重算 [fromTs, toTs) 的每小时聚合（upsert 覆盖）。 */
 async function hourlyRollupRangeW(env, fromTs, toTs) {
   const g = PERF_GUARD_W
-  await env.DB.prepare(`insert into events_hourly_stats (app_id, hour_ts, type, metric, name, cnt, perf_cnt, value_sum)
+  await env.DB.prepare(`insert into events_hourly_stats (app_id, hour_ts, type, metric, name, cnt, perf_cnt, value_sum, apdex_satisfied, apdex_tolerating)
     select app_id, cast(ts/3600000 as integer)*3600000, ifnull(type,''), ifnull(metric,''), ifnull(name,''),
       count(*),
       count(case when type='perf' and ${g} then 1 end),
-      coalesce(sum(case when type='perf' and ${g} then value else null end), 0)
+      coalesce(sum(case when type='perf' and ${g} then value else null end), 0),
+      count(case when type='perf' and metric='lcp' and ${g} and value<=2500 then 1 end),
+      count(case when type='perf' and metric='lcp' and ${g} and value>2500 and value<=4000 then 1 end)
     from events where ts>=? and ts<?
     group by 1,2,3,4,5
-    on conflict(app_id, hour_ts, type, metric, name) do update set cnt=excluded.cnt, perf_cnt=excluded.perf_cnt, value_sum=excluded.value_sum`).bind(fromTs, toTs).run()
+    on conflict(app_id, hour_ts, type, metric, name) do update set cnt=excluded.cnt, perf_cnt=excluded.perf_cnt, value_sum=excluded.value_sum,
+      apdex_satisfied=excluded.apdex_satisfied, apdex_tolerating=excluded.apdex_tolerating`).bind(fromTs, toTs).run()
+  await hourlyBrowserRollupRangeW(env, fromTs, toTs)
+}
+
+/** 浏览器维度独立小时表，避免 summary 的 byBrowser 每次扫描原始 events。 */
+async function hourlyBrowserRollupRangeW(env, fromTs, toTs) {
+  await env.DB.prepare(`insert into events_hourly_browser_stats (app_id, hour_ts, browser, cnt)
+    select app_id, cast(ts/3600000 as integer)*3600000, coalesce(nullif(browser,''),'Unknown'), count(*)
+    from events where ts>=? and ts<? group by 1,2,3
+    on conflict(app_id, hour_ts, browser) do update set cnt=excluded.cnt`).bind(fromTs, toTs).run()
 }
 
 /** ② 小时级 cron（0 * * * *）：刷新上一小时（已完结）+ 当前小时（部分，下轮覆盖）；首部署回填 14d。 */
@@ -1203,13 +1224,21 @@ async function hourlyRollupW(env) {
   try {
     const now = Date.now(), HOUR = 3600000, curHour = Math.floor(now / HOUR) * HOUR
     // 首部署探空必须在常规刷新之前——刷新写入后表恒非空，14d 回填将永不触发（线上实测踩坑）
-    const existing = await env.DB.prepare('select count(*) as c from events_hourly_stats').first().catch(() => null)
-    const firstRun = Number(existing?.c || 0) === 0
+    const [existing, browserExisting] = await Promise.all([
+      env.DB.prepare('select 1 as ok from events_hourly_stats limit 1').first().catch(() => null),
+      env.DB.prepare('select 1 as ok from events_hourly_browser_stats limit 1').first().catch(() => null)
+    ])
+    const firstRun = !existing?.ok
+    const browserFirstRun = !browserExisting?.ok
     await hourlyRollupRangeW(env, curHour - HOUR, now)
     if (firstRun) {
       // 首次部署：一次性回填 14 天历史（之后由每小时增量 + 每日 48h 自愈维持全覆盖）
       await hourlyRollupRangeW(env, curHour - 14 * 86400000, curHour - HOUR)
       console.log('[hourly-rollup] initial 14d backfill done')
+    } else if (browserFirstRun) {
+      // 存量升级 0041：核心小时表已有数据时，只补新浏览器读模型，避免重复改写核心表。
+      await hourlyBrowserRollupRangeW(env, curHour - 14 * 86400000, curHour - HOUR)
+      console.log('[hourly-rollup] browser 14d backfill done')
     }
   } catch (error) { console.error('[hourly-rollup] failed:', error?.message || error, error?.stack || '') }
 }
@@ -1234,10 +1263,11 @@ async function maybeHourlyRollupW(env, scheduledTime) {
  * 小时表无 release/user/session/path/keyword 维度——带这些筛选的查询不缝合（口径不一致会出错）。
  * “全覆盖”= [h1,h2) 内 distinct hour 数与期望一致；当前小时（部分数据）恒被排除在缝合区间外。
  */
-async function hourlyStitchPlan(env, url) {
+async function hourlyStitchPlan(env, url, { extraKeys = [], checkBrowser = true } = {}) {
   try {
     const p = url.searchParams
-    for (const key of p.keys()) if (!['appId', 'startTime', 'endTime'].includes(key)) return null
+    const allowed = new Set(['appId', 'startTime', 'endTime', ...extraKeys])
+    for (const key of p.keys()) if (!allowed.has(key)) return null
     const HOUR = 3600000, now = Date.now()
     const fromTs = Number(p.get('startTime')) || now - 90 * 86400000
     const toTs = Number(p.get('endTime')) || now
@@ -1246,10 +1276,31 @@ async function hourlyStitchPlan(env, url) {
     if (h2 - h1 < HOUR) return null
     const appId = p.get('appId') || ''
     const expected = Math.round((h2 - h1) / HOUR)
-    const cov = await env.DB.prepare(`select count(distinct hour_ts) as n from events_hourly_stats where hour_ts>=? and hour_ts<?${appId ? ' and app_id=?' : ''}`).bind(...(appId ? [h1, h2, appId] : [h1, h2])).first().catch(() => null)
+    const params = appId ? [h1, h2, appId] : [h1, h2]
+    const [cov, browserCov] = await Promise.all([
+      env.DB.prepare(`select count(distinct hour_ts) as n from events_hourly_stats where hour_ts>=? and hour_ts<?${appId ? ' and app_id=?' : ''}`).bind(...params).first().catch(() => null),
+      checkBrowser
+        ? env.DB.prepare(`select count(distinct hour_ts) as n from events_hourly_browser_stats where hour_ts>=? and hour_ts<?${appId ? ' and app_id=?' : ''}`).bind(...params).first().catch(() => null)
+        : Promise.resolve(null)
+    ])
     if (Number(cov?.n || 0) < expected) return null
-    return { h1, h2, fromTs, toTs, appId }
+    return { h1, h2, fromTs, toTs, appId, browserCovered: checkBrowser && Number(browserCov?.n || 0) >= expected }
   } catch { return null }
+}
+
+/** 事件分页总数：整小时读取预聚合表，两端不足一小时仍精确读取 events。 */
+async function stitchedEventCount(env, plan, types = []) {
+  const appCond = plan.appId ? ' and app_id=?' : ''
+  const typeCond = types.length ? ` and type in (${types.map(() => '?').join(',')})` : ''
+  const tail = `${appCond}${typeCond}`
+  const extra = [...(plan.appId ? [plan.appId] : []), ...types]
+  const jobs = [
+    env.DB.prepare(`select coalesce(sum(cnt),0) as count from events_hourly_stats where hour_ts>=? and hour_ts<?${tail}`).bind(plan.h1, plan.h2, ...extra).first()
+  ]
+  if (plan.fromTs < plan.h1) jobs.push(env.DB.prepare(`select count(*) as count from events where ts>=? and ts<?${tail}`).bind(plan.fromTs, plan.h1, ...extra).first())
+  if (plan.h2 <= plan.toTs) jobs.push(env.DB.prepare(`select count(*) as count from events where ts>=? and ts<=?${tail}`).bind(plan.h2, plan.toTs, ...extra).first())
+  const rows = await Promise.all(jobs)
+  return rows.reduce((sum, row) => sum + Number(row?.count || 0), 0)
 }
 
 /**
@@ -1262,16 +1313,25 @@ async function summaryStitchedAggregates(env, plan) {
   const appVals = plan.appId ? [plan.appId] : []
   const edgeSql = `select type, ifnull(metric,'') metric, ifnull(name,'') name, count(*) cnt,
     count(case when type='perf' and ${g} then 1 end) perf_cnt,
-    sum(case when type='perf' and ${g} then value else null end) value_sum
+    sum(case when type='perf' and ${g} then value else null end) value_sum,
+    count(case when type='perf' and metric='lcp' and ${g} and value<=2500 then 1 end) apdex_satisfied,
+    count(case when type='perf' and metric='lcp' and ${g} and value>2500 and value<=4000 then 1 end) apdex_tolerating
     from events where ts>=? and ts<?${appCond} group by 1,2,3`
+  const browserEdgeSql = `select coalesce(nullif(browser,''),'Unknown') browser,count(*) count
+    from events where ts>=? and ts<?${appCond} group by 1`
   const jobs = [
     env.DB.prepare(`select type, sum(cnt) count from events_hourly_stats where hour_ts>=? and hour_ts<?${appCond} group by type`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })),
     env.DB.prepare(`select name, sum(cnt) count from events_hourly_stats where hour_ts>=? and hour_ts<? and type in ('behavior','track')${appCond} group by name`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })),
-    env.DB.prepare(`select metric, sum(perf_cnt) count, sum(value_sum) value_sum from events_hourly_stats where hour_ts>=? and hour_ts<? and type='perf'${appCond} group by metric`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`select metric, sum(perf_cnt) count, sum(value_sum) value_sum,
+      sum(apdex_satisfied) apdex_satisfied,sum(apdex_tolerating) apdex_tolerating
+      from events_hourly_stats where hour_ts>=? and hour_ts<? and type='perf'${appCond} group by metric`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })),
+    plan.browserCovered ? env.DB.prepare(`select browser,sum(cnt) count from events_hourly_browser_stats where hour_ts>=? and hour_ts<?${appCond} group by browser`).bind(plan.h1, plan.h2, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve(null),
     plan.fromTs < plan.h1 ? env.DB.prepare(edgeSql).bind(plan.fromTs, plan.h1, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
-    plan.h2 < plan.toTs ? env.DB.prepare(edgeSql).bind(plan.h2, plan.toTs, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] })
+    plan.h2 < plan.toTs ? env.DB.prepare(edgeSql).bind(plan.h2, plan.toTs, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
+    plan.browserCovered && plan.fromTs < plan.h1 ? env.DB.prepare(browserEdgeSql).bind(plan.fromTs, plan.h1, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
+    plan.browserCovered && plan.h2 < plan.toTs ? env.DB.prepare(browserEdgeSql).bind(plan.h2, plan.toTs, ...appVals).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] })
   ]
-  const [byTypeH, behaviorH, perfH, edgeL, edgeR] = await Promise.all(jobs)
+  const [byTypeH, behaviorH, perfH, browserH, edgeL, edgeR, browserEdgeL, browserEdgeR] = await Promise.all(jobs)
   const edges = [...((edgeL && edgeL.results) || []), ...((edgeR && edgeR.results) || [])]
   // 合并（小时表 name/metric 存 ''，直扫为 null——统一映射回 null 保持响应键一致）
   const byType = new Map()
@@ -1283,10 +1343,23 @@ async function summaryStitchedAggregates(env, plan) {
   const perf = new Map()
   for (const r of (perfH && perfH.results) || []) { const k = r.metric || null; const e = perf.get(k) || { count: 0, valueSum: 0 }; e.count += Number(r.count); e.valueSum += Number(r.value_sum || 0); perf.set(k, e) }
   for (const r of edges) { const k = r.metric || null; const e = perf.get(k) || { count: 0, valueSum: 0 }; e.count += Number(r.perf_cnt); e.valueSum += Number(r.value_sum || 0); perf.set(k, e) }
+  const lcpHourly = ((perfH && perfH.results) || []).find(r => r.metric === 'lcp')
+  const lcpEdges = edges.filter(r => r.type === 'perf' && r.metric === 'lcp')
+  const apdexRow = {
+    satisfied: Number(lcpHourly?.apdex_satisfied || 0) + lcpEdges.reduce((n, r) => n + Number(r.apdex_satisfied || 0), 0),
+    tolerating: Number(lcpHourly?.apdex_tolerating || 0) + lcpEdges.reduce((n, r) => n + Number(r.apdex_tolerating || 0), 0),
+    total: Number(lcpHourly?.count || 0) + lcpEdges.reduce((n, r) => n + Number(r.perf_cnt || 0), 0)
+  }
+  const browser = new Map()
+  for (const r of (browserH && browserH.results) || []) browser.set(r.browser, (browser.get(r.browser) || 0) + Number(r.count))
+  for (const r of [...((browserEdgeL && browserEdgeL.results) || []), ...((browserEdgeR && browserEdgeR.results) || [])]) browser.set(r.browser, (browser.get(r.browser) || 0) + Number(r.count))
   return {
     byTypeRows: [...byType].map(([type, count]) => ({ type, count })),
     behaviorRows: [...behavior].map(([name, count]) => ({ name, count })),
-    perfStats: [...perf].map(([metric, e]) => ({ metric, count: e.count, avg: e.count > 0 ? e.valueSum / e.count : null }))
+    perfStats: [...perf].map(([metric, e]) => ({ metric, count: e.count, avg: e.count > 0 ? e.valueSum / e.count : null })),
+    browserRows: [...browser].map(([browser, count]) => ({ browser, count })),
+    apdexRow,
+    totalEvents: [...byType.values()].reduce((sum, count) => sum + Number(count), 0)
   }
 }
 
@@ -1321,8 +1394,8 @@ async function summary(env,url){
   // ② ≤30 天结果独立缓存 5 分钟（分位数变化极慢，可比 summary 整体 60s 缓存更长）。
   const _p75Cache = summaryP75Cache()
   const p75WindowSkip = (() => { const p = url.searchParams, n = Date.now(); const f = Number(p.get('startTime')) || n - 90 * 86400000, t = Number(p.get('endTime')) || n; return t - f > 30 * 86400000 })()
-  const [eventStats,p75Rows,apiRows,issueResult,issueStats,browserRows, directAgg, apdexRow] = await Promise.all([
-    one(env.DB.prepare(`select count(*) total,max(ts) last_seen from events ${where}`).bind(...values)),
+  let [eventStats,p75Rows,apiRows,issueResult,issueStats,browserRows, directAgg, apdexRow] = await Promise.all([
+    one(env.DB.prepare(stitchPlan ? `select max(ts) last_seen from events ${where}` : `select count(*) total,max(ts) last_seen from events ${where}`).bind(...values)),
     (async () => {
       if (p75WindowSkip) return []
       const hit = _p75Cache.get(cacheKey)
@@ -1335,7 +1408,7 @@ async function summary(env,url){
     all(env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 1000`).bind(...perfFilter.values)),
     all(env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values)),
     one(env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values)),
-    all(env.DB.prepare(`select coalesce(nullif(browser,''),'Unknown') browser, count(*) count from events ${where} group by 1 order by 2 desc`).bind(...values)),
+    stitchPlan?.browserCovered ? Promise.resolve(null) : all(env.DB.prepare(`select coalesce(nullif(browser,''),'Unknown') browser, count(*) count from events ${where} group by 1 order by 2 desc`).bind(...values)),
     // 非缝合路径的三项聚合（缝合时该 Promise 结果被忽略，直扫代价与原实现一致）
     stitchPlan ? Promise.resolve(null) : Promise.all([
       all(env.DB.prepare(`select type,count(*) count from events ${where} group by type`).bind(...values)),
@@ -1343,12 +1416,16 @@ async function summary(env,url){
       all(env.DB.prepare(`select metric,count(*) count,avg(value) avg from events ${perfFilter.where} and ${perfGuard} group by metric`).bind(...perfFilter.values))
     ]),
     // Apdex 体验分：基于 LCP 样本，satisfied ≤2500ms / tolerating ≤4000ms（与 scorePerf 的 LCP 阈值同口径）
-    one(env.DB.prepare(`select sum(case when value<=2500 then 1 else 0 end) satisfied,sum(case when value>2500 and value<=4000 then 1 else 0 end) tolerating,count(*) total from events ${apdexFilter.where} and ${perfGuard}`).bind(...apdexFilter.values))
+    stitchPlan ? Promise.resolve(null) : one(env.DB.prepare(`select sum(case when value<=2500 then 1 else 0 end) satisfied,sum(case when value>2500 and value<=4000 then 1 else 0 end) tolerating,count(*) total from events ${apdexFilter.where} and ${perfGuard}`).bind(...apdexFilter.values))
   ])
   let byTypeRows, behaviorRows, perfStats
   if (stitchPlan) {
     const stitched = await summaryStitchedAggregates(env, stitchPlan)
     byTypeRows = stitched.byTypeRows; behaviorRows = stitched.behaviorRows; perfStats = stitched.perfStats
+    eventStats = eventStats || {}
+    eventStats.total = stitched.totalEvents
+    if (stitched.browserRows.length) browserRows = stitched.browserRows
+    apdexRow = stitched.apdexRow
   } else {
     [byTypeRows, behaviorRows, perfStats] = directAgg
   }
@@ -3310,7 +3387,7 @@ function workerAlert(row){
 
 function alertError(error){return String(error?.message||error).slice(0,1000)}
 
-async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['hourlyStats',`delete from events_hourly_stats where hour_ts<?`,config.eventsDays],['spans','delete from spans where ts<?',config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['issues',`delete from issues where status='resolved' and last_seen<?`,config.resolvedIssuesDays],['alerts','delete from alert_history where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays],['sdkMonitoring','delete from sdk_monitoring where ts<?',config.sdkMonitoringDays||30],['syntheticResults','delete from synthetic_results where checked_at<?',config.syntheticResultsDays||30],['experimentExposures','delete from experiment_exposures where exposed_at<?',config.eventsDays||30]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
+async function cleanup(env){const config=(await settings(env)).retention,now=Date.now(),deleted={};for(const [name,sql,days] of [['logs',`delete from events where type='log' and ts<?`,config.logsDays],['events',`delete from events where type<>'log' and ts<?`,config.eventsDays],['hourlyStats',`delete from events_hourly_stats where hour_ts<?`,config.eventsDays],['hourlyBrowserStats',`delete from events_hourly_browser_stats where hour_ts<?`,config.eventsDays],['spans','delete from spans where ts<?',config.eventsDays],['replays','delete from replays where created_at<?',config.replaysDays],['issues',`delete from issues where status='resolved' and last_seen<?`,config.resolvedIssuesDays],['alerts','delete from alert_history where created_at<?',config.alertsDays],['sourcemaps','delete from sourcemaps where created_at<?',config.sourcemapsDays],['sdkMonitoring','delete from sdk_monitoring where ts<?',config.sdkMonitoringDays||30],['syntheticResults','delete from synthetic_results where checked_at<?',config.syntheticResultsDays||30],['experimentExposures','delete from experiment_exposures where exposed_at<?',config.eventsDays||30]])deleted[name]=(await env.DB.prepare(sql).bind(now-days*86400000).run()).meta.changes;return deleted}
 async function exportCsv(env,kind,url){const filter=kind==='issues'?issueFilters(url):kind==='replays'?replayFilters(url):filters(url),select=kind==='replays'?'select app_id,session_id,max(user_id) user_id,max(user_name) user_name,max(user_phone) user_phone,min(created_at) first_seen,max(created_at) last_seen,max(url) url,max(release_name) release_name,max(end_reason) end_reason,count(*) event_count from replays':`select * from ${kind}`,group=kind==='replays'?' group by app_id,session_id':'',order=kind==='issues'?'last_seen':kind==='replays'?'last_seen':'ts',rows=(await env.DB.prepare(`${select} ${filter.where}${group} order by ${order} desc limit 10000`).bind(...filter.values).all()).results,keys=rows.length?Object.keys(rows[0]):[],cell=v=>`"${String(v??'').replaceAll('"','""')}"`,csv=rows.length?'\ufeff'+[keys.map(cell).join(','),...rows.map(r=>keys.map(k=>cell(r[k])).join(','))].join('\r\n'):'';return new Response(csv,{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':`attachment; filename="web-collection-${kind}.csv"`}})}
 
 export function filters(url,forcedType,fixed=[],fixedValues=[]){const p=url.searchParams,parts=[...fixed],values=[...fixedValues];const _hasTs=fixed.some(f=>/\bts\s*[<>]=?\s*\?/.test(f))||p.has('startTime')||p.has('endTime');if(!_hasTs){parts.push('ts>=?');values.push(Date.now()-90*86400000)}for(const [field,key,value] of [['app_id','appId'],['release_name','release'],['type','type',forcedType],['name','name'],['user_id','userId'],['session_id','sessionId']]){const v=value||p.get(key);if(v){const items=field==='type'?String(v).split(',').filter(Boolean):[v];parts.push(items.length>1?`${field} in (${items.map(()=>'?').join(',')})`:`${field}=?`);values.push(...items)}}if(p.get('traceId')){parts.push('trace_id like ?');values.push(`%${p.get('traceId')}%`)}if(p.get('path')){parts.push('(path like ? or url like ?)');values.push(...Array(2).fill(`%${p.get('path')}%`))}if(p.get('startTime')){parts.push('ts>=?');values.push(Number(p.get('startTime')))}if(p.get('endTime')){parts.push('ts<=?');values.push(Number(p.get('endTime')))}if(p.get('keyword')){parts.push('(name like ? or message like ? or props_json like ? or trace_id like ?)');values.push(...Array(4).fill(`%${p.get('keyword')}%`))}return{where:parts.length?`where ${parts.join(' and ')}`:'',values}}
