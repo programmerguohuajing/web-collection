@@ -375,7 +375,11 @@ defineExpose({ open })
 .ai-diagnosis-drawer :deep(.el-tabs__nav-prev),
 .ai-diagnosis-drawer :deep(.el-tabs__nav-next) {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: normal;
 }
 </style>
