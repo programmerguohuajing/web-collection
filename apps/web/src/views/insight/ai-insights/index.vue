@@ -1,17 +1,28 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { BellFilled, Refresh, MagicStick, Promotion } from '@element-plus/icons-vue'
 import { api, insightUnread } from '../../../dashboard.js'
+import { useFilterStore } from '../../../stores/filters.js'
 
 const router = useRouter()
+const store = useFilterStore()
 const items = ref([])
 const loading = ref(false)
 const scanning = ref(false)
 const detail = reactive({ open: false, finding: null, diagnosis: null, diagnosing: false, pushing: false })
 const scanScopes = ref(['error-cluster', 'release-regression', 'perf-regression', 'metric-drop', 'baseline-deviation'])
-const scanSinceHours = ref(24)
+
+// 扫描窗口不再是页面条件：由顶部全局时间范围推导为 sinceHours（「全部时间」回退 24h），
+// 上限 720h（30 天）避免一次扫描把 D1 行读放大到不可控。
+const SCAN_MAX_HOURS = 720
+const scanSinceHours = computed(() => {
+  const [start, end] = store.range || []
+  if (!start || !end) return 24
+  const hours = Math.round((Number(end) - Number(start)) / 3600000)
+  return Math.min(SCAN_MAX_HOURS, Math.max(1, hours))
+})
 
 const SCOPE_LABEL = {
   'error-cluster': '错误簇', 'release-regression': '发布回归',
@@ -24,11 +35,6 @@ const SCOPE_STYLE = {
 }
 function scopeStyle(scope) { return SCOPE_STYLE[scope] || {} }
 const SCOPE_OPTIONS = Object.entries(SCOPE_LABEL).map(([value, label]) => ({ value, label }))
-const SINCE_OPTIONS = [
-  { value: 6, label: '近 6 小时' },
-  { value: 24, label: '近 24 小时' },
-  { value: 72, label: '近 3 天' }
-]
 const STATUS_LABEL = { open: '待处理', ack: '已确认', resolved: '已解决', ignored: '已忽略' }
 const STATUS_TYPE = { open: 'danger', ack: 'warning', resolved: 'success', ignored: 'info' }
 
@@ -138,9 +144,7 @@ onMounted(() => {
         <el-select v-model="scanScopes" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" placeholder="扫描类别" style="width: 260px" aria-label="选择扫描类别">
           <el-option v-for="opt in SCOPE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
         </el-select>
-        <el-select v-model="scanSinceHours" style="width: 140px" aria-label="选择扫描时间范围">
-          <el-option v-for="opt in SINCE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
-        </el-select>
+        <span class="scan-range-hint">扫描窗口沿用顶部全局筛选 · {{ store.rangeLabel }}</span>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button type="primary" :icon="MagicStick" :loading="scanning" :disabled="!scanScopes.length" @click="scan">立即扫描</el-button>
       </div>
@@ -220,6 +224,7 @@ onMounted(() => {
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .page-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
 .page-head .sub { color: var(--el-text-color-secondary); margin: 6px 0 0; font-size: 13px; }
+.scan-range-hint { color: var(--el-text-color-secondary); font-size: 12px; white-space: nowrap; }
 .summary { word-break: break-all; }
 .evidence { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 16px; }
 .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }

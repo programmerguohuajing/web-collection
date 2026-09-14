@@ -190,7 +190,8 @@ function formatWindow(ms) {
   return found?.label || (ms ? `${Math.round(ms / 60000)} 分钟` : '不限')
 }
 function jumpJourney(sessionId) {
-  router.push(`/journey?type=session&value=${encodeURIComponent(sessionId)}&range=all`)
+  // 时间范围由顶部全局筛选统一提供，不再透传页级 range 参数。
+  router.push(`/journey?type=session&value=${encodeURIComponent(sessionId)}`)
 }
 function replay(id) {
   if (id) router.push({ path: '/replays', query: { replayId: id } })
@@ -240,7 +241,7 @@ onMounted(loadFunnels)
         <el-table-column label="步骤数" width="90" align="center"><template #default="{ row }">{{ (row.steps || []).length }}</template></el-table-column>
         <el-table-column label="转化窗口" width="110" align="center"><template #default="{ row }">{{ formatWindow(row.window_ms) }}</template></el-table-column>
         <el-table-column label="创建人" width="120"><template #default="{ row }">{{ row.created_by || '—' }}</template></el-table-column>
-        <el-table-column label="更新时间" width="170">
+        <el-table-column label="更新时间" width="180" cell-class-name="time-cell">
           <template #default="{ row }">{{ row.updated_at ? new Date(Number(row.updated_at)).toLocaleString() : '-' }}</template>
         </el-table-column>
         <el-table-column label="操作" width="210">

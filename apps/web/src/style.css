@@ -132,9 +132,39 @@ button, input, textarea, select { font-family: inherit; }
   transition: background 120ms ease, color 120ms ease;
 }
 .nav-item .el-icon { width: 17px; height: 17px; font-size: 17px; flex-shrink: 0; }
-/* 标题侧 help 图标：与整行 el-alert type=info 提示等价，悬浮展示说明文本 */
-.help-icon { color: var(--el-text-color-secondary); cursor: help; margin-left: 6px; outline: none; vertical-align: middle; font-size: 15px; }
+/* 标题侧 help 图标：与整行 el-alert type=info 提示等价，悬浮展示说明文本。
+   尺寸放大到 17px（与 20px 页面标题的字高相当）；不再用 vertical-align 对齐——
+   该值只把图标中点对齐到「基线 + 半个 x-height」，在 20px 中文标题下圆形图标会偏低 2~3px。 */
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin-left: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 17px;
+  line-height: 1;
+  cursor: help;
+  outline: none;
+}
 .help-icon:hover { color: var(--el-color-primary); }
+
+/* 标题文字与右侧 help 图标严格上下居中：改用 flex 的 align-items:center（随字号自适应），
+   :has() 限定只命中真正带 help 图标的容器，不影响其他标题排版。 */
+.page-heading h1:has(> .help-icon),
+.page-heading h2:has(> .help-icon),
+.panel-head h2:has(> .help-icon),
+.panel-head b:has(> .help-icon),
+.detail-head h2:has(> .help-icon),
+.head-main h2:has(> .help-icon),
+.auth-brand h1:has(> .help-icon),
+.el-card__header:has(> .help-icon),
+.el-dialog__header:has(> .help-icon) {
+  display: flex;
+  align-items: center;
+}
+/* 表单标签内的 help 图标：Element Plus 默认 align-items:flex-start 会让图标贴顶 */
+.el-form-item__label { align-items: center; }
 .nav-item:hover { color: var(--c-text); background: var(--c-surface-2); }
 .nav-item.active { color: var(--c-primary); font-weight: 600; background: var(--c-primary-soft); }
 .menu-group {
@@ -167,6 +197,8 @@ button, input, textarea, select { font-family: inherit; }
 .topbar-spacer { flex: 1; }
 .context-selectors { display: grid; grid-template-columns: 140px 120px 140px; gap: 8px; min-width: 0; }
 .context-selectors .el-select, .context-selectors .el-input { width: 100%; }
+/* 顶部「自定义」时间区间选择器：换行占满整行，避免挤占三个固定列 */
+.context-selectors .range-custom-picker { grid-column: 1 / -1; width: 100%; }
 .context-selectors .el-input__wrapper, .context-selectors .el-select__wrapper { min-height: 34px; box-shadow: 0 0 0 1px var(--c-border) inset; border-radius: 8px; }
 .context-selectors .el-input__wrapper:hover, .context-selectors .el-select__wrapper:hover { box-shadow: 0 0 0 1px #cfd3dd inset; }
 .context-selectors .el-input__wrapper.is-focus, .context-selectors .el-select__wrapper.is-focused { box-shadow: var(--sh-focus), 0 0 0 1px var(--c-primary) inset; }
@@ -264,6 +296,27 @@ button, input, textarea, select { font-family: inherit; }
   overflow: visible;
   text-overflow: clip;
 }
+/* 通用单行列：日期、枚举短词（来源/触发类型等）等不允许折行的列
+   - 用法：el-table-column 加 cell-class-name="nowrap-cell"，与 td.time-cell 同机制 */
+.el-table td.nowrap-cell .cell {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* 操作列：多个 link 按钮横向一排，禁止折行
+   - 折行根因：link 按钮 padding:2px + 4 个中文字（56px）= 60px；两枚按钮 + 12px 间距
+     + 模板换行留下的空白文本节点 ≈ 136px，而 width=160 减 .cell 左右各 12px 内边距后恰好 136px，
+     两者相等时任何亚像素误差都会换行。
+   - flex 布局会忽略纯空白文本节点，配合 gap 去掉不可控的空格宽度；overflow:visible 保证不裁切。 */
+.el-table td.action-cell .cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 12px;
+  overflow: visible;
+}
+.el-table td.action-cell .cell .el-button + .el-button { margin-left: 0; }
 /* 表格内 el-tag：标签内容在标签背景内显示，超出时省略号裁剪（不再 overflow:visible 导致文本溢出标签背景）
    - max-width:100% 让标签被单元格宽度约束；overflow:hidden + 内容 ellipsis 保证文本始终收在背景内 */
 .el-table .cell .el-tag {
@@ -374,6 +427,7 @@ button, input, textarea, select { font-family: inherit; }
   .topbar-spacer { display: none; }
   .context-selectors { order: 3; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .context-selectors > :nth-child(3) { display: none; }
+  .context-selectors .range-custom-picker { display: none; }
   .navbar-actions { margin-left: auto; }
   .content.app-main { min-height: calc(100vh - 80px); padding: 16px 12px 28px; }
   .metrics, .ruoyi-query, .sourcemap-form, .governance-form { grid-template-columns: 1fr; }

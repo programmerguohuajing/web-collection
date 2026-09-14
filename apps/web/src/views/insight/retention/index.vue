@@ -1,21 +1,12 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, pageLoading } from '../../../dashboard.js'
+import { api, pageLoading, queryFromFilters, refreshVersion } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 import { QuestionFilled } from '@element-plus/icons-vue'
 
 const store = useFilterStore()
 
-const DAY_MS = 86400000
-const RANGE_OPTIONS = [
-  { label: '近 7 天', value: 7 },
-  { label: '近 14 天', value: 14 },
-  { label: '近 30 天', value: 30 },
-  { label: '近 90 天', value: 90 }
-]
-
-const days = ref(30)
 const offsetsText = ref('0,1,2,3,7,14,30')
 const data = ref(null)
 
@@ -37,15 +28,8 @@ function percent(rate) {
 }
 
 async function load() {
-  const end = Date.now()
-  const start = end - days.value * DAY_MS
-  const params = new URLSearchParams({
-    startTime: String(start),
-    endTime: String(end),
-    page: '1',
-    pageSize: '100'
-  })
-  if (store.appId) params.set('appId', store.appId)
+  // 时间范围统一沿用顶部全局筛选（store.range → startTime/endTime，走 queryFromFilters）；页内不再自带时间选择器。
+  const params = new URLSearchParams(queryFromFilters({ page: '1', pageSize: '100' }, ['appId', 'page', 'pageSize']))
   if (offsetsText.value.trim()) params.set('offsets', offsetsText.value.trim())
 
   pageLoading.value = true
@@ -58,8 +42,8 @@ async function load() {
   }
 }
 
-onMounted(load)
-watch([days, () => store.appId], load)
+// 顶部全局条件（含时间范围）切换时 refreshVersion 自增，统一在此重载。
+watch(refreshVersion, load, { immediate: true })
 </script>
 
 <template>
@@ -69,11 +53,9 @@ watch([days, () => store.appId], load)
         <div class="panel-head">
           <b>留存 / 同期群分析<el-tooltip :content="caliber || '统计口径：按首访日期分组计算留存率'" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></b>
           <div class="head-actions">
-            <el-select v-model="days" size="small" style="width: 120px">
-              <el-option v-for="item in RANGE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
             <el-input v-model="offsetsText" size="small" placeholder="留存天数，如 1,3,7,30" style="width: 200px" />
             <el-button size="small" type="primary" @click="load">查询</el-button>
+            <span class="range-hint">时间范围沿用顶部全局筛选 · {{ store.rangeLabel }}</span>
           </div>
         </div>
       </template>
@@ -82,7 +64,7 @@ watch([days, () => store.appId], load)
 
       <template v-else>
         <el-table :data="rows" size="small" border stripe :default-sort="{ prop: 'cohortDay', order: 'ascending' }">
-          <el-table-column prop="cohortDate" label="首访日期" width="120" />
+          <el-table-column prop="cohortDate" label="首访日期" width="130" cell-class-name="nowrap-cell" />
           <el-table-column prop="size" label="群规模" width="90" align="right">
             <template #default="{ row }">
               <!-- 样本量警告用原生 title（EP 2.14 红线：表格内禁用未统一定位的 el-tooltip） -->
@@ -90,9 +72,9 @@ watch([days, () => store.appId], load)
               <span v-else>{{ row.size }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="窗口" width="80" align="center">
+          <el-table-column label="窗口" width="100" align="center" cell-class-name="window-cell">
             <template #default="{ row }">
-              <el-tag :type="row.complete ? 'success' : 'warning'" size="small">
+              <el-tag :type="row.complete ? 'success' : 'warning'" size="small" class="window-tag">
                 {{ row.complete ? '成熟' : '未成熟' }}
               </el-tag>
             </template>
@@ -131,10 +113,16 @@ watch([days, () => store.appId], load)
 .page { display: flex; flex-direction: column; gap: 12px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.range-hint { color: var(--c-text-muted); font-size: 12px; }
 .caliber { margin-bottom: 12px; }
 .caliber :deep(.el-alert__title) { font-weight: 600; }
 .cell { padding: 2px 6px; border-radius: 4px; font-variant-numeric: tabular-nums; }
 .sample-warn { color: #e6a23c; cursor: help; border-bottom: 1px dashed #e6a23c; }
+/* 首访日期：禁止换行（.el-table .cell 默认 word-break: break-all 会把日期拆行） */
+:deep(.el-table .cell.nowrap-cell) { white-space: nowrap; word-break: keep-all; }
+/* 窗口列：tag 不截断、不显示省略号 */
+:deep(.el-table .cell.window-cell) { overflow: visible; text-overflow: clip; white-space: nowrap; }
+:deep(.el-table .cell.window-cell .el-tag) { white-space: nowrap; max-width: none; overflow: visible; text-overflow: clip; }
 .avg-panel { margin-top: 12px; }
 .avg-row { display: flex; flex-wrap: wrap; gap: 10px; }
 .avg-item {

@@ -391,7 +391,7 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
     </div>
 
     <el-table v-if="ingestion?.recentErrors?.length" :data="ingestion.recentErrors" size="small" border class="error-table">
-      <el-table-column label="时间" width="180">
+      <el-table-column label="时间" width="180" cell-class-name="time-cell">
         <template #default="{ row }">{{ formatTime(row.at) }}</template>
       </el-table-column>
       <el-table-column label="应用 ID" width="160">

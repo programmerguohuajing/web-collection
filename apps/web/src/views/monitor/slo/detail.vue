@@ -152,7 +152,7 @@ onMounted(load)
         <span class="muted">多窗口多燃烧率判定（1h×14.4 / 6h×6 / 3d×3 / 30d×1），复用告警中心通道投递</span>
       </div>
       <el-table :data="alerts" v-loading="loading">
-        <el-table-column label="时间" width="180">
+        <el-table-column label="时间" width="180" cell-class-name="time-cell">
           <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column label="级别" width="100">

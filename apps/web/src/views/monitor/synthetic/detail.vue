@@ -154,7 +154,7 @@ onMounted(load)
         <span class="muted">最近 50 次，新结果在上；响应体原文永不落库（数据最小化）</span>
       </div>
       <el-table :data="timeline" v-loading="loading">
-        <el-table-column label="时间" width="180">
+        <el-table-column label="时间" width="180" cell-class-name="time-cell">
           <template #default="{ row }">{{ formatTime(row.checkedAt) }}</template>
         </el-table-column>
         <el-table-column label="结果" width="100">

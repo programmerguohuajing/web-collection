@@ -5,7 +5,7 @@ import {
   Aim, Bell, BellFilled, Brush, Calendar, ChatDotRound, Coin, Collection, Connection, Cpu, DataAnalysis, DataLine, Document, Files, Film, Fold, Grid, Histogram, House, Lock, MagicStick, Management, MapLocation, Medal, Menu, Monitor, Operation, Promotion, Reading, Setting, Share, SetUp, Stamp, Stopwatch, Switch, TrendCharts, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
-import { useFilterStore } from '../stores/filters.js'
+import { RANGE_PRESETS, useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
 import AiDiagnosisDrawer from '../components/AiDiagnosisDrawer.vue'
@@ -107,11 +107,32 @@ async function applyGlobal() {
   await refreshAll()
 }
 
-const quickRange = ref('24')
+// 顶部时间范围：预设 / 自定义共用 store.rangePreset + store.range（单一数据源），
+// 页内不再各自推算时间窗，避免「顶部显示最近24小时、页面提示近 1 天」这类口径漂移。
+const customRange = ref([])
 
-async function applyQuickRange(value) {
-  quickRange.value = (value === undefined || value === null) ? quickRange.value : String(value)
-  store.range = !quickRange.value ? [] : [Date.now() - Number(quickRange.value) * 3600000, Date.now()]
+/** 把当前 store.range 同步到自定义选择器的初值（切换到自定义时以现状为起点）。 */
+function syncCustomRange() {
+  const [start, end] = store.range || []
+  customRange.value = (start && end) ? [Number(start), Number(end)] : []
+}
+
+async function applyRangePreset(value) {
+  const preset = (value === undefined || value === null) ? store.rangePreset : String(value)
+  store.rangePreset = preset
+  if (preset === 'custom') {
+    // 切到自定义：先回填当前窗口，等用户选完区间再触发查询，避免空窗查询。
+    syncCustomRange()
+    return
+  }
+  store.range = preset === '' ? [] : [Date.now() - Number(preset) * 3600000, Date.now()]
+  await applyGlobal()
+}
+
+async function applyCustomRange(value) {
+  if (!Array.isArray(value) || value.length !== 2 || value[0] == null || value[1] == null) return
+  store.rangePreset = 'custom'
+  store.range = [Number(value[0]), Number(value[1])]
   await applyGlobal()
 }
 
@@ -202,14 +223,20 @@ onMounted(async () => {
             <el-option label="全部应用" value="" />
           </el-select>
           <el-input v-model="store.release" placeholder="全部版本" clearable @change="applyGlobal" />
-          <el-select v-model="quickRange" placeholder="最近24小时" @change="applyQuickRange">
-            <el-option label="最近1小时" value="1" />
-            <el-option label="最近24小时" value="24" />
-            <el-option label="最近7天" value="168" />
-            <el-option label="最近30天" value="720" />
-            <el-option label="最近90天" value="2160" />
-            <el-option label="全部时间" value="" />
+          <el-select v-model="store.rangePreset" placeholder="最近24小时" @change="applyRangePreset">
+            <el-option v-for="item in RANGE_PRESETS" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
+          <el-date-picker
+            v-if="store.rangePreset === 'custom'"
+            v-model="customRange"
+            type="datetimerange"
+            value-format="x"
+            range-separator="至"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
+            class="range-custom-picker"
+            @change="applyCustomRange"
+          />
         </div>
         <div class="navbar-actions">
           <el-badge :value="insightUnread" :hidden="!insightUnread" :max="99">

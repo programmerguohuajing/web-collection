@@ -26,13 +26,8 @@ const activeEndpoint = ref('')
 const series = ref([])
 const seriesLoading = ref(false)
 
-/** 当前全局时间范围的可读描述（仅展示，页面内不提供独立时间选择器）。 */
-const rangeLabel = computed(() => {
-  const [start, end] = store.range || []
-  if (!start || !end) return '全部时间'
-  const hours = Math.max(1, Math.round((end - start) / 3600000))
-  return hours < 24 ? `近 ${hours} 小时` : `近 ${Math.round(hours / 24)} 天`
-})
+/** 当前全局时间范围的可读描述：与顶部选择器同源（store.rangeLabel），保证口径一致。 */
+const rangeLabel = computed(() => store.rangeLabel)
 
 const filtered = computed(() => {
   const key = keyword.value.trim().toLowerCase()
@@ -224,7 +219,7 @@ watch(refreshVersion, () => load(), { immediate: true })
       <template v-else>
         <MiniLineChart :series="seriesChart" :axis-names="{ left: '耗时(ms)', right: '错误率(%)' }" height="260px" />
         <el-table :data="series" size="small" border class="series-table">
-          <el-table-column label="时间" min-width="170">
+          <el-table-column label="时间" min-width="170" cell-class-name="time-cell">
             <template #default="{ row }">{{ new Date(row.bucket).toLocaleString() }}</template>
           </el-table-column>
           <el-table-column prop="count" label="调用量" width="90" align="right" />

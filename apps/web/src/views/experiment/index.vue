@@ -283,7 +283,7 @@ onMounted(() => {
           <el-table-column label="目标指标" width="110">
             <template #default="{ row }">{{ goalLabel(row) }}</template>
           </el-table-column>
-          <el-table-column label="开始时间" width="160">
+          <el-table-column label="开始时间" width="180" cell-class-name="time-cell">
             <template #default="{ row }">
               <span v-if="row.startedAt">{{ new Date(Number(row.startedAt)).toLocaleString() }}</span>
               <span v-else class="muted">未开始</span>

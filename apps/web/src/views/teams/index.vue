@@ -460,7 +460,7 @@ onMounted(async () => {
           <el-button :loading="loadingAudit" @click="loadAudit">刷新</el-button>
         </div>
         <el-table :data="auditItems" border v-loading="loadingAudit" empty-text="暂无审计记录">
-          <el-table-column label="时间" width="180">
+          <el-table-column label="时间" width="180" cell-class-name="time-cell">
             <template #default="{ row }">{{ row.createdAt ? new Date(Number(row.createdAt)).toLocaleString() : '-' }}</template>
           </el-table-column>
           <el-table-column label="操作者" width="200">

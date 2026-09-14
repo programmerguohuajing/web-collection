@@ -6,7 +6,7 @@ import { eventPager, perfEvents, setPage, summary, tableLoading } from '../dashb
 </script>
 
 <template>
-  <SearchPanel :fields="['range', 'appId', 'release', 'path', 'keyword']" />
+  <SearchPanel :fields="['appId', 'release', 'path', 'keyword']" />
   <PerfPanel :perf="summary?.perf || {}" />
   <section class="grid">
     <EventTable title="慢接口" :rows="summary?.api || []" />

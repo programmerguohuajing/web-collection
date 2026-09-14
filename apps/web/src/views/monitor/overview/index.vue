@@ -6,9 +6,11 @@ import KpiGrid from '../../../components/KpiGrid.vue'
 import OverviewDistribution from '../../../components/OverviewDistribution.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import { events, issues, replays, summary, api } from '../../../dashboard.js'
+import { useFilterStore } from '../../../stores/filters.js'
 import { formatDuration, readableText } from '../../../utils/format.js'
 
 const router = useRouter()
+const store = useFilterStore()
 const primaryIssue = computed(() => issues.value.find(item => item.status !== 'resolved') || issues.value[0])
 const overviewKpis = computed(() => [
   { label: '今日错误数', value: Number(summary.value?.errors ?? summary.value?.issueCount ?? issues.value.length).toLocaleString(), delta: '当前筛选范围内', valueClass: 'value-danger' },
@@ -16,7 +18,6 @@ const overviewKpis = computed(() => [
   { label: 'Apdex 体验分', value: summary.value?.apdex != null ? Number(summary.value.apdex).toFixed(2) : '-', delta: '基于 LCP 样本（≤2.5s 满意 / ≤4s 容忍）', valueClass: 'value-purple' },
   { label: '在线用户', value: Number(summary.value?.users ?? replays.value.length).toLocaleString(), delta: '实时', valueClass: 'value-success' }
 ])
-const selectedRange = ref('7d')
 const activityRows = computed(() => {
   const errorRows = issues.value.slice(0, 3).map(item => ({
     ts: item.lastSeen, title: readableText(item.message, item.name), level: item.status === 'regression' ? 'P1' : 'P2',
@@ -76,7 +77,7 @@ const ingestionStalledText = computed(() => {
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>实时概览</h1><p>过去 24 小时全站遥测数据汇总</p></div><div class="segmented"><button v-for="item in [{ label: '1h', value: '1h' }, { label: '24h', value: '24h' }, { label: '7d', value: '7d' }, { label: '30d', value: '30d' }]" :key="item.value" type="button" :class="{ active: selectedRange === item.value }" @click="selectedRange = item.value">{{ item.label }}</button></div></div>
+  <div class="page-heading"><div><h1>实时概览</h1><p>{{ store.rangeLabel }}全站遥测数据汇总 · 时间范围沿用顶部全局筛选</p></div></div>
 
   <KpiGrid :items="overviewKpis" />
 

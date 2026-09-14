@@ -62,7 +62,7 @@ function onSessionExpandChange(row, expandedRows) {
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
 const insightOptions = computed(() => insights.value.map(item => ({ label: item.name, value: `insight:${item.id}` })))
 // 事件分析能力：优先读规范键 capabilities.insights（P0-4），兼容旧键 productAnalyticsV2。
-// 缺省 false：Worker 部署无 /api/analytics/insights 端点，入口禁用但可见（不静默隐藏）。
+// Worker 部署无 /api/analytics/insights 端点 → 恒为 false；该 Tab 据此不渲染（见下方模板注释与 resolveTab）。
 const insightsSupported = computed(() => Boolean(capabilities.value.insights ?? capabilities.value.productAnalyticsV2))
 const analyticsKpis = computed(() => [
   { label: '近 5 分钟会话', value: Number(live.value?.sessions || 0).toLocaleString(), delta: '实时', valueClass: 'value-primary' },
@@ -240,7 +240,21 @@ onMounted(async () => {
   }, LIVE_REFRESH_MS)
 })
 onBeforeUnmount(() => clearInterval(timer))
-watch(() => route.query.tab, value => { if (value) tab.value = value }, { immediate: true })
+/**
+ * Tab 深链解析（?tab=xxx）。事件分析在不支持的部署上不渲染，故需在此拦截，
+ * 否则 el-tabs 会因 name 无对应面板而出现「无选中 Tab」的空态。
+ * 同时监听 insightsSupported：capabilities 是异步加载的，自托管部署要等它到位后才能认这个深链。
+ */
+const TAB_NAMES = ['insights', 'sessions', 'releases', 'dashboards']
+function resolveTab(name) {
+  if (!TAB_NAMES.includes(name)) return ''
+  return name === 'insights' && !insightsSupported.value ? '' : name
+}
+watch([() => route.query.tab, insightsSupported], () => {
+  const wanted = resolveTab(route.query.tab)
+  if (wanted) tab.value = wanted
+  else if (tab.value === 'insights' && !insightsSupported.value) tab.value = 'sessions'
+}, { immediate: true })
 watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true })
 </script>
 
@@ -249,8 +263,10 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
   <el-alert v-if="analyticsError" class="table-error" type="error" :title="analyticsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
   <KpiGrid :items="analyticsKpis" />
   <el-tabs v-model="tab" class="panel section analytics-tabs" @tab-change="changeTab">
-    <el-tab-pane :disabled="!insightsSupported" label="事件分析" name="insights">
-      <EventInsightPanel v-if="insightsSupported" :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
+    <!-- 事件分析：仅当部署真实支持 /api/analytics/insights 时渲染（Cloudflare Worker 无该端点 → 恒不渲染，
+         避免出现一个永远点不动的禁用 Tab；自托管 Node 部署 capability 为 true，入口照常可用）。 -->
+    <el-tab-pane v-if="insightsSupported" label="事件分析" name="insights">
+      <EventInsightPanel :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
     </el-tab-pane>
     <el-tab-pane label="用户会话" name="sessions">
       <el-table ref="sessionTableRef" :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession" @expand-change="onSessionExpandChange" style="cursor:pointer">
