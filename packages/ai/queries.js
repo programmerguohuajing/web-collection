@@ -214,22 +214,48 @@ export async function getSessionEvents(db, sessionId, appId) {
  * 单版本聚合统计（供 release 级诊断上下文）。
  * 返回 { release, appId, total, errors, perfAvg }，无数据返回 null。
  */
+const RELEASE_STATS_FRESH_MS = 60 * 60 * 1000
+const RELEASE_STATS_STALE_MS = 24 * 60 * 60 * 1000
+const releaseStatsCache = new Map()
+const releaseStatsInflight = new Map()
+
 export async function getReleaseStats(db, releaseName, appId) {
   if (!releaseName?.trim()) return null
-  const sql = appId
-    ? 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? and app_id=? group by type'
-    : 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? group by type'
-  const params = appId ? ['perf', releaseName, appId] : ['perf', releaseName]
-  const rows = await db.prepare(sql).bind(...params).all()
-  if (!rows?.length) return null
-  let total = 0, errors = 0, perfAvg = null
-  for (const r of rows) {
-    const cnt = Number(r.cnt) || 0
-    total += cnt
-    if (r.type === 'error') errors += cnt
-    if (r.type === 'perf' && r.perf_avg != null) perfAvg = Number(r.perf_avg)
-  }
-  return { release: releaseName, appId: appId || null, total, errors, perfAvg: perfAvg ? Number(perfAvg.toFixed(2)) : null }
+  const key = `${appId || '*'}\u0000${releaseName}`
+  const cached = releaseStatsCache.get(key)
+  if (cached && Date.now() - cached.at < RELEASE_STATS_FRESH_MS) return cached.value
+  if (releaseStatsInflight.has(key)) return releaseStatsInflight.get(key)
+
+  const task = (async () => {
+    try {
+      const sql = appId
+        ? 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? and app_id=? group by type'
+        : 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? group by type'
+      const params = appId ? ['perf', releaseName, appId] : ['perf', releaseName]
+      const rows = await db.prepare(sql).bind(...params).all()
+      let value = null
+      if (rows?.length) {
+        let total = 0, errors = 0, perfAvg = null
+        for (const r of rows) {
+          const cnt = Number(r.cnt) || 0
+          total += cnt
+          if (r.type === 'error') errors += cnt
+          if (r.type === 'perf' && r.perf_avg != null) perfAvg = Number(r.perf_avg)
+        }
+        value = { release: releaseName, appId: appId || null, total, errors, perfAvg: perfAvg ? Number(perfAvg.toFixed(2)) : null }
+      }
+      releaseStatsCache.set(key, { at: Date.now(), value })
+      if (releaseStatsCache.size > 200) releaseStatsCache.delete(releaseStatsCache.keys().next().value)
+      return value
+    } catch (error) {
+      if (cached && Date.now() - cached.at < RELEASE_STATS_STALE_MS) return cached.value
+      throw error
+    } finally {
+      releaseStatsInflight.delete(key)
+    }
+  })()
+  releaseStatsInflight.set(key, task)
+  return task
 }
 
 /**
