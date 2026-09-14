@@ -272,6 +272,14 @@ export class ReliableSender {
               this.diagnostic.emit('retry', { count: batch.length, status: result.status, attempt: attempts })
             }
           }
+          // force（页面退出/隐藏/错误紧急路径）失败后立即终止本轮 flush，不再重发：
+          // do-while 的条件是「队列非空就继续」，而 retry 批次恰好留在队列——若不
+          // break，同一批会被无间隔地原样重发，服务端挂起/5xx 期间变成无界请求
+          // 风暴（每次都带 keepalive；被 abort 的 keepalive 请求在浏览器网络层
+          // 仍停留 pending，Network 面板累积出一排僵尸 collect 请求）。
+          // 事件保留在持久队列（非破坏性），由 sendExitBatch 的 Beacon/keepalive
+          // 逃生通道与下一会话恢复；平台版 platform/core.js 的 flushOnline 同此语义。
+          if (force) break
         }
         this._persist()
       } while (force && this.items.length && !this._transportGone())

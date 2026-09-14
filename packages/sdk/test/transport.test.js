@@ -380,6 +380,72 @@ test('ReliableSender 收到 5xx → 退避重试，超上限后丢弃', async ()
   clearTimeout(s._retryTimer)
 })
 
+// ---------------------------------------------------------------------------
+// force flush 失败不再无限重发（回归：连续多个一直 pending 的 collect 请求）
+//
+// 此前 force（页面退出/隐藏/错误紧急路径）的 do-while 以「队列非空」为循环
+// 条件，而 retry 批次恰好留在队列——失败批次被无间隔原样重发，服务端挂起/
+// 5xx 期间变成无界请求风暴；每次都带 keepalive，被 abort 的 keepalive 请求
+// 在浏览器网络层仍停留 pending，Network 面板累积出一排僵尸 collect 请求。
+// 修复：force 下 retry 判定后立即 break，事件保留（非破坏性）交由退出通道
+// 与下一会话恢复（与 platform/core.js 的 flushOnline 语义对齐）。
+// ---------------------------------------------------------------------------
+test('ReliableSender force flush 收 5xx → 只发送 1 次即终止，不再立即重发', async () => {
+  let fetchCalls = 0
+  const transport = new FetchTransport({ endpoint: '/api/collect', fetchImpl: async () => { fetchCalls++; return jsonResponse(500) } })
+  const s = new ReliableSender({
+    transport,
+    maxQueue: 50,
+    maxBatch: 10,
+    maxRetries: 3,
+    backoffBase: 1,
+    backoffMax: 1,
+    diagnostic: createDiagnosticSink(() => {})
+  })
+  for (let i = 0; i < 3; i++) s.enqueue({ type: 'track', name: 'e' + i })
+  // 修复前：该 await 永不落定（无间隔热循环重发同一批），测试将超时失败。
+  const res = await s.sendBatchOnline(true)
+  clearTimeout(s._retryTimer)
+  assert.equal(fetchCalls, 1, 'force 失败批次只应发送 1 次')
+  assert.equal(res.retried, 3)
+  assert.equal(s.size(), 3, '事件保留在队列（非破坏性），交由退出通道/下一会话恢复')
+})
+
+test('ReliableSender force flush 服务端挂起超时 → 中止后不再原样重发（不产生僵尸 pending）', async () => {
+  let fetchCalls = 0
+  const transport = new FetchTransport({
+    endpoint: '/api/collect',
+    timeout: 30, // 注入小超时
+    fetchImpl: (url, init) => new Promise((_resolve, reject) => {
+      fetchCalls++
+      // 模拟服务端/网络挂起：响应永不返回；abort 时按 fetch 语义 reject AbortError
+      if (init && init.signal) {
+        init.signal.addEventListener('abort', () => {
+          const e = new Error('The operation was aborted')
+          e.name = 'AbortError'
+          reject(e)
+        })
+      }
+    })
+  })
+  const s = new ReliableSender({
+    transport,
+    maxQueue: 50,
+    maxBatch: 10,
+    maxRetries: 3,
+    backoffBase: 1,
+    backoffMax: 1,
+    diagnostic: createDiagnosticSink(() => {})
+  })
+  s.enqueue({ type: 'track', name: 'x' })
+  // 修复前：每次超时中止后立即重发同一批 → 每 30ms 一个新请求，无限累积。
+  const res = await s.sendBatchOnline(true)
+  clearTimeout(s._retryTimer)
+  assert.equal(fetchCalls, 1, '挂起超时后不应立即重发同一批')
+  assert.equal(res.retried, 1)
+  assert.equal(s.size(), 1, '事件保留在队列（非破坏性）')
+})
+
 test('ReliableSender 并发 flush 仅单活跃发送者', async () => {
   const transport = new FetchTransport({ endpoint: '/api/collect', fetchImpl: async () => jsonResponse(200) })
   const s = new ReliableSender({ transport, maxQueue: 10, maxBatch: 10 })
