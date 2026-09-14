@@ -39,23 +39,21 @@ const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors
 let timer = 0
 let loadRequestId = 0
 
-// 用户会话表「访问页面」列：内联只展示前 N 个路径面包屑，超出部分行内展开查看完整路径。
+// 用户会话表「访问页面」列：内联只展示前 N 个路径面包屑，超出部分点击「+N 页」在单元格内展开完整路径
+// （行点击打开会话详情抽屉；原左侧 type="expand" 展开列已移除，内联开关自持展开状态，不再依赖表格 expand 机制）
 const PATH_PREVIEW = 3 // 单元格内联展示的页面数
-const sessionTableRef = ref(null)
 const sessionExpandedKeys = ref(new Set())
 function visiblePaths(row) {
-  return (row.paths || []).slice(0, PATH_PREVIEW)
+  const paths = row.paths || []
+  return rowExpanded(row) ? paths : paths.slice(0, PATH_PREVIEW)
 }
 function rowExpanded(row) {
   return sessionExpandedKeys.value.has(row.session_id)
 }
 function toggleExpand(row) {
-  sessionTableRef.value?.toggleRowExpansion(row)
-}
-function onSessionExpandChange(row, expandedRows) {
   const next = new Set(sessionExpandedKeys.value)
-  if (expandedRows.some(item => item.session_id === row.session_id)) next.add(row.session_id)
-  else next.delete(row.session_id)
+  if (next.has(row.session_id)) next.delete(row.session_id)
+  else next.add(row.session_id)
   sessionExpandedKeys.value = next
 }
 
@@ -269,20 +267,7 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
       <EventInsightPanel :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
     </el-tab-pane>
     <el-tab-pane label="用户会话" name="sessions">
-      <el-table ref="sessionTableRef" :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession" @expand-change="onSessionExpandChange" style="cursor:pointer">
-        <el-table-column type="expand" width="24">
-          <template #default="{ row }">
-            <div class="path-expand">
-              <div class="path-expand-title">完整访问路径（共 {{ (row.paths || []).length }} 页）</div>
-              <div class="path-expand-body">
-                <template v-for="(p, i) in row.paths || []" :key="i">
-                  <span class="path-crumb">{{ p }}</span>
-                  <el-icon v-if="i < (row.paths || []).length - 1" class="path-crumb-arrow"><ArrowRight /></el-icon>
-                </template>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
+      <el-table :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession" style="cursor:pointer">
         <el-table-column prop="user_name" label="用户" width="130"><template #default="{ row }">{{ row.user_name || row.user_id || row.device_id }}</template></el-table-column>
         <el-table-column label="会话" min-width="200"><template #default="{ row }"><OverflowTip :text="row.session_id" /></template></el-table-column>
         <el-table-column label="开始时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template></el-table-column>
@@ -297,8 +282,8 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
                 <el-icon v-if="i < visiblePaths(row).length - 1" class="path-crumb-arrow"><ArrowRight /></el-icon>
               </template>
               <span v-if="(row.paths || []).length > PATH_PREVIEW" class="path-toggle" :class="{ 'is-expanded': rowExpanded(row) }" @click.stop="toggleExpand(row)">
-                +{{ row.paths.length - PATH_PREVIEW }} 页
-                <el-icon class="path-toggle-arrow"><ArrowDown v-if="!rowExpanded(row)" /><ArrowUp v-else /></el-icon>
+                <template v-if="rowExpanded(row)">收起<el-icon class="path-toggle-arrow"><ArrowUp /></el-icon></template>
+                <template v-else>+{{ row.paths.length - PATH_PREVIEW }} 页<el-icon class="path-toggle-arrow"><ArrowDown /></el-icon></template>
               </span>
             </span>
             <span v-else>-</span>
@@ -352,11 +337,7 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
 .path-crumb-arrow { flex: none; color: var(--el-text-color-placeholder); font-size: 12px; }
 .path-toggle { display: inline-flex; align-items: center; gap: 2px; flex: none; margin-left: 2px; color: var(--el-color-primary); cursor: pointer; font-size: 12px; user-select: none; }
 .path-toggle:hover { color: var(--el-color-primary-light-3); }
-.path-toggle-arrow { font-size: 12px; transition: transform .2s; }
-.path-toggle.is-expanded .path-toggle-arrow { transform: rotate(180deg); }
-.path-expand { padding: 4px 8px; }
-.path-expand-title { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 8px; }
-.path-expand-body { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.path-toggle-arrow { font-size: 12px; }
 .dashboard-current { margin-top: 14px; }
 .dashboard-insight { margin-top: 14px; }
 .share-note { margin-bottom: 14px; }
