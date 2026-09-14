@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, BellFilled, Brush, Calendar, ChatDotRound, Coin, Collection, Connection, Cpu, DataAnalysis, DataLine, Document, Files, Film, Fold, Grid, Histogram, House, Lock, MagicStick, Management, MapLocation, Medal, Menu, Monitor, Operation, Promotion, Reading, Setting, Share, SetUp, Stamp, Stopwatch, Switch, TrendCharts, Upload, User, View, Warning
+  Aim, Bell, BellFilled, Brush, ChatDotRound, Coin, Collection, Connection, Cpu, DataAnalysis, DataLine, Document, Files, Film, Fold, Grid, Histogram, House, Lock, MagicStick, Management, MapLocation, Medal, Menu, Monitor, Operation, Promotion, Reading, Setting, Share, SetUp, Stamp, Stopwatch, Switch, TrendCharts, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { RANGE_PRESETS, useFilterStore } from '../stores/filters.js'
@@ -62,7 +62,7 @@ const baseGroups = [
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Switch },
     { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
-    { title: '留存分析', path: '/retention', icon: Calendar },
+    { title: '留存分析', path: '/retention', icon: Grid },
     { title: '实验分析', path: '/experiments', icon: Medal, cap: 'experiments' },
     { title: '发布管理', path: '/releases', icon: Upload },
     { title: 'AI 洞察', path: '/ai-insights', icon: BellFilled }

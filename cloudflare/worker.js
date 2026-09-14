@@ -20,6 +20,110 @@ import { buildRetentionReport, RETENTION_DAY_MS } from '../packages/retention.js
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers } })
 
+// D1 免费版行读保护：重聚合接口不能只依赖模块内 Map。边缘隔离实例冷启动时，多个实例会
+// 同时 miss，并把同一条 4~5 万 rows_read 的查询重复执行。这里用 Cache API 在同一机房的
+// Worker 实例间复用最终 JSON；缓存键包含请求者作用域，返回客户端时仍强制 no-store。
+// Cache API 不支持 stale-if-error，故缓存体自带生成时间，并在 D1 限额/过载时手动回退旧值。
+const HEAVY_READ_FRESH_MS_W = 5 * 60 * 1000
+const HEAVY_READ_STALE_MS_W = 24 * 60 * 60 * 1000
+const _heavyReadCacheW = new Map()
+const _heavyReadInflightW = new Map()
+
+function heavyReadViewerW(env, auth) {
+  return [auth?.teamId || 'global', auth?.userId || 'anonymous', auth?.level || globalLevel(env)].join(':')
+}
+
+function heavyReadKeyW(scope, url, viewer) {
+  const search = new URLSearchParams(url.search)
+  search.delete('_t')
+  search.sort()
+  return `${scope}|${url.pathname}|${search.toString()}|${viewer}`
+}
+
+async function heavyReadCacheRequestW(scope, url, key) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))
+  const hash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')
+  const cacheUrl = new URL(url.origin)
+  cacheUrl.pathname = `/__d1_read_cache/${encodeURIComponent(scope)}/${hash}`
+  cacheUrl.search = ''
+  return new Request(cacheUrl, { method: 'GET' })
+}
+
+function heavyReadResponseW(entry, state) {
+  const headers = new Headers(entry.headers || {})
+  if (!headers.has('content-type')) headers.set('content-type', entry.contentType || 'application/json; charset=utf-8')
+  headers.delete('set-cookie')
+  headers.set('cache-control', 'private, no-store')
+  headers.set('x-d1-read-cache', state)
+  return new Response(entry.body, {
+    status: entry.status,
+    headers
+  })
+}
+
+async function cachedHeavyReadW(scope, env, url, auth, loader, { freshMs = HEAVY_READ_FRESH_MS_W, staleMs = HEAVY_READ_STALE_MS_W } = {}) {
+  const key = heavyReadKeyW(scope, url, heavyReadViewerW(env, auth))
+  const now = Date.now()
+  let entry = _heavyReadCacheW.get(key) || null
+  const edgeCache = globalThis.caches?.default || null
+  let edgeRequest = null
+
+  if (!entry && edgeCache) {
+    try {
+      edgeRequest = await heavyReadCacheRequestW(scope, url, key)
+      const hit = await edgeCache.match(edgeRequest)
+      if (hit) {
+        const parsed = await hit.json()
+        if (parsed && Number.isFinite(Number(parsed.at)) && typeof parsed.body === 'string') {
+          entry = parsed
+          _heavyReadCacheW.set(key, entry)
+        }
+      }
+    } catch {}
+  }
+  if (entry && now - Number(entry.at) < freshMs) return heavyReadResponseW(entry, 'hit')
+
+  let inflight = _heavyReadInflightW.get(key)
+  if (!inflight) {
+    const staleEntry = entry
+    inflight = (async () => {
+      try {
+        const response = await loader()
+        const next = {
+          at: Date.now(),
+          status: response.status,
+          contentType: response.headers.get('content-type') || 'application/json; charset=utf-8',
+          headers: Object.fromEntries([...response.headers].filter(([name]) => !['cache-control', 'set-cookie', 'content-length'].includes(name.toLowerCase()))),
+          body: await response.text()
+        }
+        if (response.ok) {
+          _heavyReadCacheW.set(key, next)
+          if (_heavyReadCacheW.size > 500) _heavyReadCacheW.delete(_heavyReadCacheW.keys().next().value)
+          if (edgeCache) {
+            try {
+              edgeRequest ||= await heavyReadCacheRequestW(scope, url, key)
+              await edgeCache.put(edgeRequest, new Response(JSON.stringify(next), {
+                headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${Math.ceil(staleMs / 1000)}` }
+              }))
+            } catch {}
+          }
+        }
+        return { entry: next, state: response.ok ? 'miss' : 'bypass' }
+      } catch (error) {
+        if (staleEntry && Date.now() - Number(staleEntry.at) < staleMs) return { entry: staleEntry, state: 'stale' }
+        throw error
+      }
+    })()
+    _heavyReadInflightW.set(key, inflight)
+  }
+  try {
+    const result = await inflight
+    return heavyReadResponseW(result.entry, result.state)
+  } finally {
+    if (_heavyReadInflightW.get(key) === inflight) _heavyReadInflightW.delete(key)
+  }
+}
+
 // ── 入库自监控（防 2026-08-28 式「全绿但零入库」静默失败） ──────────────────────
 // 统计最近窗口内的 collect 请求数、进入写入的事件数、成功入库数、失败数与最近错误。
 // 写库异常原本被 collect 的 ctx.waitUntil 静默吞掉（表象 health 绿、接口 200、但零数据），
@@ -996,23 +1100,23 @@ async function adminApi(request, env, url) {
   if (path === '/api/internal/alerts/deliver' && request.method === 'POST') return consumeAlertDelivery(request, env)
   if (path === '/api/events') return pagedEvents(env, url)
   if (path === '/api/logs') return pagedEvents(env, url, 'log')
-  if (path === '/api/summary') return summary(env, url)
+  if (path === '/api/summary') return cachedHeavyReadW('summary', env, url, auth, () => summary(env, url))
   if (path === '/api/issues') return paged(env, 'issues', url, 'last_seen')
   if (path === '/api/replays') return replayList(env, url)
   if (/^\/api\/replays\//.test(path)) return replayEvents(env, decodeURIComponent(path.split('/').at(-1)))
-  if (path === '/api/traces') return traces(env, url)
+  if (path === '/api/traces') return cachedHeavyReadW('traces', env, url, auth, () => traces(env, url), { freshMs: 15 * 60 * 1000 })
   if (path === '/api/traces/') return traceEvents(env, '', url)
   if (/^\/api\/traces\/[^/]+\/distributed$/.test(path)) return distributedTrace(env, decodeURIComponent(path.split('/').at(-2)))
   // BUG-013 修复：topology-plan F1 承诺的调用拓扑端点（服务端按「页面 → API」归并，与 Node getTraceTopology 同构）。
   if (/^\/api\/traces\/[^/]+\/topology$/.test(path)) return traceTopology(env, decodeURIComponent(path.split('/').at(-2)))
   if (/^\/api\/traces\/[^/]+$/.test(path)) return traceEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
-  if (path === '/api/analytics/sessions') return sessions(env, url)
+  if (path === '/api/analytics/sessions') return cachedHeavyReadW('analytics-sessions', env, url, auth, () => sessions(env, url), { freshMs: 30 * 60 * 1000 })
   if (/^\/api\/analytics\/sessions\//.test(path)) return sessionEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
   if (path === '/api/analytics/paths') return paths(env, url)
   if (path === '/api/analytics/click-paths') return clickPaths(env, url)
   if (path === '/api/analytics/heatmap') return heatmap(env, url)
   if (path === '/api/analytics/live') return live(env, url)
-  if (path === '/api/analytics/releases') return releasesReport(env, url)
+  if (path === '/api/analytics/releases') return cachedHeavyReadW('analytics-releases', env, url, auth, () => releasesReport(env, url), { freshMs: 30 * 60 * 1000 })
   if (path === '/api/analytics/event-names') return funnelEventNames(env, url)
   if (path === '/api/applications' && request.method === 'GET') return applicationList(env, url, auth)
   if (/^\/api\/applications\/[^/]+$/.test(path) && request.method === 'DELETE') { const id=decodeURIComponent(path.split('/').at(-1)); await env.DB.prepare('delete from releases where app_id=?').bind(id).run(); await env.DB.prepare('delete from experiment_exposures where app_id=?').bind(id).run(); await env.DB.prepare('delete from experiments where app_id=?').bind(id).run(); await env.DB.prepare('delete from applications where app_id=?').bind(id).run(); return json({ok:true}) }
@@ -1115,7 +1219,7 @@ async function adminApi(request, env, url) {
   if (/^\/api\/export\/(events|issues|replays)\.csv$/.test(path)) return exportCsv(env, RegExp.$1, url)
   // ==================== PRD 集合：洞察/治理层 ====================
   // PRD 01 用户链路（注意顺序：names 先于 :name 通配）
-  if (path === '/api/journey/sessions') return journeySessions(env, url, auth)
+  if (path === '/api/journey/sessions') return cachedHeavyReadW('journey-sessions', env, url, auth, () => journeySessions(env, url, auth), { freshMs: 30 * 60 * 1000 })
   if (path === '/api/journey/timeline') return journeyTimeline(env, url, auth)
   if (path === '/api/events/dictionary') return dictionaryList(env, url)
   if (path === '/api/events/dictionary/names') return dictionaryNames(env, url)
@@ -1123,14 +1227,14 @@ async function adminApi(request, env, url) {
   if (dictName && request.method === 'PUT') return dictionaryRegister(env, decodeURIComponent(dictName[1]), await request.json())
   if (dictName) return dictionaryDetail(env, decodeURIComponent(dictName[1]), url, auth)
   // PRD 03 版本质量
-  if (path === '/api/releases/quality') return releaseQuality(env, url, auth)
-  if (path === '/api/releases/quality/compare') return releaseQualityCompare(env, url, auth)
+  if (path === '/api/releases/quality') return cachedHeavyReadW('release-quality', env, url, auth, () => releaseQuality(env, url, auth), { freshMs: 30 * 60 * 1000 })
+  if (path === '/api/releases/quality/compare') return cachedHeavyReadW('release-quality-compare', env, url, auth, () => releaseQualityCompare(env, url, auth), { freshMs: 30 * 60 * 1000 })
   // PRD 04 远程配置——管理端
   if (path === '/api/collect-config' && request.method === 'GET') return collectConfigPreview(env, url)
   if (path === '/api/collect-config' && request.method === 'PUT') return collectConfigSave(env, await request.json())
   if (path === '/api/collect-config/history') return json((await env.DB.prepare('select id,action,scope_json,config_snapshot,diff_json,operator,created_at from collect_config_audit order by created_at desc limit 100').all()).results.map(row => ({ id: Number(row.id), action: row.action, scope: parse(row.scope_json, null), configSnapshot: parse(row.config_snapshot, null), diff: parse(row.diff_json, {})?.text || '', operator: row.operator, createdAt: Number(row.created_at) })))
   if (path === '/api/collect-config/rollback' && request.method === 'POST') return collectConfigRollback(env, await request.json())
-  if (path === '/api/collect-config/stats') return collectConfigStats(env)
+  if (path === '/api/collect-config/stats') return cachedHeavyReadW('collect-config-stats', env, url, auth, () => collectConfigStats(env), { freshMs: 15 * 60 * 1000 })
   // PRD 05 漏斗报告（PRD 形状，复用 runFunnel 引擎输出整形）
   if (/\/funnels\/\d+\/report$/.test(path)) return funnelReport(env, Number(path.split('/').at(-2)), url)
   // PRD 06 页面参与度

@@ -76,3 +76,21 @@ test('cron 数据库查询预算有界且告警重试不在多个 cron 重复执
   assert.equal((scheduled.match(/retryPendingAlertDeliveries\(env\)/g) || []).length, 1)
   assert.match(scheduled, /controller\.cron === '\* \* \* \* \*'[\s\S]*retryPendingAlertDeliveries\(env\)/)
 })
+
+test('高行读接口使用跨实例 Cache API，并在 D1 故障时允许回退旧值', () => {
+  const worker = readFileSync(path.join(ROOT, 'cloudflare/worker.js'), 'utf8')
+  assert.match(worker, /globalThis\.caches\?\.default/)
+  assert.match(worker, /x-d1-read-cache/)
+  assert.match(worker, /state: 'stale'/)
+  for (const scope of ['summary', 'analytics-sessions', 'journey-sessions', 'release-quality', 'collect-config-stats']) {
+    assert.match(worker, new RegExp(`cachedHeavyReadW\\('${scope}'`), `缺少高行读缓存：${scope}`)
+  }
+  assert.match(worker, /headers\.set\('cache-control', 'private, no-store'\)/)
+})
+
+test('AI 单版本统计合并并缓存重复全窗聚合', () => {
+  const queries = readFileSync(path.join(ROOT, 'packages/ai/queries.js'), 'utf8')
+  assert.match(queries, /RELEASE_STATS_FRESH_MS/)
+  assert.match(queries, /releaseStatsInflight\.has\(key\)/)
+  assert.match(queries, /RELEASE_STATS_STALE_MS/)
+})

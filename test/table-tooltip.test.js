@@ -66,7 +66,10 @@ test('所有页面的表格溢出内容统一使用 OverflowTip', async () => {
   assert.ok(overflowTipUsers.length >= 9, `OverflowTip 覆盖页面/组件不足，当前仅 ${overflowTipUsers.length} 个`)
 
   const rawTableTooltips = sources
-    .filter(([, source]) => /<el-table[\s\S]*?<el-tooltip\b/.test(source))
+    .filter(([, source]) => {
+      const tables = source.match(/<el-table\b[\s\S]*?<\/el-table>/g) || []
+      return tables.some((table) => /<el-tooltip\b/.test(table))
+    })
     .map(([file]) => path.relative(repoRoot, file))
   assert.deepEqual(rawTableTooltips, [], `表格内仍有未统一定位的 el-tooltip: ${rawTableTooltips.join(', ')}`)
 })
