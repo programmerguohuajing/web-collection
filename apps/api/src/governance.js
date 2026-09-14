@@ -177,10 +177,16 @@ export async function processAlert(event, issue) {
   if (!settings.alerts.enabled) return
   const trigger = alertTrigger(event, issue, settings.alerts)
   if (!trigger) return
-  const fingerprint = issue?.fingerprint || `${event.metric || event.name || event.type}:${event.url || event.path || ''}`.slice(0, 128)
+  const fingerprint = alertFingerprint(event, issue)
   const since = Date.now() - settings.alerts.cooldownMinutes * 60000
   const recent = await all('select id from alert_history where app_id=? and metric=? and fingerprint=? and created_at>=? limit 1', [event.appId, trigger.metric, fingerprint, since])
-  if (recent.length) return
+  if (recent.length) {
+    // 冷却窗口内命中去重：渠道不重复推送；错误类告警累加 value（=窗口内发生次数，对齐 worker.js）。
+    if (['error', 'regression', 'log_error'].includes(trigger.metric)) {
+      try { await run('update alert_history set value=value+1 where id=?', [recent[0].id]) } catch {}
+    }
+    return
+  }
   const result = await run(
     `insert into alert_history (app_id, metric, fingerprint, level, value, message, notified, context_json, created_at)
      values (?, ?, ?, ?, ?, ?, false, ?::jsonb, ?) returning id`,
@@ -265,6 +271,21 @@ function utcDayKey(ts) {
   return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate()
 }
 
+// 网络类错误名单：SDK 请求级监控捕获的连接层失败（fetch/XHR/资源加载/SSE/WebSocket）。
+// 与 worker.js 的 NETWORK_ERROR_NAMES 保持同步。
+const NETWORK_ERROR_NAMES = ['FetchError', 'XhrError', 'ResourceError', 'SseError', 'WebSocketError']
+
+// 告警指纹（风暴聚合，对齐 worker.js）：网络类错误不含 source URL——断网/代理故障时
+// 应用全部请求同时失败，issue 指纹按 URL 细分，若告警也按 URL 去重，同一故障会被
+// 拆成几十条内容相同的告警刷屏。聚合为「应用|错误名|错误类型|消息」后同一冷却窗口
+// 只发一条；issues 表仍按 URL 细分，问题列表与 count 统计不受影响。
+function alertFingerprint(event, issue) {
+  if (NETWORK_ERROR_NAMES.includes(event.name) && ['network', 'aborted', 'timeout'].includes(event.props?.errorType)) {
+    return `${event.appId}|${event.name}|${event.props.errorType}|${String(event.message || '').slice(0, 120)}`.slice(0, 128)
+  }
+  return issue?.fingerprint || `${event.metric || event.name || event.type}:${event.url || event.path || ''}`.slice(0, 128)
+}
+
 function alertTrigger(event, issue, config) {
   if (event.type === 'log' && event.name === 'error' && config.logError) return makeTrigger('log_error', 1, 'error', event)
   if (event.type === 'error' && issue?.status === 'regression' && config.regression) return makeTrigger('regression', 1, 'critical', event)
@@ -277,9 +298,11 @@ function alertTrigger(event, issue, config) {
 
 function makeTrigger(metric, value, level, event, threshold) {
   const page = event.path || event.url || '-'
+  // 网络类错误带上失败请求 URL（聚合后唯一一条告警需指明是哪个请求，对齐 worker.js alertMessage）
+  const source = NETWORK_ERROR_NAMES.includes(event.name) && event.props?.source ? `，请求 ${String(event.props.source).slice(0, 160)}` : ''
   const message = event.type === 'perf'
     ? `[Web Collection] ${event.appId} ${metric.toUpperCase()} ${value}${metric === 'cls' ? '' : 'ms'}，超过阈值 ${threshold}${metric === 'cls' ? '' : 'ms'}，页面 ${page}`
-    : `[Web Collection] ${event.appId} ${event.name || metric}: ${event.message || '未知错误'}，页面 ${page}，版本 ${event.release || '-'}，Trace ${event.traceId || '-'}`
+    : `[Web Collection] ${event.appId} ${event.name || metric}: ${event.message || '未知错误'}${source}，页面 ${page}，版本 ${event.release || '-'}，Trace ${event.traceId || '-'}`
   return { metric, value, level, message, threshold }
 }
 
