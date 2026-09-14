@@ -350,6 +350,17 @@ defineExpose({ open })
 .hypo-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .hypothesis strong { font-size: 13px; }
 .evidence { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+/* 证据标签常含超长错误消息/JSON：el-tag 默认 nowrap+固定高会溢出抽屉被裁切，改为允许换行自适应 */
+.evidence :deep(.el-tag) {
+  height: auto;
+  min-height: 20px;
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.5;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  text-align: left;
+}
 .suggestions { margin: 0; padding-left: 20px; }
 .suggestions li { margin-bottom: 6px; font-size: 13px; }
 .suggestions code { background: var(--el-fill-color); padding: 0 4px; border-radius: 3px; font-size: 12px; }
