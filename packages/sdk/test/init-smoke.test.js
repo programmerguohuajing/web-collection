@@ -30,10 +30,22 @@ function installDom(opts = {}) {
     Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true })
   }
   const noop = () => {}
+  // 事件注册表：让 window/document 监听可被测试观察（注册/移除/派发），
+  // 用于验证 destroy() 是否真正移除退出冲刷监听（防僵尸实例）。
+  const winEvents = new Map()
+  const docEvents = new Map()
+  const trackAdd = (map) => (type, fn) => {
+    if (!map.has(type)) map.set(type, new Set())
+    map.get(type).add(fn)
+  }
+  const trackRemove = (map) => (type, fn) => {
+    const set = map.get(type)
+    if (set) set.delete(fn)
+  }
   const doc = {
     title: '', hidden: false, visibilityState: 'visible', readyState: 'complete',
     referrer: '',
-    addEventListener: noop, removeEventListener: noop,
+    addEventListener: trackAdd(docEvents), removeEventListener: trackRemove(docEvents),
     querySelector: () => null, querySelectorAll: () => [],
     matches: () => false,
     createElement: () => ({ style: {}, setAttribute: noop, appendChild: noop }),
@@ -45,8 +57,8 @@ function installDom(opts = {}) {
   define('location', { href: 'https://example.com/', pathname: '/', referrer: '', origin: 'https://example.com' })
   define('navigator', { userAgent: 'node', sendBeacon: () => true })
   define('performance', globalThis.performance || { now: () => Date.now(), getEntriesByType: () => [], getEntriesByName: () => [] })
-  define('addEventListener', noop)
-  define('removeEventListener', noop)
+  define('addEventListener', trackAdd(winEvents))
+  define('removeEventListener', trackRemove(winEvents))
   // 同步 rAF：避免 teardown 后嵌套 rAF 定时器触发时全局已被卸载
   define('requestAnimationFrame', (cb) => cb(Date.now()))
   define('BroadcastChannel', class { constructor() {} postMessage() {} close() {} addEventListener() {} })
@@ -76,7 +88,7 @@ function installDom(opts = {}) {
     get(k) { return this.h[k.toLowerCase()] }
   })
   define('URL', globalThis.URL || URL)
-  return { saved, fetchMock }
+  return { saved, fetchMock, winEvents, docEvents }
 }
 
 async function uninstallDom({ saved }) {
@@ -132,9 +144,66 @@ test('web: exposure:true 但无 IntersectionObserver 时走 diagnostic 分支也
 })
 
 test('SDK_VERSION 非空且为合法版本串（防止手写常量漏改导致版本失真）', () => {
-  // 直引 src（无构建 define）时回退 '0.0.0-dev'，构建后注入真实 package.json 版本。
+  // 直引 src（无构建 define）时回退 '0.0.0-dev'，真实值由构建产物 grep 校验。
   // 此处仅守护「不为 undefined / 空串」，真实值由构建产物 grep 校验。
   assert.equal(typeof SDK_VERSION, 'string')
   assert.ok(SDK_VERSION.length > 0, 'SDK_VERSION 不应为空')
   assert.match(SDK_VERSION, /^\d+\.\d+\.\d+/, 'SDK_VERSION 应为 semver 形态')
+})
+
+// ---------------------------------------------------------------------------
+// destroy() 移除退出冲刷监听（回归：僵尸实例导致多个一直 pending 的 collect）
+//
+// 此前 pagehide/visibilitychange 以匿名函数注册且 destroy 不移除：应用重复
+// 初始化 SDK（HMR / React StrictMode / SPA 重挂载）后，每个旧实例的监听器
+// 仍存活——每次切后台，N 个僵尸实例同时各发一批 keepalive collect 请求，
+// 浏览器 keepalive 配额被打满，Network 面板出现一排一直 pending 的 collect。
+// ---------------------------------------------------------------------------
+test('web: destroy() 移除 pagehide/visibilitychange 冲刷监听，重复初始化不再叠加僵尸发送者', async () => {
+  const env = installDom({ hasIO: true })
+  let collectPosts = 0
+  try {
+    // 计数 collect POST，模拟真实传输
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes('/api/collect') && (init.method || '') === 'POST') collectPosts++
+      return { ok: true, status: 200, json: async () => ({}) }
+    }
+    const eys = createEysForTest({ replay: false, requests: false, exposure: false, batchSize: 10 })
+    eys.track('before-destroy')
+    // 销毁前 SDK 必须注册了退出冲刷监听（守卫测试自身有效性）
+    assert.ok((env.winEvents.get('pagehide') || new Set()).size >= 1, 'window 应已注册 pagehide 监听')
+    assert.ok((env.docEvents.get('visibilitychange') || new Set()).size >= 1, 'document 应已注册 visibilitychange 监听')
+    const pagehideBefore = new Set(env.winEvents.get('pagehide') || [])
+    const visibilityBefore = new Set(env.docEvents.get('visibilitychange') || [])
+    await eys.destroy()
+    // destroy 后：销毁前注册的监听必须全部移除（旧实例不再响应切后台/关页）
+    const pagehideAfter = env.winEvents.get('pagehide') || new Set()
+    const visibilityAfter = env.docEvents.get('visibilitychange') || new Set()
+    for (const fn of pagehideBefore) {
+      assert.ok(!pagehideAfter.has(fn), 'destroy 后 pagehide 监听应已移除')
+    }
+    for (const fn of visibilityBefore) {
+      assert.ok(!visibilityAfter.has(fn), 'destroy 后 visibilitychange 监听应已移除')
+    }
+    // 功能性验证：模拟「切后台再切回再切后台 + 关页」不应产生任何新的 collect 请求
+    const postsAfterDestroy = collectPosts
+    const dispatchDoc = (type) => {
+      for (const fn of [...(env.docEvents.get(type) || [])]) {
+        try { fn({ type }) } catch { /* 与真实事件派发一致，单监听器异常不阻断 */ }
+      }
+    }
+    const dispatchWin = (type) => {
+      for (const fn of [...(env.winEvents.get(type) || [])]) {
+        try { fn({ type }) } catch { /* 同上 */ }
+      }
+    }
+    const doc = globalThis.document
+    doc.hidden = false; dispatchDoc('visibilitychange') // 回前台（解除周期锁）
+    doc.hidden = true; dispatchDoc('visibilitychange')  // 切后台（若监听泄漏会触发 flushAll(true)）
+    dispatchWin('pagehide')                              // 关页（若监听泄漏会再次触发）
+    await new Promise(r => setTimeout(r, 30))
+    assert.equal(collectPosts, postsAfterDestroy, 'destroy 后 visibilitychange/pagehide 不应再触发 collect 发送')
+  } finally {
+    await uninstallDom(env)
+  }
 })

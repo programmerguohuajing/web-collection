@@ -793,13 +793,18 @@ export function createEys(options = {}) {
   if (fetchImpl && typeof window !== 'undefined') {
     monitoringTimer = setInterval(reportSdkMonitoring, MONITORING_REPORT_MS)
   }
-  addEventListener('pagehide', () => {
+  // 退出冲刷监听（命名引用，destroy 时移除）：匿名监听器无法移除，重复初始化
+  // （HMR / React StrictMode / SPA 重挂载）后每个旧实例仍存活并各自响应
+  // pagehide/visibilitychange——N 个僵尸实例在每次切后台时同时各发一批
+  // keepalive collect，浏览器 ~64KB keepalive 配额被打满，Network 面板
+  // 出现一排一直 pending 的 collect 请求。
+  const onPageHide = () => {
     finalizePerformance()
     currentSegmentEndReason = 'page_unload'
     stopCurrentReplay()
     flushAll(true)
-  })
-  document.addEventListener('visibilitychange', () => {
+  }
+  const onUnloadVisibility = () => {
     if (!document.hidden) {
       // 页面重新可见 → 解除周期锁，允许下一次真实的卸载/隐藏再次发送。
       unloadCycleFlushed = false
@@ -807,7 +812,9 @@ export function createEys(options = {}) {
     }
     finalizePerformance()
     flushAll(true)
-  })
+  }
+  addEventListener('pagehide', onPageHide)
+  document.addEventListener('visibilitychange', onUnloadVisibility)
 
   if (cfg.enabled && cfg.consent !== 'denied') startCapture()
 
@@ -1634,6 +1641,10 @@ export function createEys(options = {}) {
   async function destroy() {
     disposed = true
     clearInterval(timer)
+    // 先移除退出冲刷监听：销毁期间/销毁后不再响应 pagehide/visibilitychange，
+    // 防止重复初始化场景下旧实例（本 destroy 的目标）继续产生 keepalive 发送。
+    removeEventListener('pagehide', onPageHide)
+    document.removeEventListener('visibilitychange', onUnloadVisibility)
     if (diagnosticTimer) clearInterval(diagnosticTimer)
     if (monitoringTimer) clearInterval(monitoringTimer)
     clearInterval(replayIdleTimer)
@@ -1650,6 +1661,9 @@ export function createEys(options = {}) {
     replayRing.clear()
     if (stats.dropped || stats.failed) push({ type: 'perf', metric: 'sdk_health', value: stats.enqueued, props: { ...stats }, source: 'auto' })
     await flushAll(true)
+    // 清掉 sender 的退避重试定时器：destroy 后不应再有后台重试发送
+    //（定时器回调直连 sendBatchOnline，绕过 enabled/consent 检查）。
+    clearTimeout(sender._retryTimer)
     // C1 · 关闭 OTLP metrics 缓冲并冲刷剩余（与 trace 导出管线同生命周期，独立导出通道）。
     await otlpMetricsBatcher?.shutdown?.()
     // 关闭 Span 导出管线，冲刷剩余缓冲（根/未结束 Span），避免调用树丢失尾包。
