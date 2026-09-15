@@ -95,6 +95,40 @@ function guessMime(url) {
   return table[ext] || 'application/octet-stream'
 }
 
+function normalizeMime(value) {
+  return String(value || '').split(';')[0].trim().toLowerCase()
+}
+
+function isInlineableMime(value) {
+  const mime = normalizeMime(value)
+  return mime.startsWith('image/') ||
+    mime.startsWith('font/') ||
+    mime === 'application/font-woff' ||
+    mime === 'application/font-woff2' ||
+    mime === 'application/vnd.ms-fontobject'
+}
+
+function chooseInlineMime(url, contentType) {
+  const headerMime = normalizeMime(contentType)
+  const guessedMime = normalizeMime(guessMime(url))
+  if (isInlineableMime(headerMime)) return headerMime
+  if (!headerMime && isInlineableMime(guessedMime)) return guessedMime
+  if (headerMime === 'application/octet-stream' && isInlineableMime(guessedMime)) return guessedMime
+  return ''
+}
+
+function looksLikeHtml(buffer) {
+  try {
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(buffer).slice(0, 512)).trimStart().toLowerCase()
+    return text.startsWith('<!doctype html') ||
+      text.startsWith('<html') ||
+      text.startsWith('<head') ||
+      text.startsWith('<body')
+  } catch {
+    return false
+  }
+}
+
 /**
  * 创建回放资源内联器。
  * @param {{maxBytes?: number, budget?: number, fetchImpl?: Function, now?: Function}} [opts]
@@ -115,12 +149,21 @@ export function createReplayAssetInliner({ maxBytes = 1048576, budget = 8388608,
       if (doFetch && new URL(url).origin === origin) {
         const res = await doFetch(url)
         if (res && res.ok) {
+          const mime = chooseInlineMime(url, res.headers && res.headers.get && res.headers.get('content-type'))
+          if (!mime) {
+            skipped++
+            cache.set(url, null)
+            return null
+          }
           const buf = await res.arrayBuffer()
-          const mime = (res.headers && res.headers.get && res.headers.get('content-type')) || guessMime(url)
           const size = buf.byteLength || 0
-          if (size > 0 && size <= maxBytes && used + size <= budget) {
+          if (looksLikeHtml(buf)) {
+            skipped++
+            cache.set(url, null)
+            return null
+          } else if (size > 0 && size <= maxBytes && used + size <= budget) {
             used += size
-            result = `data:${mime.split(';')[0]};base64,${bufferToBase64(buf)}`
+            result = `data:${mime};base64,${bufferToBase64(buf)}`
           } else if (size > 0) {
             skipped++
           }
