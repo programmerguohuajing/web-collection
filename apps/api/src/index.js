@@ -22,7 +22,7 @@ import { collectConfigStats, listCollectConfigHistory, previewCollectConfig, rol
 import { getEngagementDetail, listEngagement } from './services/engagement-service.js'
 import { listRetention } from './services/retention-service.js'
 import { listDataAccessAudit, listMembers, resolveAccessLevel, saveMember, saveMemberLevel } from './services/access-service.js'
-import { changePassword, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
+import { changePassword, ensureBuiltinAdmin, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
 import { listSessions, revokeSession } from './services/session-service.js'
 import { getSdkMonitoring, getSdkSize, reportSdkMonitoring, reportSdkSize } from './services/sdk-health-service.js'
 import { acceptInvitationService, assignApplication, changeMemberLevel, changeMemberRole, createInvitation, createTeam, getTeam, listInvitations, listTeamAudit, listTeamMembers, migrateMembersToDefaultTeam, removeMember, revokeInvitation, updateTeam } from './services/team-service.js'
@@ -884,6 +884,7 @@ app.use((err, req, res, next) => {
 })
 
 await initDatabase()
+await ensureBuiltinAdmin()
 startSloScheduler()
 startSyntheticScheduler()
 app.listen(port, () => {

@@ -117,8 +117,8 @@ function toggle(target: 'login' | 'register'): void {
 
       <!-- 登录 -->
       <el-form v-if="!showRegister" :model="loginForm" @submit.prevent="onLogin" label-position="top">
-        <el-form-item label="邮箱">
-          <el-input v-model="loginForm.email" type="email" placeholder="you@team.com" :prefix-icon="User" autocomplete="username" />
+        <el-form-item label="账号 / 邮箱">
+          <el-input v-model="loginForm.email" type="text" placeholder="admin 或 you@team.com" :prefix-icon="User" autocomplete="username" />
         </el-form-item>
         <el-form-item label="密码">
           <el-input

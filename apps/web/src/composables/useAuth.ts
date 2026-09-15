@@ -89,7 +89,7 @@ export const LEVEL_LABELS: Readonly<Record<AccessLevel, string>> = {
 
 const accessToken = ref<string>(localStorage.getItem(TOKEN_KEY) || '')
 const currentTeamId = ref<string>(localStorage.getItem(TEAM_KEY) || '')
-const capabilities = ref<Capabilities>({ accounts: false })
+const capabilities = ref<Capabilities>({ accounts: true })
 const me = ref<MeResponse | null>(null)
 
 const isLoggedIn = computed(() => Boolean(accessToken.value))

