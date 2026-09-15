@@ -55,14 +55,105 @@ interface Invitation {
 }
 
 interface AuditItem {
-  id?: string
+  id?: string | number
   createdAt?: number | string
+  actorUserId?: string
   actorEmail?: string
   actor?: string
   action?: string
   targetId?: string
   targetType?: string
-  detail?: string
+  detail?: any
+}
+
+const AUDIT_ACTION_MAP: Record<string, { label: string; type: 'warning' | 'success' | 'danger' | 'info' | 'primary' }> = {
+  login: { label: '用户登录', type: 'success' },
+  logout: { label: '用户登出', type: 'info' },
+  register: { label: '账号注册', type: 'success' },
+  team_create: { label: '创建团队', type: 'primary' },
+  team_update: { label: '更新团队', type: 'warning' },
+  member_join: { label: '成员加入', type: 'success' },
+  member_remove: { label: '移除成员', type: 'danger' },
+  role_change: { label: '修改角色', type: 'warning' },
+  level_change: { label: '修改数据等级', type: 'warning' },
+  invite_create: { label: '创建邀请', type: 'primary' },
+  invite_revoke: { label: '撤销邀请', type: 'danger' },
+  invite_accept: { label: '接受邀请', type: 'success' },
+  app_move: { label: '迁移应用', type: 'warning' },
+  password_change: { label: '修改密码', type: 'warning' },
+  session_revoke: { label: '撤销会话', type: 'danger' }
+}
+
+function actorDisplayName(row: AuditItem): string {
+  const raw = row.actorEmail || row.actor || row.actorUserId || ''
+  if (!raw) return '-'
+  if (raw.includes('@')) return raw.split('@')[0]
+  return raw
+}
+
+function auditActionLabel(action?: string): { label: string; type: string } {
+  if (!action) return { label: '-', type: 'info' }
+  const match = AUDIT_ACTION_MAP[action]
+  if (match) return { label: match.label, type: match.type || 'info' }
+  return { label: action, type: 'info' }
+}
+
+function auditTargetLabel(row: AuditItem): string {
+  let detailObj: Record<string, any> = {}
+  if (typeof row.detail === 'string') {
+    try { detailObj = JSON.parse(row.detail) } catch { /* ignore */ }
+  } else if (typeof row.detail === 'object' && row.detail) {
+    detailObj = row.detail
+  }
+
+  const targetType = row.targetType || ''
+  const targetId = row.targetId || ''
+
+  const email = detailObj.email || detailObj.targetEmail || detailObj.actorEmail
+  const role = detailObj.role ? (ROLE_LABELS[detailObj.role as Role] || detailObj.role) : ''
+  const level = detailObj.level || detailObj.accessLevel
+  const name = detailObj.name || detailObj.teamName
+
+  if (targetType === 'team') {
+    if (detailObj.bootstrap) return '默认团队 (系统引导)'
+    if (name) return `团队: ${name}`
+    return targetId ? `团队: ${targetId}` : '团队'
+  }
+
+  if (targetType === 'member' || targetType === 'user') {
+    let userStr = ''
+    if (email) {
+      const username = email.includes('@') ? email.split('@')[0] : email
+      userStr = `${username} (${email})`
+    } else if (targetId) {
+      userStr = targetId
+    } else {
+      userStr = '用户'
+    }
+
+    if (role && level) return `成员: ${userStr} [${role} · ${level}]`
+    if (role) return `成员: ${userStr} [${role}]`
+    if (level) return `成员: ${userStr} [${level}]`
+    return `成员: ${userStr}`
+  }
+
+  if (targetType === 'invitation' || targetType === 'invite') {
+    if (email) return `邀请: ${email}${role ? ` [${role}]` : ''}`
+    return targetId ? `邀请工单 (${targetId.slice(0, 8)})` : '团队邀请'
+  }
+
+  if (targetType === 'application' || targetType === 'app') {
+    return targetId ? `应用: ${targetId}` : '应用项目'
+  }
+
+  if (targetType === 'session') {
+    return targetId ? `会话 (${targetId.slice(0, 8)}...)` : '登录会话'
+  }
+
+  if (email) return email
+  if (name) return name
+  if (targetId && targetType) return `${targetType}: ${targetId}`
+  return targetId || targetType || '-'
 }
 
 const activeTab = ref<'members' | 'invitations' | 'audit'>('members')
@@ -474,15 +565,29 @@ onMounted(async () => {
           <el-button :loading="loadingAudit" @click="loadAudit">刷新</el-button>
         </div>
         <el-table :data="auditItems" border v-loading="loadingAudit" empty-text="暂无审计记录">
-          <el-table-column label="时间" width="180" cell-class-name="time-cell">
-            <template #default="{ row }">{{ row.createdAt ? new Date(Number(row.createdAt)).toLocaleString() : '-' }}</template>
+          <el-table-column label="时间" width="175" cell-class-name="time-cell">
+            <template #default="{ row }">
+              <span style="white-space: nowrap;">
+                {{ row.createdAt ? new Date(Number(row.createdAt)).toLocaleString() : '-' }}
+              </span>
+            </template>
           </el-table-column>
-          <el-table-column label="操作者" width="200">
-            <template #default="{ row }"><OverflowTip :text="row.actorEmail || row.actor || '-'" /></template>
+          <el-table-column label="操作者" width="130">
+            <template #default="{ row }">
+              <OverflowTip :text="actorDisplayName(row)" />
+            </template>
           </el-table-column>
-          <el-table-column prop="action" label="动作" width="160" />
+          <el-table-column label="动作" width="130">
+            <template #default="{ row }">
+              <el-tag size="small" :type="auditActionLabel(row.action).type" effect="plain">
+                {{ auditActionLabel(row.action).label }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="对象" min-width="220">
-            <template #default="{ row }"><OverflowTip :text="row.targetId || row.targetType || '-'" /></template>
+            <template #default="{ row }">
+              <OverflowTip :text="auditTargetLabel(row)" />
+            </template>
           </el-table-column>
         </el-table>
       </section>
