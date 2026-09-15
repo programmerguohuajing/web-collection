@@ -11,7 +11,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
-import { Loading, User, Lock, UserFilled } from '@element-plus/icons-vue'
+import { User, Lock, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../../composables/useAuth'
 import { useBrand } from '../../composables/useBrand'
 
@@ -132,7 +132,7 @@ function toggle(target: 'login' | 'register'): void {
           />
         </el-form-item>
         <el-button type="primary" native-type="submit" :loading="submitting" class="auth-submit">
-          <el-icon v-if="submitting"><Loading /></el-icon> 登录
+          登录
         </el-button>
       </el-form>
 
@@ -156,7 +156,7 @@ function toggle(target: 'login' | 'register'): void {
           />
         </el-form-item>
         <el-button type="primary" native-type="submit" :loading="submitting" class="auth-submit">
-          <el-icon v-if="submitting"><Loading /></el-icon> 注册
+          注册
         </el-button>
       </el-form>
 
