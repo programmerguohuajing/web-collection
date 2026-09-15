@@ -28,7 +28,8 @@ import {
   refresh,
   logout,
   changePassword,
-  getMe
+  getMe,
+  ensureBuiltinAdmin
 } from '../apps/api/src/services/auth-service.js'
 import {
   createSession,
@@ -68,7 +69,7 @@ test('1. 开关与门禁控制 (isAccountsEnabled)', () => {
   const oldEnv = process.env.ACCOUNTS_ENABLED
   try {
     delete process.env.ACCOUNTS_ENABLED
-    assert.equal(isAccountsEnabled(), false)
+    assert.equal(isAccountsEnabled(), true)
 
     process.env.ACCOUNTS_ENABLED = '0'
     assert.equal(isAccountsEnabled(), false)
@@ -242,6 +243,15 @@ test('4. 登录全流程 (Login, JWT & Audit Log)', async () => {
   const auditLog = await first("select * from audit_logs where actor_email = 'test_fullflow_owner@example.com' and action = 'login' order by created_at desc limit 1")
   assert.ok(auditLog)
   assert.equal(auditLog.ip, '127.0.0.1')
+
+  // 4.3 内置超管账号 admin/123456 登录测试
+  await ensureBuiltinAdmin()
+  const adminLogin = await login(
+    { email: 'admin', password: '123456' },
+    { ip: '127.0.0.1', userAgent: 'test-admin' }
+  )
+  assert.ok(adminLogin.accessToken)
+  assert.equal(adminLogin.user.email, 'admin@example.com')
 })
 
 test('5. 登录失败频次限制测试 (Rate Limiting)', async () => {
