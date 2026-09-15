@@ -19,6 +19,13 @@ import {
 } from '../../composables/useAuth'
 import OverflowTip from '../../components/OverflowTip.vue'
 
+const INVITATION_STATUS_MAP: Record<string, { label: string; type: 'warning' | 'success' | 'danger' | 'info' }> = {
+  pending: { label: '待接受', type: 'warning' },
+  accepted: { label: '已接受', type: 'success' },
+  revoked: { label: '已撤销', type: 'danger' },
+  expired: { label: '已过期', type: 'info' }
+}
+
 const { me, currentTeamId, isLoggedIn, authApi, logout, loadMe, switchTeam, loadCapabilities } = useAuth()
 const router = useRouter()
 
@@ -439,9 +446,16 @@ onMounted(async () => {
           <el-table-column label="数据等级" width="110">
             <template #default="{ row }"><span class="lvl-badge" :class="row.level">{{ row.level }}</span></template>
           </el-table-column>
-          <el-table-column label="状态" width="100">
+          <el-table-column label="状态" min-width="110">
             <template #default="{ row }">
-              <el-tag size="small" :type="row.status === 'pending' ? 'warning' : 'info'" effect="plain">{{ row.status || 'pending' }}</el-tag>
+              <el-tag
+                size="small"
+                :type="(INVITATION_STATUS_MAP[row.status || 'pending'] || { type: 'info' }).type"
+                effect="light"
+                style="white-space: nowrap; word-break: keep-all;"
+              >
+                {{ (INVITATION_STATUS_MAP[row.status || 'pending'] || { label: row.status || '待接受' }).label }}
+              </el-tag>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="160">
