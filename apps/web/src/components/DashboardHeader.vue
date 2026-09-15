@@ -71,54 +71,48 @@ onMounted(() => {
   </section>
 
   <!-- accounts=true：账号用户菜单 -->
-  <section v-else class="hero section account-hero">
-    <div>
-      <p class="eyebrow">{{ brandName }}</p>
-      <h1>前端监控生产看板</h1>
-    </div>
-    <el-dropdown trigger="click" class="account-menu" @command="onCommand">
-      <span class="account-trigger">
-        <span class="account-avatar">{{ initial }}</span>
-        <span class="account-email"><OverflowTip :text="emailText" /></span>
-        <el-icon><ArrowDown /></el-icon>
-      </span>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item disabled class="account-summary">
-            <div class="as-email"><OverflowTip :text="emailText" /></div>
-            <div class="as-badge">
-              <el-tag
-                v-if="me?.role"
-                size="small"
-                :type="me.role === 'owner' ? 'danger' : me.role === 'admin' ? 'warning' : 'info'"
-                effect="light"
-              >{{ ROLE_LABELS[me.role] }} · {{ LEVEL_LABELS[me.level] }}</el-tag>
-            </div>
-          </el-dropdown-item>
-          <el-dropdown-item divided>
-            <div class="team-switch">
-              <span class="ts-label"><el-icon><Switch /></el-icon> 当前团队</span>
-              <el-select
-                :model-value="currentTeamId"
-                @change="onSwitchTeam"
-                :loading="switching"
-                size="small"
-                class="ts-select"
-              >
-                <el-option v-for="t in (me?.teams || [])" :key="t.id" :label="t.name" :value="t.id" />
-              </el-select>
-            </div>
-          </el-dropdown-item>
-          <el-dropdown-item command="teams"><el-icon><Setting /></el-icon> 团队管理</el-dropdown-item>
-          <el-dropdown-item command="logout" divided><el-icon><SwitchButton /></el-icon> 退出登录</el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
-  </section>
+  <el-dropdown v-else trigger="click" class="account-menu" @command="onCommand">
+    <span class="account-trigger">
+      <span class="account-avatar">{{ initial }}</span>
+      <span class="account-email"><OverflowTip :text="emailText" /></span>
+      <el-icon><ArrowDown /></el-icon>
+    </span>
+    <template #dropdown>
+      <el-dropdown-menu>
+        <el-dropdown-item disabled class="account-summary">
+          <div class="as-email"><OverflowTip :text="emailText" /></div>
+          <div class="as-badge">
+            <el-tag
+              v-if="me?.role"
+              size="small"
+              :type="me.role === 'owner' ? 'danger' : me.role === 'admin' ? 'warning' : 'info'"
+              effect="light"
+            >{{ ROLE_LABELS[me.role] }} · {{ LEVEL_LABELS[me.level] }}</el-tag>
+          </div>
+        </el-dropdown-item>
+        <el-dropdown-item divided>
+          <div class="team-switch">
+            <span class="ts-label"><el-icon><Switch /></el-icon> 当前团队</span>
+            <el-select
+              :model-value="currentTeamId"
+              @change="onSwitchTeam"
+              :loading="switching"
+              size="small"
+              class="ts-select"
+            >
+              <el-option v-for="t in (me?.teams || [])" :key="t.id" :label="t.name" :value="t.id" />
+            </el-select>
+          </div>
+        </el-dropdown-item>
+        <el-dropdown-item command="teams"><el-icon><Setting /></el-icon> 团队管理</el-dropdown-item>
+        <el-dropdown-item command="logout" divided><el-icon><SwitchButton /></el-icon> 退出登录</el-dropdown-item>
+      </el-dropdown-menu>
+    </template>
+  </el-dropdown>
 </template>
 
 <style scoped>
-.account-hero .account-menu { margin-left: auto; }
+.account-menu { display: inline-flex; align-items: center; margin-left: 8px; }
 .account-trigger { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; outline: none; max-width: 280px; }
 .account-avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg,#6366f1,#0ea5e9); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none; }
 .account-email { max-width: 200px; overflow: hidden; }
