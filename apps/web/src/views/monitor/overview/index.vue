@@ -15,7 +15,7 @@ const primaryIssue = computed(() => issues.value.find(item => item.status !== 'r
 const overviewKpis = computed(() => [
   { label: '今日错误数', value: Number(summary.value?.errors ?? summary.value?.issueCount ?? issues.value.length).toLocaleString(), delta: '当前筛选范围内', valueClass: 'value-danger' },
   { label: '平均首屏 FCP', value: summary.value?.perf?.fcp != null ? formatDuration(summary.value.perf.fcp) : '-', delta: 'Core Web Vitals', valueClass: 'value-primary' },
-  { label: 'Apdex 体验分', value: summary.value?.apdex != null ? Number(summary.value.apdex).toFixed(2) : '-', delta: '基于 LCP 样本（≤2.5s 满意 / ≤4s 容忍）', valueClass: 'value-purple' },
+  { label: 'Apdex 体验分', value: summary.value?.apdex != null ? Number(summary.value.apdex).toFixed(2) : '-', delta: apdexDelta.value, valueClass: 'value-purple' },
   { label: '在线用户', value: Number(summary.value?.users ?? replays.value.length).toLocaleString(), delta: '实时', valueClass: 'value-success' }
 ])
 const activityRows = computed(() => {
@@ -32,10 +32,20 @@ const activityRows = computed(() => {
   return [...errorRows, ...eventRows].sort((a, b) => Number(b.ts) - Number(a.ts)).slice(0, 6)
 })
 
+// Apdex 样本数：低流量站点样本少时恒 1.00 属真实值，但需样本数上下文才可判断可信度
+const apdexDelta = computed(() => {
+  const n = Number(summary.value?.apdexSamples ?? 0)
+  const base = '基于 LCP 样本（≤2.5s 满意 / ≤4s 容忍）'
+  if (!n) return `${base} · 无样本`
+  return `${base} · 样本 ${n} 条${n < 30 ? '，偏少仅供参考' : ''}`
+})
+
 function openIssue() { router.push('/errors') }
 function openReplay(sessionId) { router.push({ path: '/replays', query: { replayId: sessionId } }) }
 
 // ── 采集健康（PRD P0/P2：让业务方直观区分「没流量」与「采集挂了」）──
+// 口径说明：received/written/failed 是 Worker 单 isolate 内存计数（10min 窗口，跨实例归零），
+// 低流量下几乎恒 0，不可作为「有无数据」依据；「近 1h 入库」/「最后入库」来自 D1 真值。
 const ingestionHealth = ref(null)
 const ingestionError = ref(false)
 let ingestionTimer = null
@@ -86,7 +96,7 @@ const ingestionStalledText = computed(() => {
     <div v-if="ingestionError" class="ingestion-error">监控接口暂不可达</div>
     <div v-else-if="ingestionHealth" class="ingestion-metrics">
       <div class="im"><span class="im-k">最后入库</span><span class="im-v">{{ ingestionStalledText }}</span></div>
-      <div class="im"><span class="im-k">窗口接收 / 入库</span><span class="im-v">{{ ingestionHealth.ingestion.received }} / {{ ingestionHealth.ingestion.written }}</span></div>
+      <div class="im"><span class="im-k">近 1h 入库</span><span class="im-v">{{ ingestionHealth.ingestion.writtenLast1h ?? ingestionHealth.ingestion.written ?? '-' }}</span></div>
       <div class="im"><span class="im-k">入库失败</span><span class="im-v" :class="{ danger: ingestionHealth.ingestion.failed > 0 }">{{ ingestionHealth.ingestion.failed }}</span></div>
       <div class="im"><span class="im-k">近 1h 入库告警</span><span class="im-v" :class="{ danger: ingestionHealth.ingestion.ingestErrorCount > 0 }">{{ ingestionHealth.ingestion.ingestErrorCount }}</span></div>
       <div class="im im-wide"><span class="im-k">最近错误</span><span class="im-v err">{{ ingestionHealth.ingestion.lastErrorMessage || '无' }}</span></div>
@@ -97,7 +107,7 @@ const ingestionStalledText = computed(() => {
   <section class="grid overview-insights">
     <el-card shadow="never" class="panel trend-panel">
       <template #header><div class="panel-head"><div><h2>错误 &amp; 请求趋势</h2><small>last 24h</small></div><div class="chart-legend"><span class="red-dot">错误数</span><span class="blue-dot">请求数</span></div></div></template>
-      <TrendChart :events="events" />
+      <TrendChart :trend="summary?.trend" :events="events" />
     </el-card>
     <OverviewDistribution :summary="summary" :events="events" />
   </section>

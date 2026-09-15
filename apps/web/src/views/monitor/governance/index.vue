@@ -232,7 +232,7 @@ onMounted(load)
           <template #header><div class="panel-head"><b>应用与采样</b><el-button type="primary" @click="editApp()">新增应用</el-button></div></template>
       <el-alert v-if="governanceError" class="table-error" type="error" :title="governanceError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
       <el-table :data="applications" border v-loading="governanceLoading" empty-text="暂无应用数据">
-        <el-table-column prop="app_id" label="App ID" min-width="150" />
+        <el-table-column prop="app_id" label="App ID" min-width="150" cell-class-name="nowrap-cell" />
         <el-table-column prop="name" label="应用名称" min-width="160" cell-class-name="nowrap-cell" />
         <el-table-column prop="platform" label="平台" width="140" cell-class-name="nowrap-cell" />
         <el-table-column prop="owner" label="负责人" min-width="120" />

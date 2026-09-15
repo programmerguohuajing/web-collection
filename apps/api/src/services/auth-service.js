@@ -183,6 +183,9 @@ export async function acceptInvitationForUser(token, userId, email) {
   if (!exists) {
     await run(`insert into team_members (team_id, user_id, role, access_level, status, joined_at, created_at, updated_at)
       values (?, ?, ?, ?, 'active', ?, ?, ?)`, [invitation.team_id, userId, invitation.role, invitation.access_level, now, now, now])
+  } else {
+    await run(`update team_members set role = ?, access_level = ?, updated_at = ?
+      where team_id = ? and user_id = ?`, [invitation.role, invitation.access_level, now, invitation.team_id, userId])
   }
   await run('update invitations set accepted_at = ? where id = ?', [now, invitation.id])
   await writeTeamAudit({ teamId: invitation.team_id, actorUserId: userId, actorEmail: email, action: 'member_join', targetType: 'member', targetId: userId })

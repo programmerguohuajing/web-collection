@@ -42,6 +42,7 @@ export function buildSummary(events, issuesById, replays, performanceEvents = ev
     perfCounts,
     perfScore: scorePerf(perf),
     apdex: apdexScore(lcpValues),
+    apdexSamples: lcpValues.length,
     byType: countBy(events, 'type'),
     behavior: countBy(events.filter(e => e.type === 'behavior' || e.type === 'track'), 'name'),
     byBrowser: countBy(events, 'browser'),

@@ -17,6 +17,7 @@ import { mapIssue } from './mappers/issue-mapper.js'
 import { mapReplay } from './mappers/replay-mapper.js'
 import { decompressReplayEvents, reassembleReplayEvents, truncateReplaySpan } from './replay-ingest.js'
 import { buildSummary } from './services/summary-service.js'
+import { getOverviewTrend } from './services/overview-trend-service.js'
 import { fingerprint, percentile, scorePerf } from './utils/domain.js'
 import { parseJson } from './utils/json.js'
 import { ensureApplication, passesRules, processAlert, shouldCollect } from './governance.js'
@@ -124,8 +125,16 @@ export async function listEventsPage(filters = {}) {
  */
 export async function getSummary(filters = {}) {
   await initPromise
-  const [events, perfEvents, issuesById, replays] = await Promise.all([listEvents(5000, filters), listEvents(maxEvents, { ...filters, type: 'perf' }), readIssues(filters), listReplays(filters)])
-  return buildSummary(events, issuesById, replays, perfEvents)
+  const [events, perfEvents, issuesById, replays, trend] = await Promise.all([
+    listEvents(5000, filters),
+    listEvents(maxEvents, { ...filters, type: 'perf' }),
+    readIssues(filters),
+    listReplays(filters),
+    getOverviewTrend(filters)
+  ])
+  const summary = buildSummary(events, issuesById, replays, perfEvents)
+  summary.trend = trend
+  return summary
 }
 
 /**
