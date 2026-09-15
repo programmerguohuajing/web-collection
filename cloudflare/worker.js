@@ -1881,6 +1881,7 @@ function readCookie(request, name) {
 /** 输入校验（返回错误文案或 null，避免 throw 丢失状态码） */
 function emailIssue(value) {
   const email = String(value || '').trim().toLowerCase()
+  if (email === 'admin') return null
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return '邮箱格式不正确'
   return null
 }
