@@ -446,7 +446,7 @@ onMounted(async () => {
           <el-table-column label="数据等级" width="110">
             <template #default="{ row }"><span class="lvl-badge" :class="row.level">{{ row.level }}</span></template>
           </el-table-column>
-          <el-table-column label="状态" min-width="110">
+          <el-table-column label="状态" width="100">
             <template #default="{ row }">
               <el-tag
                 size="small"
