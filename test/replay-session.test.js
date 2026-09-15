@@ -138,6 +138,31 @@ test('createReplayAssetInliner：跨域资源跳过（回放端按需直连）�
   }
 })
 
+test('createReplayAssetInliner：同源资源返回 HTML 错误页时不内联', async () => {
+  const realLocation = globalThis.location
+  const realFetch = globalThis.fetch
+  globalThis.location = { href: 'https://app.example.com/page', origin: 'https://app.example.com' }
+  globalThis.fetch = async () => ({
+    ok: true,
+    headers: { get: () => 'text/html; charset=UTF-8' },
+    arrayBuffer: async () => new TextEncoder().encode('<!doctype html><html><head><title>Worker exceeded resource limits</title></head><body>Cloudflare Ray ID</body></html>').buffer
+  })
+  try {
+    const inliner = createReplayAssetInliner()
+    const events = [{
+      type: 2,
+      data: { node: { id: 1, type: 2, attributes: { src: 'https://app.example.com/static/logo.png' } } }
+    }]
+    await inliner.inline(events)
+    assert.equal(events[0].data.node.attributes.src, 'https://app.example.com/static/logo.png')
+    assert.equal(inliner.stats().inlined, 0)
+    assert.equal(inliner.stats().skipped, 1)
+  } finally {
+    globalThis.location = realLocation
+    globalThis.fetch = realFetch
+  }
+})
+
 test('createReplayAssetInliner：单资源超限跳过（护栏）', async () => {
   const realLocation = globalThis.location
   const realFetch = globalThis.fetch

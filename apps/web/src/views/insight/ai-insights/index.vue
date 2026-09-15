@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { BellFilled, Refresh, MagicStick, Promotion } from '@element-plus/icons-vue'
+import { BellFilled, Refresh, MagicStick, Promotion, QuestionFilled } from '@element-plus/icons-vue'
 import { api, insightUnread } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 
@@ -137,8 +137,13 @@ onMounted(() => {
   <div class="insights-page">
     <div class="page-head">
       <div>
-        <h2><el-icon><BellFilled /></el-icon> AI 洞察流</h2>
-        <p class="sub">系统主动扫描发现的错误簇 / 发布回归 / 性能退化 / 指标骤降 / 基线偏离，无需点开错误即可发现。</p>
+        <h2>
+          <el-icon><BellFilled /></el-icon>
+          AI 洞察流
+          <el-tooltip content="系统主动扫描发现的错误簇 / 发布回归 / 性能退化 / 指标骤降 / 基线偏离，无需点开错误即可发现。" placement="top">
+            <el-icon class="help-icon"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </h2>
       </div>
       <div class="actions">
         <el-select v-model="scanScopes" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" placeholder="扫描类别" style="width: 260px" aria-label="选择扫描类别">
@@ -223,8 +228,8 @@ onMounted(() => {
 .insights-page { padding: 16px 20px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
 .page-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
-.page-head .sub { color: var(--el-text-color-secondary); margin: 6px 0 0; font-size: 13px; }
-.scan-range-hint { color: var(--el-text-color-secondary); font-size: 12px; white-space: nowrap; }
+.help-icon { color: var(--el-text-color-secondary); cursor: help; font-size: 15px; }
+.scan-range-hint { color: var(--el-text-color-secondary); font-size: 12px; white-space: nowrap; margin: 0 12px; }
 .summary { word-break: break-all; }
 .evidence { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 16px; }
 .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
