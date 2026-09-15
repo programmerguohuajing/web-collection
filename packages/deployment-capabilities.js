@@ -98,8 +98,9 @@ export const WORKER_CAPABILITIES = {
   releases: true,
   eventDefinitions: true,
   journeys: true,
-  // D2：Worker 侧 auth/team 端点未实现（Node 先行，PRD D9）——必须报 false，
-  // 前端据此隐藏登录态/团队入口，绝不上报未实现能力（原则 #4）
+  // D2：Worker 侧 auth/team 端点已实现（/api/auth/*、/api/me），但为运行时开关——
+  // accountsEnabled(env) 读 ACCOUNTS_ENABLED env（默认 false；capabilities 响应里按 env 覆盖，
+  // 见 worker.js buildCapabilities override）。此处基线 false 仅为兜底缺省（原则 #4）。
   accounts: false,
   // B2 · SLO：Worker 镜像实现与 Node 同套数学（packages/slo.js），但本批**保持 false**，
   // 待 QA 在 Worker 侧验证 SLO 路由 / 定时 tick / 燃尽投递后再由 lead 翻 true（原则 #4 兜底，绝不上报未实现）。

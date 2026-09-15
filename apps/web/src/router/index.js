@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Layout from '../layout/index.vue'
+import { useAuth } from '../composables/useAuth'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -62,4 +63,42 @@ export const router = createRouter({
       ]
     }
   ]
+})
+
+/**
+ * D2 账号体系：全站登录守卫（此前缺失，导致 accounts 开启后仍可匿名浏览全部页面）。
+ *
+ * - accounts 能力位关闭（存量自托管默认）→ 完全放行，行为零变化。
+ * - accounts 开启 → 除公开路由（登录页 / 看板分享嵌入页）外，
+ *   未登录一律跳转 /login 并携带 ?redirect= 原目标（登录页 goAway 消费，登录后回跳）。
+ *
+ * 能力位来自 GET /api/capabilities（公开端点；loadCapabilities 模块级 Promise 缓存，
+ * 仅首次导航发一次请求，后续导航零开销）。能力位拉取失败按未开启处理，避免把用户锁在门外。
+ */
+const PUBLIC_PATHS = new Set(['/login'])
+const PUBLIC_PREFIXES = ['/embed/']
+
+router.beforeEach(async (to) => {
+  const { loadCapabilities, accountsEnabled, isLoggedIn, loadMe, me } = useAuth()
+  try {
+    await loadCapabilities()
+  } catch {
+    /* 能力位拉取失败：按未开启处理，避免误锁 */
+  }
+  if (!accountsEnabled.value) return true
+  if (PUBLIC_PATHS.has(to.path) || PUBLIC_PREFIXES.some(prefix => to.path.startsWith(prefix))) return true
+
+  const toLogin = to.fullPath && to.fullPath !== '/'
+    ? { path: '/login', query: { redirect: to.fullPath } }
+    : { path: '/login' }
+  if (!isLoggedIn.value) return toLogin
+  // 有令牌但用户信息未加载：校验一次；仅当令牌确定失效（401）才回登录页，瞬时错误放行避免误踢
+  if (!me.value) {
+    try {
+      await loadMe()
+    } catch (err) {
+      if (err?.status === 401) return toLogin
+    }
+  }
+  return true
 })

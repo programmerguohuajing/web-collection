@@ -13,8 +13,11 @@ import { ElMessage } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { Loading, User, Lock, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../../composables/useAuth'
+import { useBrand } from '../../composables/useBrand'
 
 const { isLoggedIn, accountsEnabled, login, register, loadCapabilities, loadMe } = useAuth()
+// 品牌字段此前在模板使用但从未导入（SFC script setup 无全局注入），页头一直渲染空白
+const { brandName, brandShortName, brandSubtitle } = useBrand()
 const route = useRoute()
 const router = useRouter()
 
@@ -30,7 +33,11 @@ const showRegister = computed(() => mode.value === 'register')
 const canRegister = computed(() => accountsEnabled.value || Boolean(inviteToken.value))
 
 async function goAway() {
-  await router.replace(accountsEnabled.value ? '/teams' : '/')
+  // 路由守卫通过 ?redirect= 记住原目标，登录后回跳；
+  // 仅接受站内相对路径（拒绝 // 与外部 URL，防开放重定向），无 redirect 时维持原跳转目标
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  const target = redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : ''
+  await router.replace(target || (accountsEnabled.value ? '/teams' : '/'))
 }
 
 onMounted(async () => {

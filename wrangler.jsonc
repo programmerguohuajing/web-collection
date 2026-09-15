@@ -25,5 +25,13 @@
   // 注意：Workers 免费版限制 5 个 cron/账户（API 10072），本 worker 3 个 + ai/mcp worker 已满额。
   // 新增周期任务须复用既有 cron + 代码内频率守卫（参考 maybeHourlyRollupW），不能加新触发器。
   "triggers": { "crons": ["* * * * *", "*/5 * * * *", "17 3 * * *"] },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+
+  // D2 账号体系（全站登录）生产开启步骤（顺序不可颠倒）：
+  //   ① npx wrangler secret put ACCOUNTS_JWT_SECRET --config wrangler.jsonc
+  //      （本地开发用根目录 .dev.vars，已 gitignore）
+  //   ② 取消下方 vars 注释，开启开关后 deploy。
+  //   ⚠️ 未配置密钥先开 ACCOUNTS_ENABLED 会导致认证端点 503，前端路由守卫把所有人拦在登录页外（等效锁死）。
+  //   ⚠️ ACCOUNTS_ENFORCE=1（严格模式）会拦掉 MCP rest 模式（x-app-key 透传）等服务间调用，开启前须评估。
+  // "vars": { "ACCOUNTS_ENABLED": "1" }
 }
