@@ -13,6 +13,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { pageLoading } from '../../../dashboard.js'
 import { useAuth } from '../../../composables/useAuth'
 import OverflowTip from '../../../components/OverflowTip.vue'
@@ -86,8 +87,12 @@ onMounted(load)
   <div>
     <div class="page-heading">
       <div>
-        <h1>成员与数据等级</h1>
-        <p>四级数据访问模型（L1~L4），按角色裁剪 API 响应中的敏感字段；展示层分级，存储始终含完整数据。</p>
+        <h1>
+          成员与数据等级
+          <el-tooltip content="四级数据访问模型（L1~L4），按角色裁剪 API 响应中的敏感字段；展示层分级，存储始终含完整数据。" placement="top">
+            <el-icon class="help-icon"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </h1>
       </div>
       <div style="display: flex; gap: 8px">
         <el-button @click="openAudit">审计日志</el-button>
@@ -152,4 +157,6 @@ onMounted(load)
 
 <style scoped>
 .level-banner { margin: 4px 0 16px; }
+.page-heading h1 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.help-icon { color: var(--el-text-color-secondary); cursor: help; font-size: 16px; }
 </style>

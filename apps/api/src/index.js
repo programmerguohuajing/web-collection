@@ -16,6 +16,7 @@ import { consumeAlertDelivery, deleteAlertChannel, listAlertChannels, listAlertD
 import { deleteDashboard, deleteFunnel, deleteInsight, getApiHealth, getClickPaths, getDistributedTrace, getHeatmap, getLive, getPaths, getReleaseComparison, getReleaseDetailComparison, getSessionEvents, getSessions, getTrace, getTraceTopology, listDashboards, listEventProperties, listFunnelEventNames, listFunnels, listInsights, listLogs, listTraces, queryEventInsight, queryPaths, recordSpans, runFunnel, saveDashboard, saveFunnel, saveInsight, getSharedDashboard, shareDashboard, unshareDashboard, SPANS_HARD_LIMIT } from './services/analytics-service.js'
 import { getJourneyTimeline, searchJourneySessions } from './services/journey-service.js'
 import { getDictionaryDetail, listDictionary, registerEvent } from './services/dictionary-service.js'
+import { getOverviewTrend } from './services/overview-trend-service.js'
 import { compareReleases, getReleaseQuality } from './services/quality-service.js'
 import { collectConfigStats, listCollectConfigHistory, previewCollectConfig, rollbackCollectConfig, saveCollectConfig } from './services/collect-config-service.js'
 import { getEngagementDetail, listEngagement } from './services/engagement-service.js'
@@ -154,6 +155,13 @@ app.get('/api/events', async (req, res, next) => {
 app.get('/api/summary', async (req, res, next) => {
   try {
     res.json(await getSummary(filters(req.query)))
+  } catch (err) {
+    next(err)
+  }
+})
+app.get('/api/overview/trend', async (req, res, next) => {
+  try {
+    res.json(await getOverviewTrend(filters(req.query)))
   } catch (err) {
     next(err)
   }

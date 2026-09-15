@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { api, pageLoading, queryFromFilters, toList } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 import OverflowTip from '../../../components/OverflowTip.vue'
@@ -132,8 +133,12 @@ onMounted(load)
   <div>
     <div class="page-heading">
       <div>
-        <h1>事件字典</h1>
-        <p>自动发现并登记所有线上事件，形成可检索字典；每个事件给出可解释的健康判定，并作为 AI 知识源。</p>
+        <h1>
+          事件字典
+          <el-tooltip content="自动发现并登记所有线上事件，形成可检索字典；每个事件给出可解释的健康判定，并作为 AI 知识源。" placement="top">
+            <el-icon class="help-icon"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </h1>
       </div>
       <el-button type="primary" @click="openRegister()">＋ 登记含义</el-button>
     </div>
@@ -251,6 +256,8 @@ onMounted(load)
 </template>
 
 <style scoped>
+.page-heading h1 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.help-icon { color: var(--el-text-color-secondary); cursor: help; font-size: 16px; }
 .dict-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .trend-bars { display: flex; gap: 4px; align-items: flex-end; height: 90px; }
 .trend-bars i { flex: 1; min-height: 3px; border-radius: 3px 3px 0 0; transition: height 200ms ease; }

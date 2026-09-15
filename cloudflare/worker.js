@@ -153,18 +153,24 @@ const ingestionMonitor = {
 // 持久化入库健康（跨隔离 / 冷启动不丢），PRD R0-3 核心信号：
 // 内存计数器会在隔离冷启动或 10min 窗口重置后归零，无法反映「已停写 X 分钟」；
 // 故额外从 D1 真实 max(ts) 与近 1h 入库告警数补充，30s 缓存降低查询压力。
-let _dbHealthCache = { at: 0, lastWriteTs: null, ingestErrorCount: 0 }
+let _dbHealthCache = { at: 0, lastWriteTs: null, ingestErrorCount: 0, writtenLast1h: null }
 async function dbIngestionHealth(env) {
   const now = Date.now()
   if (now - _dbHealthCache.at < 30000) return _dbHealthCache
-  const [maxRow, errRow] = await Promise.all([
+  // writtenLast1h：近 1h 真实入库量。内存计数器 received/written 是单 isolate 的（跨实例/冷启动归零），
+  // 低流量下几乎恒 0，无法区分「没流量」与「采集挂了」；改用小时聚合表 events_hourly_stats
+  // （hour_ts 为毫秒整点，每小时每指标一行，行读 O(指标数)，严禁改用 events 全表 count）。
+  const hourStart = Math.floor((now - 3600 * 1000) / 3600000) * 3600000
+  const [maxRow, errRow, hourRow] = await Promise.all([
     env.DB.prepare('select max(ts) as m from events').first().catch(() => null),
-    env.DB.prepare("select count(*) as c from alert_history where metric='ingestion' and created_at>=?").bind(now - 3600 * 1000).first().catch(() => null)
+    env.DB.prepare("select count(*) as c from alert_history where metric='ingestion' and created_at>=?").bind(now - 3600 * 1000).first().catch(() => null),
+    env.DB.prepare('select coalesce(sum(cnt),0) as c from events_hourly_stats where hour_ts>=?').bind(hourStart).first().catch(() => null)
   ])
   _dbHealthCache = {
     at: now,
     lastWriteTs: maxRow?.m != null ? Number(maxRow.m) : null,
-    ingestErrorCount: Number(errRow?.c || 0)
+    ingestErrorCount: Number(errRow?.c || 0),
+    writtenLast1h: hourRow ? Number(hourRow.c || 0) : null
   }
   return _dbHealthCache
 }
@@ -204,6 +210,7 @@ async function healthPayload(env) {
       lastErrorAt: ingestionMonitor.lastError?.at || null,
       lastErrorMessage: ingestionMonitor.lastError ? String(ingestionMonitor.lastError.message || '').slice(0, 300) : null,
       ingestErrorCount: db.ingestErrorCount,
+      writtenLast1h: db.writtenLast1h,
       since: ingestionMonitor.since
     }
   }
@@ -224,6 +231,7 @@ async function ingestionMonitorSnapshot(env) {
     lastError: ingestionMonitor.lastError,
     recentErrors: ingestionMonitor.errors.slice(-10).map(e => ({ message: String(e.message || '').slice(0, 300), at: e.at, appId: e.appId })),
     ingestErrorCount: db.ingestErrorCount,
+    writtenLast1h: db.writtenLast1h,
     since: ingestionMonitor.since
   }
 }
@@ -1563,7 +1571,7 @@ async function summary(env,url){
   // Apdex = (satisfied + tolerating/2) / total；无 LCP 样本时为 null（前端显示 '-'）
   const apdexTotal=Number(apdexRow?.total||0)
   const apdex=apdexTotal>0?Number(((Number(apdexRow?.satisfied||0)+Number(apdexRow?.tolerating||0)/2)/apdexTotal).toFixed(2)):null
-  const summaryBody=JSON.stringify({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,byBrowser,apdex,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
+  const summaryBody=JSON.stringify({totalEvents:Number(eventStats?.total||0),issueCount:Number(issueStats?.issue_count||0),regressionCount:Number(issueStats?.regression_count||0),lastSeen:eventStats?.last_seen||null,perf,perfCounts,byType,behavior,byBrowser,apdex,apdexSamples:apdexTotal,api:aggregatePerf(perfRows.filter(row=>row.metric==='fetch'||row.metric==='xhr'),row=>row.props?.url||row.name||'unknown'),resources:aggregatePerf(perfRows.filter(row=>row.metric==='resource'),row=>row.props?.name||row.name||'unknown'),replays:[],alerts:[],issues:issues.map(mapIssue)})
   if (_summaryCache.size > 32) _summaryCache.clear() // 防泄漏：筛选组合有限，保守上限
   _summaryCache.set(cacheKey, { at: Date.now(), text: summaryBody })
   // 缝合可观测性：与 x-summary-cache 同思路，凭响应头即可确认命中小时表预聚合路径（排障/验证用）
