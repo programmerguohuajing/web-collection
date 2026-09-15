@@ -175,6 +175,34 @@ const createSaving = ref(false)
 const createForm = reactive({ name: '', slug: '' })
 
 const canManage = computed(() => ['owner', 'admin'].includes(me.value?.role || ''))
+const isOwner = computed(() => me.value?.role === 'owner')
+
+async function onDeleteTeam(): Promise<void> {
+  const currentTeam = me.value?.teams?.find(t => t.id === currentTeamId.value)
+  const teamName = currentTeam?.name || '当前团队'
+  if (currentTeamId.value === 't_default' || currentTeam?.slug === 'default') {
+    return ElMessage.warning('默认团队不可解散/删除')
+  }
+  try {
+    await ElMessageBox.confirm(`确定要解散并删除团队「${teamName}」吗？解散后团队内成员与数据关联将被清空，且不可恢复。`, '解散团队', {
+      type: 'warning',
+      confirmButtonText: '解散团队',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  try {
+    await authApi(`/api/teams/${encodeURIComponent(currentTeamId.value)}`, { method: 'DELETE' })
+    ElMessage.success('团队已解散')
+    await loadMe()
+    const fallbackTeam = me.value?.teams?.[0]?.id || 't_default'
+    await switchTeam(fallbackTeam)
+    await reloadAll()
+  } catch (e) {
+    ElMessage.error((e as { message?: string })?.message || '解散团队失败')
+  }
+}
 
 function memberUserId(m: TeamMember): string {
   return m.userId || m.id || ''
@@ -475,7 +503,10 @@ onMounted(async () => {
       <section v-if="activeTab === 'members'">
         <div class="section-head">
           <h2>团队成员</h2>
-          <el-button v-if="canManage" type="primary" @click="openCreate">创建团队</el-button>
+          <div style="display: flex; gap: 8px;">
+            <el-button v-if="isOwner && currentTeamId !== 't_default'" type="danger" plain @click="onDeleteTeam">解散团队</el-button>
+            <el-button v-if="canManage" type="primary" @click="openCreate">创建团队</el-button>
+          </div>
         </div>
         <el-table :data="members" border v-loading="loadingMembers" empty-text="暂无成员">
           <el-table-column label="邮箱 / 名称" min-width="220">

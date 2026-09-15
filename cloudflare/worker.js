@@ -2227,6 +2227,22 @@ async function teamUpdate(request, env, auth, teamId) {
   return json({ ok: true })
 }
 
+/** DELETE /api/teams/:teamId：仅 Owner 可解散/删除团队（manageTeam）；默认团队不可删除 */
+async function teamDelete(env, auth, teamId) {
+  const member = await requireTeamMemberW(env, auth, teamId)
+  if (!member) return memberGuard(auth)
+  if (!hasPermission(member.role, 'manageTeam')) return json({ error: '仅 Owner 可解散/删除团队' }, 403)
+  const team = await q1(env, 'select id,slug,name from teams where id=?', [teamId])
+  if (!team) return json({ error: '团队不存在' }, 404)
+  if (team.slug === 'default' || team.id === 't_default') return json({ error: '默认团队不可删除' }, 400)
+
+  await writeTeamAuditW(env, { teamId, actorUserId: auth.userId, actorEmail: auth.email, action: 'team_delete', targetType: 'team', targetId: teamId, detail: { name: team.name, slug: team.slug } })
+  await env.DB.prepare('delete from team_members where team_id=?').bind(teamId).run()
+  await env.DB.prepare('delete from invitations where team_id=?').bind(teamId).run()
+  await env.DB.prepare('delete from teams where id=?').bind(teamId).run()
+  return json({ ok: true })
+}
+
 /** GET /api/teams/:teamId/members：成员列表（含待认领占位行） */
 async function teamMemberList(env, auth, teamId) {
   const member = await requireTeamMemberW(env, auth, teamId)

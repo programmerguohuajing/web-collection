@@ -46,6 +46,21 @@ export async function updateTeam(auth, teamId, input = {}) {
   return { ok: true }
 }
 
+/** 删除/解散团队（仅 Owner，默认团队不可删） */
+export async function deleteTeam(auth, teamId) {
+  const member = await requireTeamMember(auth, teamId)
+  if (!hasPermission(member.role, 'manageTeam')) throw forbidden('仅 Owner 可解散/删除团队', 'FORBIDDEN')
+  const team = await first('select id, slug, name from teams where id = ?', [teamId])
+  if (!team) throw notFound('团队不存在', 'NOT_FOUND')
+  if (team.slug === 'default' || team.id === 't_default') throw badRequest('默认团队不可删除', 'BAD_REQUEST')
+
+  await writeTeamAudit({ teamId, actorUserId: auth.userId, actorEmail: auth.email, action: 'team_delete', targetType: 'team', targetId: teamId, detail: { name: team.name, slug: team.slug } })
+  await run('delete from team_members where team_id = ?', [teamId])
+  await run('delete from invitations where team_id = ?', [teamId])
+  await run('delete from teams where id = ?', [teamId])
+  return { ok: true }
+}
+
 /** 成员列表（含邀请中占位行，FR-18/P1） */
 export async function listTeamMembers(auth, teamId) {
   await requireTeamMember(auth, teamId)
