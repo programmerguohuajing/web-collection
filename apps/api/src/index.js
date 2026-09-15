@@ -25,7 +25,7 @@ import { listDataAccessAudit, listMembers, resolveAccessLevel, saveMember, saveM
 import { changePassword, ensureBuiltinAdmin, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
 import { listSessions, revokeSession } from './services/session-service.js'
 import { getSdkMonitoring, getSdkSize, reportSdkMonitoring, reportSdkSize } from './services/sdk-health-service.js'
-import { acceptInvitationService, assignApplication, changeMemberLevel, changeMemberRole, createInvitation, createTeam, getTeam, listInvitations, listTeamAudit, listTeamMembers, migrateMembersToDefaultTeam, removeMember, revokeInvitation, updateTeam } from './services/team-service.js'
+import { acceptInvitationService, assignApplication, changeMemberLevel, changeMemberRole, createInvitation, createTeam, deleteTeam, getTeam, listInvitations, listTeamAudit, listTeamMembers, migrateMembersToDefaultTeam, removeMember, revokeInvitation, updateTeam } from './services/team-service.js'
 import { identityMiddleware, isAccountsEnabled } from './auth-middleware.js'
 import { resolveCollectConfig } from '../../../packages/collect-config.js'
 import { applyAccessLevel } from '../../../packages/access-level.js'
@@ -730,6 +730,9 @@ app.get('/api/teams/:teamId', async (req, res, next) => { guardAccounts(res, nex
 }) })
 app.put('/api/teams/:teamId', async (req, res, next) => { guardAccounts(res, next, async () => {
   res.json(await updateTeam(req.auth, req.params.teamId, req.body || {}))
+}) })
+app.delete('/api/teams/:teamId', async (req, res, next) => { guardAccounts(res, next, async () => {
+  res.json(await deleteTeam(req.auth, req.params.teamId))
 }) })
 app.get('/api/teams/:teamId/members', async (req, res, next) => { guardAccounts(res, next, async () => {
   res.json(await listTeamMembers(req.auth, req.params.teamId))
