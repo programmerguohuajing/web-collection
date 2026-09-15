@@ -9,13 +9,12 @@ export const router = createRouter({
     { path: '/embed/dashboard/:token', component: () => import('../views/embed/DashboardEmbed.vue'), meta: { title: '仪表盘分享' } },
     // D2 账号体系：顶层登录页（不套 Layout）
     { path: '/login', component: () => import('../views/login/index.vue'), meta: { title: '登录' } },
-    // D2 账号体系：顶层团队管理控制台（不套 Layout）
-    { path: '/teams', component: () => import('../views/teams/index.vue'), meta: { title: '团队管理' } },
     {
       path: '/',
       component: Layout,
       redirect: '/overview',
       children: [
+        { path: 'teams', component: () => import('../views/teams/index.vue'), meta: { title: '团队管理' } },
         { path: 'overview', component: () => import('../views/monitor/overview/index.vue'), meta: { title: '总览' } },
         { path: 'errors', component: () => import('../views/monitor/errors/index.vue'), meta: { title: '错误监控' } },
         { path: 'performance', component: () => import('../views/monitor/performance/index.vue'), meta: { title: '性能监控' } },
