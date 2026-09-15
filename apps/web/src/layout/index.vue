@@ -81,6 +81,7 @@ const baseGroups = [
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },
+    { title: '团队管理', path: '/teams', icon: User },
     { title: '成员与数据等级', path: '/access-levels', icon: Lock },
     { title: '用量与套餐', path: '/usage', icon: Coin, cap: 'metering' },
     { title: '品牌白标', path: '/brand', icon: Brush, cap: 'whiteLabel' }
