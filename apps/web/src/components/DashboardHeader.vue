@@ -30,6 +30,14 @@ const initial = computed(() => {
   return (u.name || u.email || '?').slice(0, 1).toUpperCase()
 })
 const emailText = computed(() => me.value?.user?.email || '')
+const usernameText = computed(() => {
+  const u = me.value?.user
+  if (!u) return ''
+  if (u.name && u.name !== '用户') return u.name
+  const email = u.email || ''
+  if (email.includes('@')) return email.split('@')[0]
+  return email || u.name || ''
+})
 
 async function onSwitchTeam(teamId: string): Promise<void> {
   if (teamId === currentTeamId.value) return
@@ -74,7 +82,7 @@ onMounted(() => {
   <el-dropdown v-else trigger="click" class="account-menu" @command="onCommand">
     <span class="account-trigger">
       <span class="account-avatar">{{ initial }}</span>
-      <span class="account-email"><OverflowTip :text="emailText" /></span>
+      <span class="account-email"><OverflowTip :text="usernameText" /></span>
       <el-icon><ArrowDown /></el-icon>
     </span>
     <template #dropdown>
