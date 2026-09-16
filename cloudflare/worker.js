@@ -1120,9 +1120,9 @@ async function adminApi(request, env, url) {
   if (/^\/api\/traces\/[^/]+$/.test(path)) return traceEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
   if (path === '/api/analytics/sessions') return cachedHeavyReadW('analytics-sessions', env, url, auth, () => sessions(env, url), { freshMs: 30 * 60 * 1000 })
   if (/^\/api\/analytics\/sessions\//.test(path)) return sessionEvents(env, decodeURIComponent(path.split('/').at(-1)), url)
-  if (path === '/api/analytics/paths') return paths(env, url)
-  if (path === '/api/analytics/click-paths') return clickPaths(env, url)
-  if (path === '/api/analytics/heatmap') return heatmap(env, url)
+  if (path === '/api/analytics/paths') return cachedHeavyReadW('analytics-paths', env, url, auth, () => paths(env, url), { freshMs: 30 * 60 * 1000 })
+  if (path === '/api/analytics/click-paths') return cachedHeavyReadW('analytics-click-paths', env, url, auth, () => clickPaths(env, url), { freshMs: 30 * 60 * 1000 })
+  if (path === '/api/analytics/heatmap') return cachedHeavyReadW('analytics-heatmap', env, url, auth, () => heatmap(env, url), { freshMs: 30 * 60 * 1000 })
   if (path === '/api/analytics/live') return live(env, url)
   if (path === '/api/analytics/releases') return cachedHeavyReadW('analytics-releases', env, url, auth, () => releasesReport(env, url), { freshMs: 30 * 60 * 1000 })
   if (path === '/api/analytics/event-names') return funnelEventNames(env, url)
@@ -1245,14 +1245,14 @@ async function adminApi(request, env, url) {
   if (path === '/api/collect-config/rollback' && request.method === 'POST') return collectConfigRollback(env, await request.json())
   if (path === '/api/collect-config/stats') return cachedHeavyReadW('collect-config-stats', env, url, auth, () => collectConfigStats(env), { freshMs: 15 * 60 * 1000 })
   // PRD 05 漏斗报告（PRD 形状，复用 runFunnel 引擎输出整形）
-  if (/\/funnels\/\d+\/report$/.test(path)) return funnelReport(env, Number(path.split('/').at(-2)), url)
+  if (/\/funnels\/\d+\/report$/.test(path)) return cachedHeavyReadW('funnel-report', env, url, auth, () => funnelReport(env, Number(path.split('/').at(-2)), url), { freshMs: 30 * 60 * 1000 })
   // PRD 06 页面参与度
-  if (path === '/api/analytics/engagement') return engagementList(env, url)
-  if (path === '/api/analytics/engagement/detail') return engagementDetail(env, url, auth)
+  if (path === '/api/analytics/engagement') return cachedHeavyReadW('analytics-engagement', env, url, auth, () => engagementList(env, url), { freshMs: 30 * 60 * 1000 })
+  if (path === '/api/analytics/engagement/detail') return cachedHeavyReadW('analytics-engagement-detail', env, url, auth, () => engagementDetail(env, url, auth), { freshMs: 30 * 60 * 1000 })
   // Next Horizon A1 · 留存 / 同期群分析（镜像 apps/api services/retention-service.js：
   // 同路径、同 JSON 契约，聚合逻辑同源 packages/retention.js，仅取数 SQL 用 D1/SQLite 方言）
-  if (path === '/api/analytics/retention') return retentionList(env, url)
-  if (path === '/api/analytics/api-health') return apiHealth(env, url)
+  if (path === '/api/analytics/retention') return cachedHeavyReadW('analytics-retention', env, url, auth, () => retentionList(env, url), { freshMs: 30 * 60 * 1000 })
+  if (path === '/api/analytics/api-health') return cachedHeavyReadW('analytics-api-health', env, url, auth, () => apiHealth(env, url), { freshMs: 15 * 60 * 1000 })
   // PRD 07 数据访问等级
   // PRD 07 数据访问等级（D2 FR-9 扩展：已登录取 auth.level，匿名回落全局等级，前端不破）
   if (path === '/api/me/access-level') { const level = auth?.level || globalLevel(env); return json({ level, label: ({ L1: '只读统计', L2: '业务分析', L3: '运维诊断', L4: '完整数据' })[level], ...(auth?.userId ? { role: auth.role || null, teamId: auth.teamId || null, userId: auth.userId } : {}) }) }
@@ -4158,7 +4158,7 @@ function releaseQuality(env,url,auth){
       min(ts) first_seen_at,max(ts) last_seen_at,avg(case when received_at is not null and received_at>=ts and received_at-ts<3600000 then received_at-ts end) latency_avg
       from events where app_id=? and ts>=? and ts<=? and ifnull(${dim},'')<>'' group by ${dim} order by users desc`).bind(appId,start,end).all(),
     p75ByDim(env,appId,dim,start,end,'lcp'),p75ByDim(env,appId,dim,start,end,'inp'),
-    env.DB.prepare(`select ${dim} v,value from (select ${dim} v2,value,count(*) over (partition by ${dim}) n,row_number() over (partition by ${dim} order by value) rn from events where app_id=? and ts>=? and ts<=? and received_at is not null and received_at>=ts and received_at-ts<3600000 and ifnull(${dim},'')<>'') where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(appId,start,end).all().catch(()=>({results:[]}))
+    env.DB.prepare(`select v2 v,value from (select ${dim} v2,value,count(*) over (partition by ${dim}) n,row_number() over (partition by ${dim} order by value) rn from events where app_id=? and ts>=? and ts<=? and received_at is not null and received_at>=ts and received_at-ts<3600000 and ifnull(${dim},'')<>'') where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(appId,start,end).all().catch(()=>({results:[]}))
   ]).then(([rows,lcpRows,inpRows,latencyRows])=>{
     const lcpMap=p75Interpolate(lcpRows.results||[],'v2'),inpMap=p75Interpolate(inpRows.results||[],'v2'),latencyMap=p75Interpolate(latencyRows.results||[],'v')
     const now=Date.now()
@@ -4190,7 +4190,7 @@ function judgeStatusW(item,{baselineValue,grand,now}){
   return'healthy'
 }
 function p75ByDim(env,appId,dim,start,end,metric){
-  return env.DB.prepare(`select ${dim} v,value from (select ${dim} v2,value,count(*) over (partition by ${dim}) n,row_number() over (partition by ${dim} order by value) rn from events where app_id=? and ts>=? and ts<=? and type='perf' and metric=? and ifnull(${dim},'')<>'') where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(appId,start,end,metric).all().catch(()=>({results:[]}))
+  return env.DB.prepare(`select v2,value from (select ${dim} v2,value,count(*) over (partition by ${dim}) n,row_number() over (partition by ${dim} order by value) rn from events where app_id=? and ts>=? and ts<=? and type='perf' and metric=? and ifnull(${dim},'')<>'') where rn between cast((n-1)*0.75 as integer)+1 and cast((n-1)*0.75 as integer)+2`).bind(appId,start,end,metric).all().catch(()=>({results:[]}))
 }
 function p75Interpolate(rows,keyName){
   const grouped=new Map()
