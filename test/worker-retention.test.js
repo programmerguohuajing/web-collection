@@ -23,6 +23,7 @@ function envStub(rows = ROWS) {
   return {
     state,
     env: {
+      TESTING: true,
       DB: {
         prepare(sql) {
           state.sql = sql
