@@ -660,9 +660,15 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 .span-duration { color: #3c4051; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .trace-empty-card :deep(.el-card__body) { display: grid; min-height: 360px; place-items: center; }
 
-.picker-search { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 14px; }
-.picker-list { display: grid; gap: 8px; min-height: 240px; margin-top: 14px; }
-.trace-picker-item { display: grid; gap: 9px; width: 100%; padding: 13px 14px; border: 1px solid #e6e8ef; border-radius: 11px; background: #fff; text-align: left; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
+.trace-picker :deep(.el-drawer__body) {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px;
+  overflow: hidden;
+}
+.picker-search { flex: none; display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 12px; }
+.picker-list { flex: 1; display: flex; flex-direction: column; align-content: start; gap: 8px; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.trace-picker-item { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 12px 14px; border: 1px solid #e6e8ef; border-radius: 11px; background: #fff; text-align: left; cursor: pointer; transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
 .trace-picker-item:hover { border-color: #bbb7f4; background: #fbfaff; }
 .trace-picker-item.active { border-color: #8179ec; background: #f7f6ff; box-shadow: 0 0 0 2px rgba(79, 70, 229, .08); }
 .picker-item-top,
@@ -671,7 +677,7 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 .picker-item-meta { justify-content: flex-start; color: #737a8c; font-size: 11px; }
 .picker-item-meta span + span::before { margin-right: 10px; color: #c2c6d0; content: '·'; }
 .trace-picker-item small { overflow: hidden; color: #959baa; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.picker-pager { display: flex; justify-content: center; padding-top: 16px; }
+.picker-pager { flex: none; display: flex; justify-content: center; padding-top: 14px; margin-top: auto; }
 .detail-descriptions code { color: #4f46e5; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; word-break: break-all; }
 
 @media (max-width: 1100px) {
