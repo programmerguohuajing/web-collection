@@ -62,6 +62,7 @@ function heavyReadResponseW(entry, state) {
 }
 
 async function cachedHeavyReadW(scope, env, url, auth, loader, { freshMs = HEAVY_READ_FRESH_MS_W, staleMs = HEAVY_READ_STALE_MS_W } = {}) {
+  if (env?.TESTING || env?.NO_CACHE) return loader()
   const key = heavyReadKeyW(scope, url, heavyReadViewerW(env, auth))
   const now = Date.now()
   let entry = _heavyReadCacheW.get(key) || null
