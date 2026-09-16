@@ -8,20 +8,11 @@ WORKDIR /app
 # 安装 pnpm (项目 package.json 指定 pnpm@11.7.0)
 RUN npm install -g pnpm@11.7.0
 
-# 复制 package 配置文件
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json ./apps/api/
-COPY apps/web/package.json ./apps/web/
-COPY apps/mcp/package.json ./apps/mcp/
-COPY packages/sdk/package.json ./packages/sdk/
-COPY packages/sdk-electron/package.json ./packages/sdk-electron/
-COPY packages/sdk-react-native/package.json ./packages/sdk-react-native/
-
-# 安装依赖
-RUN pnpm install
-
-# 复制源代码
+# 复制全量源代码 (.dockerignore 已自动过滤 node_modules 及构建产物)
 COPY . .
+
+# 安装工作区依赖
+RUN pnpm install
 
 # 构建前端 Web 控制台 与 SDK 产物
 RUN pnpm --filter @web-collection/web build && pnpm --filter @web-collection/sdk build
