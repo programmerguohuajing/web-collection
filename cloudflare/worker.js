@@ -1647,52 +1647,48 @@ async function applicationList(env,url,auth){const teamScoped=auth?.via==='sessi
 async function releaseList(env,appId,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare('select * from releases where app_id=? order by created_at desc limit ? offset ?').bind(appId,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from releases where app_id=?').bind(appId).first()]);return json({items:rows.results,total:Number(total.count),page,pageSize})}
 async function replayEvents(env,id){
   if(!id?.trim())return json({events:[]});
-  // 回放按会话分段存储，仅首段含全量快照；若只按点击的分段 session_id 读取，缺全量快照
-  // 会导致 rrweb 渲染空白 iframe。故先用传入 id 定位该段并取其 base_session_id，再按
-  // base_session_id 拉取整段会话的所有分段（首段全量快照在前），保证可正常重建页面。
-  // 传入 id 既可能是分段 session_id（列表点击），也可能是事件会话 UUID（总览/分析页跳转）。
+  const startTime = performance.now();
   const hit=await env.DB.prepare('select session_id,base_session_id from replays where session_id=? limit 1').bind(id).first();
   const baseId=hit?.base_session_id||id;
-  let rows=(await env.DB.prepare('select session_id,events_json from replays where base_session_id=? order by created_at,id').bind(baseId).all()).results;
-  if(!rows.length)rows=(await env.DB.prepare('select session_id,events_json from replays where session_id=? order by created_at,id').bind(id).all()).results;
-  // 闲置切分兼容：SDK 无交互超时会轮换 base 会话键（`{sessionId}_r{n}`），事件会话 UUID
-  // 深链时精确匹配不到——以前缀匹配兑底。护栏 limit 5000 防退化数据打爆单查询。
-  if(!rows.length)rows=(await env.DB.prepare('select session_id,events_json from replays where base_session_id like ? order by created_at,id limit 5000').bind(baseId+'_%').all()).results;
-  // 合并规则改为「按录制实例锚定」，根治长会话播放中途空白：
-  // 同一 base_session_id 下可能混有多个 rrweb 录制实例（多次页面加载 / 多次 startReplay），
-  // 而 rrweb 的 node id 空间是按录制实例独立的。若像旧实现那样把「上一段的全量快照」借用
-  // 塞进另一实例的增量流，rrweb 重建镜像树时 node id 对不上，整条时间线崩坏 → 播放窗口空白。
-  // 新规则：
-  //   ① 按插入顺序（created_at,id，即录制顺序）逐行扫描；段号变化视为切换录制实例，重置锚点；
-  //   ② 每个实例只从「它自己的」首个全量快照（type:2）开始输出，快照之前的增量一律丢弃；
-  //   ③ 实例若完全没有自己的全量快照，整段丢弃——不借用他段快照（借用只会让画面更糟）；
-  //   ④ 同实例的后续批次原样续接（含 rrweb checkout 周期快照），保持 node id 连续。
-  // 传入 id 既可能是分段 session_id（列表点击），也可能是事件会话 UUID（总览/分析页跳转）。
+  const firstSnap = await env.DB.prepare('select id,created_at,session_id,events_json from replays where base_session_id=? order by created_at asc,id asc limit 1').bind(baseId).first();
+  let recentRows = (await env.DB.prepare('select id,created_at,session_id,events_json from replays where base_session_id=? order by created_at desc,id desc limit 25').bind(baseId).all()).results;
+  if (!recentRows.length) recentRows = (await env.DB.prepare('select id,created_at,session_id,events_json from replays where session_id=? order by created_at desc,id desc limit 25').bind(id).all()).results;
+  if (!recentRows.length) recentRows = (await env.DB.prepare('select id,created_at,session_id,events_json from replays where base_session_id like ? order by created_at desc,id desc limit 25').bind(baseId+'_%').all()).results;
+
+  recentRows.sort((a,b) => (Number(a.created_at||0) - Number(b.created_at||0)) || (Number(a.id||0) - Number(b.id||0)));
+  const rows = [];
+  const seenIds = new Set();
+  if (firstSnap) {
+    const k = firstSnap.id || firstSnap.session_id;
+    if (k) { rows.push(firstSnap); seenIds.add(k); }
+  }
+  for (const r of recentRows) {
+    const k = r?.id || r?.session_id;
+    if (k && !seenIds.has(k)) {
+      rows.push(r);
+      seenIds.add(k);
+    }
+  }
+
   const merged=[];
   let segId=null,anchored=false;
   for(const row of rows){
+    if (performance.now() - startTime > 25) break;
     const evs=await decodeReplayEventsFromStorage(row.events_json);
     if(!Array.isArray(evs)||!evs.length)continue;
     if(row.session_id!==segId){segId=row.session_id;anchored=false}
     const snapIdx=evs.findIndex(e=>e&&e.type===2);
     if(!anchored){
-      if(snapIdx<0)continue;                       // 该实例尚无自身全量快照：丢弃，等待同实例后续批次
-      // 保留紧邻全量快照之前的 Meta（type:4）——它携带 viewport 尺寸 / href，属同一实例，
-      // 是 rrweb 事件流的规范开头（Meta → FullSnapshot）。只裁掉快照之前的增量（type:3）。
+      if(snapIdx<0)continue;
       let start=snapIdx;
       if(start>0&&evs[start-1]&&evs[start-1].type===4)start--;
       for(let i=start;i<evs.length;i++)merged.push(evs[i]);
       anchored=true;
     }else{
-      for(const e of evs)merged.push(e);           // 同实例续接
+      for(const e of evs)merged.push(e);
     }
   }
-  // 无任何可用全量快照 → 返回空事件，让前端「缺少全量快照」提示生效，而不是静默黑屏。
   if(!merged.length||!merged.some(e=>e&&e.type===2))return json({events:[],truncated:false});
-  // 回放时长截断（线上实测踩坑）：标签页常开 + 无闲置切分的旧 SDK 会把十几个小时的
-  // 分段串成一个 base 会话（1044 分钟里 883 分钟纯空白），播放器时间轴全部浪费在空转上。
-  // 超过 30 分钟跨度时截取最近 30 分钟：截断点后移到首个全量快照（含其紧邻 Meta），
-  // 保证输出流仍以可重建的快照开头；窗口内找不到快照则不截断（宁可超长也不黑屏）。
   const REPLAY_SPAN_LIMIT_MS=30*60*1000;
   const originalSpanMs=merged[merged.length-1].timestamp-merged[0].timestamp;
   let out=merged,truncated=false;

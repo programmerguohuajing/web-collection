@@ -38,11 +38,21 @@ function emptyForm() {
   }
 }
 
+const PROVIDER_LABELS = {
+  local: '本地模型',
+  domestic: '国内模型',
+  overseas: '海外模型',
+  'workers-ai': 'Workers AI'
+}
+const providerLabel = key => PROVIDER_LABELS[key] || key
+
 const aiForm = reactive(emptyForm())
 const aiLoading = ref(false)
 const aiSaving = ref(false)
 const aiTesting = ref(false)
 const aiTestResults = ref(null)
+const providerTesting = reactive({ local: false, domestic: false, overseas: false, 'workers-ai': false })
+const providerTestResults = reactive({ local: null, domestic: null, overseas: null, 'workers-ai': null })
 const effectiveSource = ref({})
 const modelOptions = reactive({ local: [], domestic: [], overseas: [] })
 const modelsLoading = reactive({ local: false, domestic: false, overseas: false })
@@ -114,15 +124,45 @@ async function loadAi() {
 async function testAi() {
   aiTesting.value = true
   aiTestResults.value = null
+  Object.keys(providerTestResults).forEach(k => providerTestResults[k] = null)
   try {
     const body = JSON.parse(JSON.stringify(aiForm))
     body.modelOrder = body.modelOrder.join(',')
     const data = await api('/api/ai/settings/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     aiTestResults.value = data.results || {}
+    if (data.results) {
+      Object.entries(data.results).forEach(([k, v]) => {
+        providerTestResults[k] = v
+      })
+    }
   } catch (e) {
     ElMessage.error(e.message || '测试请求失败')
   } finally {
     aiTesting.value = false
+  }
+}
+
+async function testSingleProvider(key) {
+  providerTesting[key] = true
+  providerTestResults[key] = null
+  try {
+    const body = JSON.parse(JSON.stringify(aiForm))
+    body.modelOrder = body.modelOrder.join(',')
+    body.targetProvider = key
+    const data = await api('/api/ai/settings/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const res = data.results?.[key]
+    if (res) {
+      providerTestResults[key] = res
+      if (!aiTestResults.value) aiTestResults.value = {}
+      aiTestResults.value = { ...aiTestResults.value, [key]: res }
+    } else {
+      providerTestResults[key] = { ok: false, error: '未获取到测试结果' }
+    }
+  } catch (e) {
+    providerTestResults[key] = { ok: false, error: e.message || '测试失败' }
+    ElMessage.error(e.message || '测试失败')
+  } finally {
+    providerTesting[key] = false
   }
 }
 
@@ -181,7 +221,20 @@ onMounted(loadAi)
     <el-alert v-for="(w, i) in sourceWarnings" :key="i" class="section" type="warning" :title="`⚠ ${w}`" :closable="false" show-icon />
 
     <el-card shadow="never" class="panel section">
-      <template #header><div class="panel-head"><div><h2>全局设置</h2><small>路由顺序按选择顺序生效；兜底在全部通道失败后追加 Workers AI</small></div></div></template>
+      <template #header>
+        <div class="panel-head">
+          <div>
+            <h2>全局设置</h2>
+            <small>路由顺序按选择顺序生效；兜底在全部通道失败后追加 Workers AI</small>
+          </div>
+          <div class="header-actions">
+            <el-tag v-if="providerTestResults['workers-ai']" :type="providerTestResults['workers-ai'].ok ? 'success' : 'danger'" effect="plain" class="header-tag">
+              {{ providerTestResults['workers-ai'].ok ? `✓ Workers AI ${providerTestResults['workers-ai'].latencyMs}ms` : `✗ Workers AI ${providerTestResults['workers-ai'].error}` }}
+            </el-tag>
+            <el-button size="small" :loading="providerTesting['workers-ai']" @click="testSingleProvider('workers-ai')">测试 Workers AI</el-button>
+          </div>
+        </div>
+      </template>
       <el-form label-position="top" class="ai-form">
         <el-form-item label="路由顺序">
           <el-select v-model="aiForm.modelOrder" multiple placeholder="选择顺序即路由顺序">
@@ -211,7 +264,20 @@ onMounted(loadAi)
     </el-card>
 
     <el-card v-for="{ key, title, hint } in PROVIDERS" :key="key" shadow="never" class="panel section provider-card">
-      <template #header><div class="panel-head"><div><h2>{{ title }}</h2><small>{{ hint || ' ' }}</small></div></div></template>
+      <template #header>
+        <div class="panel-head">
+          <div>
+            <h2>{{ title }}</h2>
+            <small>{{ hint || ' ' }}</small>
+          </div>
+          <div class="header-actions">
+            <el-tag v-if="providerTestResults[key]" :type="providerTestResults[key].ok ? 'success' : 'danger'" effect="plain" class="header-tag">
+              {{ providerTestResults[key].ok ? `✓ ${providerLabel(key)} ${providerTestResults[key].latencyMs}ms` : `✗ ${providerLabel(key)} ${providerTestResults[key].error}` }}
+            </el-tag>
+            <el-button size="small" :loading="providerTesting[key]" @click="testSingleProvider(key)">测试连接</el-button>
+          </div>
+        </div>
+      </template>
       <el-form label-position="top" class="ai-form">
         <el-form-item label="接口格式">
           <el-select v-model="aiForm.providers[key].apiFormat">
@@ -240,14 +306,14 @@ onMounted(loadAi)
     </el-card>
 
     <div class="actions section">
-      <el-button :loading="aiTesting" @click="testAi">测试连接</el-button>
+      <el-button :loading="aiTesting" @click="testAi">测试全部连接</el-button>
       <el-button type="primary" :loading="aiSaving" :disabled="!aiDirty" @click="saveAi">{{ aiDirty ? '保存配置' : '无改动' }}</el-button>
     </div>
 
     <div v-if="aiTestResults" class="test-results section">
       <template v-for="(r, name) in aiTestResults" :key="name">
         <el-tag :type="r.ok ? 'success' : 'danger'" effect="plain">
-          {{ r.ok ? `✓ ${name} ${r.latencyMs}ms` : `✗ ${name} ${r.error}` }}
+          {{ r.ok ? `✓ ${providerLabel(name)} ${r.latencyMs}ms` : `✗ ${providerLabel(name)} ${r.error}` }}
         </el-tag>
       </template>
     </div>
@@ -264,12 +330,15 @@ onMounted(loadAi)
 .timeout-item small { margin-top: 0 !important; }
 .switch-row { display: flex; align-items: center; gap: 12px; }
 .switch-row small { margin-top: 0 !important; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-head h2 { margin: 0; font-size: 16px; }
 .panel-head small { color: var(--c-text-muted); }
+.header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.header-tag { font-weight: normal; }
 .model-row { display: flex; gap: 8px; width: 100%; }
 .model-row .el-select { flex: 1; width: auto; }
 .actions { display: flex; gap: 12px; }
 .test-results { display: flex; flex-wrap: wrap; gap: 8px; }
 .field-suffix { margin-left: 8px; color: var(--c-text-muted); }
-@media (max-width: 720px) { .model-row { flex-direction: column; } }
+@media (max-width: 720px) { .model-row { flex-direction: column; } .panel-head { flex-direction: column; align-items: flex-start; } }
 </style>

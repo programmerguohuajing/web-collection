@@ -1,10 +1,39 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
+import {
+  DocumentCopy,
+  InfoFilled,
+  Lock,
+  Plus,
+  QuestionFilled,
+  Refresh,
+  Right,
+  Setting,
+  User
+} from '@element-plus/icons-vue'
 import { api, normalizePageResponse, pageLoading } from '../../../dashboard.js'
+import {
+  CHANGEABLE_ROLE_OPTIONS,
+  LEVEL_LABELS,
+  LEVEL_OPTIONS,
+  ROLE_LABELS,
+  useAuth
+} from '../../../composables/useAuth'
+import OverflowTip from '../../../components/OverflowTip.vue'
 
 const router = useRouter()
+const {
+  accountsEnabled,
+  authApi,
+  currentTeamId,
+  isLoggedIn,
+  loadMe,
+  me,
+  switchTeam
+} = useAuth()
+
 const activeTab = ref('apps')
 const applications = ref([])
 const loading = ref(false)
@@ -14,11 +43,48 @@ const saving = ref(false)
 const form = reactive({ name: '', platform: 'web', endpoint: '', description: '' })
 const ingest = reactive({ errors: true, sampleRate: 100, batchSize: 30, flushInterval: 60000, replay: false })
 const rules = reactive({ regression: true, highErrorRate: true, slowPage: false })
-// 保存前先拉取当前全局配置，merge 后再回写，避免覆盖远程配置（governance 远程配置面板）已设的其他字段
+// 保存前先拉取当前全局配置，merge 后再回写，避免覆盖远程配置已设的其他字段
 const collectConfig = ref(null)
 const appSettings = ref(null)
 
-const activeLabel = computed(() => ({ apps: '项目管理', ingest: '采样与上报', alerts: '告警规则', members: '成员权限', retention: '数据留存' })[activeTab.value])
+// ---------------- 数据留存配置状态 ----------------
+const retention = reactive({
+  eventsDays: 30,
+  logsDays: 14,
+  replaysDays: 7,
+  resolvedIssuesDays: 90,
+  sourcemapsDays: 180,
+  alertsDays: 90,
+  syntheticResultsDays: 30
+})
+const loadingRetention = ref(false)
+const savingRetention = ref(false)
+const cleaning = ref(false)
+const cleanupDialogOpen = ref(false)
+const cleanupResult = ref(null)
+
+// ---------------- 成员与权限状态 ----------------
+const members = ref([])
+const loadingMembers = ref(false)
+const membersError = ref('')
+const inviteDialogOpen = ref(false)
+const inviteSaving = ref(false)
+const inviteForm = reactive({ email: '', role: 'member', accessLevel: 'L2' })
+const inviteResult = ref(null)
+
+const activeLabel = computed(() => ({
+  apps: '项目管理',
+  ingest: '采样与上报',
+  alerts: '告警规则',
+  members: '成员权限',
+  retention: '数据留存'
+})[activeTab.value])
+
+const canManageMembers = computed(() => ['owner', 'admin'].includes(me.value?.role || ''))
+const currentTeamName = computed(() => {
+  const current = me.value?.teams?.find(t => t.id === currentTeamId.value)
+  return current?.name || '默认团队'
+})
 
 function normalize(row = {}) {
   return {
@@ -49,6 +115,10 @@ async function load() {
   }
   void loadIngest()
   void loadAlerts()
+  void loadRetention()
+  if (accountsEnabled.value && isLoggedIn.value) {
+    void loadMembers()
+  }
 }
 
 function openCreate() {
@@ -162,6 +232,268 @@ async function saveAlerts() {
     ElMessage.error(error.message || '保存失败')
   }
 }
+
+// ---------------- 数据留存（对接全局 settings.retention & cleanup） ----------------
+async function loadRetention() {
+  loadingRetention.value = true
+  try {
+    const data = await api('/api/settings', { requestKey: 'settings:retention-settings' })
+    appSettings.value = data || {}
+    const r = data?.retention || {}
+    if (r.eventsDays !== undefined) retention.eventsDays = Number(r.eventsDays)
+    if (r.logsDays !== undefined) retention.logsDays = Number(r.logsDays)
+    if (r.replaysDays !== undefined) retention.replaysDays = Number(r.replaysDays)
+    if (r.resolvedIssuesDays !== undefined) retention.resolvedIssuesDays = Number(r.resolvedIssuesDays)
+    if (r.sourcemapsDays !== undefined) retention.sourcemapsDays = Number(r.sourcemapsDays)
+    if (r.alertsDays !== undefined) retention.alertsDays = Number(r.alertsDays)
+    if (r.syntheticResultsDays !== undefined) retention.syntheticResultsDays = Number(r.syntheticResultsDays)
+  } catch { /* 保留默认值 */ }
+  finally {
+    loadingRetention.value = false
+  }
+}
+
+async function saveRetention() {
+  savingRetention.value = true
+  try {
+    let base = appSettings.value
+    if (!base || typeof base !== 'object') {
+      try { base = (await api('/api/settings', { requestKey: 'settings:save-retention-base' })) || {} } catch { base = {} }
+    }
+    const payload = {
+      ...base,
+      retention: {
+        eventsDays: Math.max(1, Math.min(3650, Math.round(Number(retention.eventsDays) || 30))),
+        logsDays: Math.max(1, Math.min(3650, Math.round(Number(retention.logsDays) || 14))),
+        replaysDays: Math.max(1, Math.min(365, Math.round(Number(retention.replaysDays) || 7))),
+        resolvedIssuesDays: Math.max(1, Math.min(3650, Math.round(Number(retention.resolvedIssuesDays) || 90))),
+        sourcemapsDays: Math.max(1, Math.min(3650, Math.round(Number(retention.sourcemapsDays) || 180))),
+        alertsDays: Math.max(1, Math.min(3650, Math.round(Number(retention.alertsDays) || 90))),
+        syntheticResultsDays: Math.max(1, Math.min(3650, Math.round(Number(retention.syntheticResultsDays) || 30)))
+      }
+    }
+    await api('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    appSettings.value = payload
+    ElMessage.success('数据留存设置已保存')
+  } catch (error) {
+    ElMessage.error(error.message || '保存数据留存设置失败')
+  } finally {
+    savingRetention.value = false
+  }
+}
+
+async function runManualCleanup() {
+  try {
+    await ElMessageBox.confirm(
+      '立即执行过期数据清理将依据设定的留存周期，物理删除已超期的事件、日志、回放录屏、已解决 Issue 等历史记录。此操作不可逆，是否继续？',
+      '确认清理过期数据',
+      {
+        confirmButtonText: '确认清理',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+
+  cleaning.value = true
+  try {
+    const res = await api('/api/maintenance/cleanup', { method: 'POST' })
+    cleanupResult.value = res || {}
+    cleanupDialogOpen.value = true
+    ElMessage.success('过期数据清理已完成')
+  } catch (error) {
+    ElMessage.error(error.message || '执行数据清理失败')
+  } finally {
+    cleaning.value = false
+  }
+}
+
+// ---------------- 成员权限（对接 /api/teams/:id/members & useAuth） ----------------
+async function loadMembers() {
+  if (!isLoggedIn.value) return
+  loadingMembers.value = true
+  membersError.value = ''
+  try {
+    if (!currentTeamId.value) {
+      await loadMe()
+    }
+    const teamId = currentTeamId.value || me.value?.teams?.[0]?.id
+    if (!teamId) {
+      members.value = []
+      return
+    }
+    const data = await authApi(`/api/teams/${encodeURIComponent(teamId)}/members`, { requestKey: 'settings:team-members' })
+    members.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    members.value = []
+    membersError.value = error.message || '成员列表加载失败'
+  } finally {
+    loadingMembers.value = false
+  }
+}
+
+async function onSwitchTeam(teamId) {
+  if (!teamId || teamId === currentTeamId.value) return
+  try {
+    await switchTeam(teamId)
+    await loadMe()
+    await loadMembers()
+    ElMessage.success('已切换团队')
+  } catch (error) {
+    ElMessage.error(error.message || '切换团队失败')
+  }
+}
+
+async function changeMemberRole(row, nextRole) {
+  const userId = row.userId || row.id
+  if (!userId) return
+  try {
+    await authApi(`/api/teams/${encodeURIComponent(currentTeamId.value)}/members/${encodeURIComponent(userId)}/role`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ role: nextRole })
+    })
+    row.role = nextRole
+    ElMessage.success(`已将 ${row.name || row.email} 的角色修改为「${ROLE_LABELS[nextRole] || nextRole}」`)
+    if (userId === me.value?.user?.id) {
+      await loadMe()
+    }
+  } catch (error) {
+    ElMessage.error(error.message || '修改角色失败')
+    await loadMembers()
+  }
+}
+
+async function changeMemberLevel(row, nextLevel) {
+  const userId = row.userId || row.id
+  if (!userId) return
+  try {
+    await authApi(`/api/teams/${encodeURIComponent(currentTeamId.value)}/members/${encodeURIComponent(userId)}/access-level`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ level: nextLevel })
+    })
+    row.level = nextLevel
+    ElMessage.success(`已将 ${row.name || row.email} 的数据等级调整为「${LEVEL_LABELS[nextLevel] || nextLevel}」`)
+  } catch (error) {
+    ElMessage.error(error.message || '调整数据等级失败')
+    await loadMembers()
+  }
+}
+
+async function removeMember(row) {
+  const userId = row.userId || row.id
+  if (!userId) return
+  try {
+    await ElMessageBox.confirm(
+      `确认将成员「${row.name || row.email}」移出当前团队？移出后该成员将无法访问团队内应用与监测数据。`,
+      '确认移除成员',
+      {
+        confirmButtonText: '确认移除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+
+  try {
+    await authApi(`/api/teams/${encodeURIComponent(currentTeamId.value)}/members/${encodeURIComponent(userId)}`, {
+      method: 'DELETE'
+    })
+    members.value = members.value.filter(m => (m.userId || m.id) !== userId)
+    ElMessage.success('成员已移出团队')
+  } catch (error) {
+    ElMessage.error(error.message || '移除成员失败（末位 Owner 不可移除）')
+  }
+}
+
+function openInviteModal() {
+  inviteForm.email = ''
+  inviteForm.role = 'member'
+  inviteForm.accessLevel = 'L2'
+  inviteResult.value = null
+  inviteDialogOpen.value = true
+}
+
+async function submitInvite() {
+  const email = inviteForm.email.trim().toLowerCase()
+  if (!email || !email.includes('@')) {
+    ElMessage.warning('请填写有效的受邀成员邮箱')
+    return
+  }
+  inviteSaving.value = true
+  try {
+    const res = await authApi(`/api/teams/${encodeURIComponent(currentTeamId.value)}/invitations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        role: inviteForm.role,
+        accessLevel: inviteForm.accessLevel
+      })
+    })
+    inviteResult.value = res
+    ElMessage.success('邀请已成功创建')
+  } catch (error) {
+    ElMessage.error(error.message || '创建邀请失败')
+  } finally {
+    inviteSaving.value = false
+  }
+}
+
+function inviteLinkOf(inv) {
+  if (!inv) return ''
+  if (inv.link) return inv.link
+  if (inv.token) return `${window.location.origin}/login?invite=${encodeURIComponent(inv.token)}`
+  return ''
+}
+
+async function copyText(text) {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand('copy')
+      ElMessage.success('已复制到剪贴板')
+    } catch {
+      ElMessage.warning('复制失败，请手动复制')
+    }
+    ta.remove()
+  }
+}
+
+function formatRelativeTime(ts) {
+  if (!ts) return '-'
+  const n = Number(ts)
+  if (Number.isNaN(n) || n <= 0) return String(ts)
+  const diff = Date.now() - n
+  if (diff < 60000) return '刚刚'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`
+  return new Date(n).toLocaleDateString()
+}
+
+watch(activeTab, tab => {
+  if (tab === 'retention') {
+    void loadRetention()
+  } else if (tab === 'members') {
+    void loadMembers()
+  }
+})
 
 onMounted(load)
 </script>
