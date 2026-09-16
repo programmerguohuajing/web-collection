@@ -110,3 +110,55 @@ export async function getSdkSize({ version } = {}) {
 }
 
 function safeParse(s) { try { return JSON.parse(s) } catch { return null } }
+
+/** #3：采集健康度检查：返回最近入库时间、近 1h 入库量与链路健康状态。 */
+export async function getIngestionHealth() {
+  const now = Date.now()
+  const oneHourAgo = now - 3600000
+  try {
+    const eventAgg = await first(
+      'select max(ts) as max_ts, count(case when ts >= ? then 1 end) as written_1h from events',
+      [oneHourAgo]
+    )
+    const alertAgg = await first(
+      `select count(*) as cnt from alert_history where created_at >= ? and level in ('error', 'critical')`,
+      [oneHourAgo]
+    ).catch(() => ({ cnt: 0 }))
+
+    const maxTs = eventAgg?.max_ts ? Number(eventAgg.max_ts) : null
+    const stalledMs = maxTs != null ? Math.max(0, now - maxTs) : null
+    const writtenLast1h = Number(eventAgg?.written_1h || 0)
+    const ingestErrorCount = Number(alertAgg?.cnt || 0)
+
+    let status = 'healthy'
+    if (stalledMs != null) {
+      if (stalledMs > 7200000) status = 'critical'
+      else if (stalledMs > 1800000 || ingestErrorCount > 10) status = 'degraded'
+    }
+
+    return {
+      ingestion: {
+        status,
+        stalledMs,
+        writtenLast1h,
+        written: writtenLast1h,
+        failed: 0,
+        ingestErrorCount,
+        lastErrorMessage: null
+      }
+    }
+  } catch (error) {
+    console.error('getIngestionHealth failed:', error?.message || error)
+    return {
+      ingestion: {
+        status: 'degraded',
+        stalledMs: null,
+        writtenLast1h: 0,
+        written: 0,
+        failed: 0,
+        ingestErrorCount: 0,
+        lastErrorMessage: error?.message || '读取统计失败'
+      }
+    }
+  }
+}
