@@ -16,7 +16,6 @@ COPY apps/mcp/package.json ./apps/mcp/
 COPY packages/sdk/package.json ./packages/sdk/
 COPY packages/sdk-electron/package.json ./packages/sdk-electron/
 COPY packages/sdk-react-native/package.json ./packages/sdk-react-native/
-COPY packages/ai/package.json ./packages/ai/
 
 # 安装依赖
 RUN pnpm install
