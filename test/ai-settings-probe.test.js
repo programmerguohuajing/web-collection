@@ -84,6 +84,22 @@ test('POST /settings/test：表单新 key 优先生效（发给上游的是新 k
   assert.equal(seenAuth, 'Bearer sk-brand-new')
 })
 
+test('POST /settings/test：指定 targetProvider 时仅测试该 provider', async t => {
+  const testedProviders = []
+  globalThis.fetch = async (url, init = {}) => {
+    testedProviders.push(url)
+    return jsonResponse({ choices: [{ message: { content: 'ok' } }] })
+  }
+  const res = await aiWorker.fetch(post('/api/ai/settings/test', {
+    modelOrder: 'local,domestic,overseas',
+    targetProvider: 'domestic',
+    providers: { domestic: { baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-test' } }
+  }), d1Stub())
+  const data = await res.json()
+  assert.deepEqual(Object.keys(data.results), ['domestic'])
+  assert.equal(data.results.domestic.ok, true)
+})
+
 test('POST /settings/models：openai 格式取 data[].id 并排序', async t => {
   let calledUrl = '', auth = ''
   globalThis.fetch = async (url, init = {}) => {

@@ -508,8 +508,13 @@ async function testAiSettings(env, input) {
   const effectiveEnv = { ...env, ...aiSettingsToEnv(merged), AI: env.AI }
   const gateway = createModelGateway(effectiveEnv)
 
-  const names = [...normalized.modelOrder.split(',').map(s => s.trim()).filter(Boolean)]
-  if (normalized.modelFallback !== false && !names.includes('workers-ai')) names.push('workers-ai')
+  let names = [...normalized.modelOrder.split(',').map(s => s.trim()).filter(Boolean)]
+  const targetProvider = String(input.targetProvider || '').trim()
+  if (targetProvider) {
+    names = [targetProvider]
+  } else if (normalized.modelFallback !== false && !names.includes('workers-ai')) {
+    names.push('workers-ai')
+  }
 
   const probes = names.map(async name => {
     const start = Date.now()

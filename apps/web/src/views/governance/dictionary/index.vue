@@ -173,11 +173,11 @@ onMounted(load)
             <el-tag v-if="!row.registered" type="danger" size="small" style="margin-left: 6px">未登记</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="110" cell-class-name="nowrap-cell">
+        <el-table-column label="来源" width="120" cell-class-name="nowrap-cell">
           <template #default="{ row }">{{ sourceLabel(row.source) }}</template>
         </el-table-column>
         <el-table-column prop="type" label="触发类型" width="130" cell-class-name="nowrap-cell" />
-        <el-table-column label="近 7 日上报量" width="150" align="right">
+        <el-table-column label="近 7 日上报量" width="130" align="right">
           <template #default="{ row }">{{ Number(row.count7d || 0).toLocaleString() }}</template>
         </el-table-column>
         <el-table-column label="近 24h" width="110" align="right">

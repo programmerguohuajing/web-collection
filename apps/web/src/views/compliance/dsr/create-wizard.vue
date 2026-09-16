@@ -183,7 +183,7 @@ onMounted(async () => {
 
 <template>
   <div class="dsr-wizard">
-    <el-steps :active="step" align-center finish-status="success" simple>
+    <el-steps :active="step" align-center finish-status="success" simple class="dsr-wizard-steps">
       <el-step title="类型与主体" />
       <el-step title="预览与模式" />
       <el-step title="摘要确认" />
@@ -291,6 +291,96 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.dsr-wizard-steps {
+  padding: 12px 16px;
+  background: var(--c-surface-2, #f8fafc);
+  border-radius: 8px;
+  border: 1px solid var(--c-border-2, #e2e8f0);
+}
+
+.dsr-wizard :deep(.el-step.is-simple) {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 0%;
+}
+
+.dsr-wizard :deep(.el-step.is-simple .el-step__head) {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+  flex: 0 0 auto;
+}
+
+.dsr-wizard :deep(.el-step.is-simple .el-step__icon) {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.dsr-wizard :deep(.el-step.is-simple .el-step__icon.is-text) {
+  border: 1.5px solid var(--el-border-color, #cbd5e1);
+}
+
+.dsr-wizard :deep(.el-step.is-simple.is-process .el-step__icon) {
+  background: var(--el-color-primary, #4f46e5);
+  border-color: var(--el-color-primary, #4f46e5);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
+}
+
+.dsr-wizard :deep(.el-step.is-simple.is-finish .el-step__icon) {
+  background: var(--el-color-primary-light-9, #eef2ff);
+  border-color: var(--el-color-primary, #4f46e5);
+  color: var(--el-color-primary, #4f46e5);
+}
+
+.dsr-wizard :deep(.el-step.is-simple.is-wait .el-step__icon) {
+  background: var(--el-fill-color-lighter, #f1f5f9);
+  border-color: var(--el-border-color-lighter, #cbd5e1);
+  color: var(--el-text-color-placeholder, #94a3b8);
+}
+
+.dsr-wizard :deep(.el-step.is-simple .el-step__main) {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.dsr-wizard :deep(.el-step.is-simple .el-step__title) {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap !important;
+  word-break: keep-all !important;
+  max-width: none !important;
+  line-height: 1.4;
+}
+
+.dsr-wizard :deep(.el-step.is-simple.is-process .el-step__title) {
+  color: var(--el-text-color-primary, #0f172a);
+  font-weight: 600;
+}
+
+.dsr-wizard :deep(.el-step.is-simple.is-finish .el-step__title) {
+  color: var(--el-color-primary, #4f46e5);
+}
+
+.dsr-wizard :deep(.el-step.is-simple.is-wait .el-step__title) {
+  color: var(--el-text-color-secondary, #64748b);
+}
+
+.dsr-wizard :deep(.el-step.is-simple .el-step__arrow) {
+  flex: 0 0 auto;
+  margin: 0 12px;
+  color: var(--el-text-color-placeholder, #cbd5e1);
+}
+
 .step-body { margin-top: 18px; }
 .wizard-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .form-hint-line { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; line-height: 1.4; }
