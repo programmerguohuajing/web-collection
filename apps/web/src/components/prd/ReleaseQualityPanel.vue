@@ -19,25 +19,37 @@ const appOptions = ref([])
 async function load() {
   loading.value = true
   try {
-    // 未选应用时默认取「近期有实际上报」的第一个应用：
-    // 复用发布列表接口（带 events 计数），避免落到只有登记没有数据的脏应用上。
-    if (!store.appId) {
-      const releasesData = await api('/api/analytics/releases?page=1&pageSize=50', { requestKey: 'rq:recent' }).catch(() => [])
-      const rows = Array.isArray(releasesData) ? releasesData : releasesData?.items || []
-      const activeAppId = rows.find(row => Number(row.events || 0) > 0 && (row.app_id || row.appId))?.app_id || rows.find(row => row.app_id || row.appId)?.app_id
-      if (activeAppId) store.appId = String(activeAppId)
-    }
-    const params = new URLSearchParams(queryFromFilters({ dim: dim.value }, ['appId', 'release', 'startTime', 'endTime']))
-    const result = await api(`/api/releases/quality?${params}`, { requestKey: 'rq:list' })
-    data.value = result
-    // 应用选项（全量列表，供手动切换）
+    // 1. 应用选项（全量列表，供手动切换及自动选中）
     if (!appOptions.value.length) {
       const apps = await api('/api/applications', { requestKey: 'rq:apps' }).catch(() => [])
       const list = Array.isArray(apps) ? apps : apps?.items || []
       appOptions.value = list.map(item => ({ id: item.app_id || item.appId, count: Number(item.release_count || item.releaseCount || 0) }))
     }
+    // 2. 若未选应用，优先从全量应用列表中选中第一个（兼容新建的无数据服务）
+    if (!store.appId) {
+      if (appOptions.value.length && appOptions.value[0]?.id) {
+        store.appId = String(appOptions.value[0].id)
+      } else {
+        const releasesData = await api('/api/analytics/releases?page=1&pageSize=50', { requestKey: 'rq:recent' }).catch(() => [])
+        const rows = Array.isArray(releasesData) ? releasesData : releasesData?.items || []
+        const activeAppId = rows.find(row => row.app_id || row.appId)?.app_id || rows.find(row => row.app_id || row.appId)?.appId
+        if (activeAppId) store.appId = String(activeAppId)
+      }
+    }
+    // 3. 若已有选中应用，则请求质量数据；否则设置为空质量数据，避免未选应用触发 400 错误
+    if (store.appId) {
+      const params = new URLSearchParams(queryFromFilters({ dim: dim.value }, ['appId', 'release', 'startTime', 'endTime']))
+      const result = await api(`/api/releases/quality?${params}`, { requestKey: 'rq:list' })
+      data.value = result
+    } else {
+      data.value = {
+        baseline: { errorsPerKSession: null },
+        summary: { versions: 0, watching: 0, rollback: 0, converge: 0 },
+        items: []
+      }
+    }
     // 默认选中最新两个版本供对比
-    const versions = (result?.items || []).map(item => item.version)
+    const versions = (data.value?.items || []).map(item => item.version)
     if (!compareForm.a) compareForm.a = versions[0] || ''
     if (!compareForm.b) compareForm.b = versions[1] || ''
   } catch (error) {
