@@ -77,7 +77,7 @@ watch(refreshVersion, load)
       <el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.ts) }}</template></el-table-column>
       <el-table-column prop="name" label="级别" width="90"><template #default="{ row }"><el-tag :type="levelTagType(row.name)" size="small">{{ levelLabel(row.name) }}</el-tag></template></el-table-column>
       <el-table-column label="内容" min-width="320"><template #default="{ row }"><OverflowTip :text="text(row.message)" /></template></el-table-column>
-      <el-table-column label="应用" width="130"><template #default="{ row }">{{ text(row.appId ?? row.app_id) }}</template></el-table-column>
+      <el-table-column label="应用" min-width="140"><template #default="{ row }"><OverflowTip :text="text(row.appId ?? row.app_id)" /></template></el-table-column>
       <el-table-column label="版本" width="110"><template #default="{ row }">{{ text(row.release ?? row.release_name) }}</template></el-table-column>
       <el-table-column label="用户" width="130"><template #default="{ row }">{{ text(row.userId ?? row.user_id) }}</template></el-table-column>
       <el-table-column label="会话" min-width="180"><template #default="{ row }"><OverflowTip :text="text(row.sessionId ?? row.session_id)" /></template></el-table-column>
