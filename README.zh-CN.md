@@ -296,3 +296,53 @@ Web Collection SDK 通过 npm 包 [`@web-collection/sdk`](https://www.npmjs.com/
 | `pnpm --filter @web-collection/sdk build` | 单独构建 SDK |
 | `pnpm --filter @web-collection/web build` | 单独构建前端控制台 |
 
+
+## 🐳 容器化部署
+
+仓库已提供完整容器部署资产：根目录多阶段 `Dockerfile`、`deploy/self-hosted/docker-compose.yml`，以及 `deploy/k8s` Kubernetes 清单。
+
+### Docker 镜像
+
+```bash
+docker build -t web-collection:v0.5.0 -t web-collection:latest .
+docker run -d --name web-collection --restart unless-stopped \
+  -p 8787:8787 \
+  -e DATABASE_URL='postgresql://user:pass@db-host:5432/web_collection' \
+  -e ADMIN_API_KEY='replace-with-a-strong-secret' \
+  -e CORS_ORIGIN='https://monitor.example.com' \
+  web-collection:v0.5.0
+```
+
+镜像基于 `node:20-alpine` 两阶段构建，构建 Web 控制台与 SDK；运行阶段执行 `node apps/api/src/index.js`，监听 `8787`，并通过 `/health` 做容器健康检查。
+
+首次部署需初始化数据库：
+
+```bash
+docker exec web-collection pnpm --filter @web-collection/api db:init
+curl http://127.0.0.1:8787/health
+```
+### Docker Compose（单机私有化推荐）
+
+```bash
+cd deploy/self-hosted
+docker compose up -d --build
+docker compose ps
+docker compose logs -f api
+```
+
+Compose 会启动 PostgreSQL 16 与 Web Collection，并使用 `pgdata` 命名卷持久化数据库。正式环境必须修改默认数据库密码、`ADMIN_API_KEY`、`CORS_ORIGIN` 及其他密钥；不要原样使用示例配置暴露到公网。除非明确要删除数据库，否则不要执行 `docker compose down -v`。
+
+### Kubernetes
+
+`deploy/k8s` 已提供 `ConfigMap`、`Secret`、`Deployment`、`Service`、`Ingress` 与 `Kustomize`。默认 Deployment 为 2 副本，readiness/liveness 均检查 `/health`。
+
+```bash
+docker tag web-collection:latest your-registry.example.com/web-collection:v0.5.0
+docker push your-registry.example.com/web-collection:v0.5.0
+# 更新 deployment.yaml 镜像、secret.yaml 密钥、ingress.yaml 域名/TLS
+kubectl apply -k deploy/k8s
+kubectl get pods -l app.kubernetes.io/name=web-collection
+kubectl logs -l app.kubernetes.io/name=web-collection --tail=100 -f
+```
+
+生产环境不要把真实密钥提交到 `deploy/k8s/secret.yaml`，应使用集群 Secret 管理方案。详细说明见 `deploy/k8s/README.md` 与 `deploy/self-hosted/README.md`。

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-collection-config
+  namespace: default
+  labels:
+    app.kubernetes.io/name: web-collection
+    app.kubernetes.io/component: api
+data:
+  PORT: "8787"
+  NODE_ENV: "production"
+  CORS_ORIGIN: "*"
+  WEB_DIST: "/app/apps/web/dist"
+  SDK_DIST: "/app/packages/sdk/dist"
+  # ---- 白标与出厂品牌设置（可选） ----
+  BRAND_NAME: "Web Collection"
+  BRAND_SHORT_NAME: "YC"
+  BRAND_PRIMARY_COLOR: "#4f46e5"
+  BRAND_LOGIN_SUBTITLE: "前端遥测平台"

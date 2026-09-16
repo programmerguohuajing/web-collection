@@ -720,3 +720,63 @@ createEys({
 - 也可经远程采集配置（`collect-config` 的 `otlp` 块）在运行期开启；`enabled` 默认 false，**绝不会因配置故障误开**。
 - `http/protobuf` 暂不支持，会跳过并告警；端点异常不影响主采集（失败安全）。
 - 适用于已接入 OTel 体系、想把前端 span/指标并入统一可观测平台的团队。
+
+## 🐳 17. 容器化部署与运维
+
+Web Collection 支持三种容器化生产部署：连接外部 PostgreSQL 的单 Docker 容器、适合单机私有化的 Docker Compose，以及 Kubernetes 集群部署。
+
+### 17.1 镜像运行约定
+
+根目录 `Dockerfile` 使用 `node:20-alpine` 两阶段构建。Builder 安装 `pnpm@11.7.0`、monorepo 依赖并构建 Web 控制台与 SDK；Runner 执行：
+
+```text
+node apps/api/src/index.js
+```
+
+镜像默认 `PORT=8787`、`WEB_DIST=/app/apps/web/dist`、`SDK_DIST=/app/packages/sdk/dist`，并每 30 秒访问一次 `http://localhost:8787/health` 做健康检查。
+
+### 17.2 生产环境配置
+
+至少需要配置可访问的 PostgreSQL `DATABASE_URL` 与强随机 `ADMIN_API_KEY`。同时应检查 `CORS_ORIGIN`、`ALERT_SECRET_MASTER_KEY`、账号/RBAC 密钥、AI Provider Key、告警通道凭据及实际使用的 `BRAND_*` 白标变量。
+
+不要把密钥直接写入镜像。应通过 Docker 环境变量、受权限保护的 env 文件、Kubernetes Secret 或企业 Secret Manager 注入。
+### 17.3 Docker / Compose 操作
+
+单容器部署首次上线后执行：
+
+```bash
+docker exec web-collection pnpm --filter @web-collection/api db:init
+docker logs -f web-collection
+curl http://127.0.0.1:8787/health
+```
+
+单机私有化推荐 Compose：
+
+```bash
+cd deploy/self-hosted
+docker compose up -d --build
+docker compose ps
+docker compose logs -f api
+```
+
+Compose 自带 PostgreSQL 16，并将数据写入 `pgdata` 命名卷。正式环境先修改所有默认密码与密钥，并按 PostgreSQL 标准策略备份数据。除非明确需要清库，不要执行 `docker compose down -v`。
+
+### 17.4 Kubernetes
+
+`deploy/k8s` 默认部署 2 个应用副本，readiness/liveness 都检查 `/health`；Service 把集群 80 端口映射到容器 `8787`，NGINX Ingress 示例允许最大 20 MB 请求体。
+```bash
+kubectl apply -k deploy/k8s
+kubectl get pods -l app.kubernetes.io/name=web-collection
+kubectl get svc,ingress -l app.kubernetes.io/name=web-collection
+kubectl logs -l app.kubernetes.io/name=web-collection --tail=100 -f
+```
+
+上线前更新 `deployment.yaml` 镜像、`configmap.yaml` 普通配置、Secret 管理方案，以及 `ingress.yaml` 的域名/TLS。不要把真实生产密钥提交到仓库。
+
+### 17.5 升级、回滚与 TLS
+
+生产环境应使用不可变版本 tag，不要只依赖 `latest`。升级后至少验证 `/health`、控制台首页、`/brand.js`、SDK 静态文件及一条测试 `/api/collect` 链路。失败时回滚到上一已验证镜像；涉及数据库结构变更时，升级前先备份并确认 migration 兼容性。
+
+生产环境通常应由 NGINX、Ingress Controller 或云负载均衡终止 HTTPS。建议控制台与采集 API 尽量同源，明确配置 `CORS_ORIGIN`，并为会话回放上传预留足够请求体上限。
+
+详细模板见 `deploy/self-hosted/README.md` 与 `deploy/k8s/README.md`。

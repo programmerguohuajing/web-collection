@@ -720,3 +720,63 @@ createEys({
 - Can also be enabled at runtime via remote collect-config (`otlp` block); `enabled` defaults to false, **never accidentally turned on by a config fault**.
 - `http/protobuf` is not supported yet (skipped with a warning); a bad endpoint never breaks the main collection (fails safe).
 - For teams already on OTel who want frontend spans/metrics merged into their unified observability platform.
+
+## 🐳 17. Containerized Deployment & Operations
+
+Web Collection supports three production container patterns: a standalone Docker container connected to external PostgreSQL, the bundled Docker Compose stack for a single host, and Kubernetes for clustered deployment.
+
+### 17.1 Image runtime contract
+
+The root `Dockerfile` uses a two-stage `node:20-alpine` build. The builder installs `pnpm@11.7.0`, monorepo dependencies, and builds the Web console plus SDK; the runner executes:
+
+```text
+node apps/api/src/index.js
+```
+
+The image defaults to `PORT=8787`, `WEB_DIST=/app/apps/web/dist`, and `SDK_DIST=/app/packages/sdk/dist`, with a health check against `http://localhost:8787/health` every 30 seconds.
+
+### 17.2 Production configuration
+
+At minimum configure a reachable PostgreSQL `DATABASE_URL` and a strong `ADMIN_API_KEY`. Also review `CORS_ORIGIN`, `ALERT_SECRET_MASTER_KEY`, account/RBAC secrets, AI provider keys, alert-channel credentials, and any `BRAND_*` white-label variables in use.
+
+Do not bake secrets into the image. Inject them through Docker environment variables, a permission-protected env file, Kubernetes Secrets, or your platform secret manager.
+### 17.3 Docker / Compose operations
+
+After the first standalone-container deployment, initialize and verify with:
+
+```bash
+docker exec web-collection pnpm --filter @web-collection/api db:init
+docker logs -f web-collection
+curl http://127.0.0.1:8787/health
+```
+
+For a single self-hosted server, use Compose:
+
+```bash
+cd deploy/self-hosted
+docker compose up -d --build
+docker compose ps
+docker compose logs -f api
+```
+
+The Compose stack includes PostgreSQL 16 and stores data in the `pgdata` named volume. Change all default credentials before production and back up PostgreSQL using your normal policy. Avoid `docker compose down -v` unless you intentionally want to remove the database volume.
+
+### 17.4 Kubernetes
+
+The `deploy/k8s` manifests run 2 application replicas by default. Readiness and liveness probe `/health`; Service maps cluster port 80 to container port `8787`; the NGINX Ingress sample allows request bodies up to 20 MB.
+```bash
+kubectl apply -k deploy/k8s
+kubectl get pods -l app.kubernetes.io/name=web-collection
+kubectl get svc,ingress -l app.kubernetes.io/name=web-collection
+kubectl logs -l app.kubernetes.io/name=web-collection --tail=100 -f
+```
+
+Before deployment, update the image in `deployment.yaml`, normal settings in `configmap.yaml`, your Secret-management integration, and the public host/TLS settings in `ingress.yaml`. Do not commit real production credentials to the repository.
+
+### 17.5 Upgrade, rollback, and TLS
+
+Use immutable version tags in production rather than relying only on `latest`. After every upgrade verify `/health`, console loading, `/brand.js`, SDK static files, and a test `/api/collect` flow. If the release fails, roll back to the previous known-good image. For schema-affecting releases, back up PostgreSQL first and confirm migration compatibility before reverting application code.
+
+Production deployments should normally terminate HTTPS at NGINX, an Ingress Controller, or a managed load balancer. Keep the console and collection API on the same public origin where possible, configure `CORS_ORIGIN` deliberately, and allow sufficient request-body size for replay uploads.
+
+See `deploy/self-hosted/README.md` and `deploy/k8s/README.md` for the maintained deployment templates.
