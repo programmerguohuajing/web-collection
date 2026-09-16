@@ -43,8 +43,9 @@ import { saveExperiment, listExperiments, getExperiment, getExperimentReport, ch
 import { getUsage, getDaily, getByApp, listPlans, getTeamPlan, putTeamPlan, listQuotaEvents } from './services/metering-service.js'
 import { getBrand, saveBrand, resetBrand, publicBrand, whiteLabelEnabled } from './services/branding-service.js'
 
-/** 服务监听端口 */
+/** 服务监听端口与 IP */
 const port = Number(process.env.PORT || 8787)
+const host = process.env.HOST || '0.0.0.0'
 /** 公开采集接口的 token（未配置时默认放行） */
 const publicToken = process.env.COLLECT_TOKEN || ''
 /** 前端静态资源目录 */
@@ -890,8 +891,8 @@ await initDatabase()
 await ensureBuiltinAdmin()
 startSloScheduler()
 startSyntheticScheduler()
-app.listen(port, () => {
-  console.log(`Web Collection listening on http://127.0.0.1:${port}`)
+app.listen(port, host, () => {
+  console.log(`Web Collection listening on http://${host}:${port}`)
 })
 const cleanupTimer = setInterval(() => {
   cleanupExpiredData().catch(error => console.error('data cleanup failed', error))

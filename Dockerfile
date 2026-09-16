@@ -29,6 +29,7 @@ RUN apk add --no-cache postgresql postgresql-contrib su-exec
 
 ENV NODE_ENV=production \
     PORT=8787 \
+    HOST=0.0.0.0 \
     WEB_DIST=/app/apps/web/dist \
     SDK_DIST=/app/packages/sdk/dist
 
