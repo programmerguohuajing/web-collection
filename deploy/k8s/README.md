@@ -27,15 +27,24 @@
 
 ## 1. 镜像构建与推送 (Docker)
 
-在项目根目录下，执行多阶段镜像构建：
+### 自动化发布 (Release CI/CD)
+
+项目在 GitHub Actions 中整合了 Release 版本自动化镜像构建：
+- 当推送以 `v*.*.*` 格式命名的版本 Tag（例如 `git tag v0.5.0 && git push origin v0.5.0`）时，`.github/workflows/release-npm.yml` 工作流会自动触发。
+- 构建好的镜像将自动发布到 **GitHub Container Registry (GHCR)**：
+  - `ghcr.io/<owner>/web-collection:v0.5.0`
+  - `ghcr.io/<owner>/web-collection:latest`
+
+### 本地手动构建
+
+在项目根目录下，使用快捷 npm 命令或辅助脚本执行：
 
 ```bash
-# 1. 构建本地 Docker 镜像
-docker build -t web-collection:v0.5.0 -t web-collection:latest .
+# 自动读取 package.json 版本并打 Tag
+pnpm docker:build
 
-# 2. 标记镜像并推送到镜像仓库（例如 Docker Hub 或私有 Registry）
-docker tag web-collection:latest your-registry.domain.com/library/web-collection:v0.5.0
-docker push your-registry.domain.com/library/web-collection:v0.5.0
+# 指定目标镜像 Registry 并推送
+node scripts/build-docker-release.js --push --registry your-registry.domain.com/library
 ```
 
 ---
