@@ -3,7 +3,8 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   events: { type: Array, default: () => [] },
-  trend: { type: Array, default: () => null }
+  trend: { type: Array, default: () => null },
+  hiddenSeries: { type: Object, default: () => ({}) }
 })
 const canvasElement = ref(null)
 let observer
@@ -50,7 +51,14 @@ function draw() {
       if (!Number.isFinite(timestamp) || timestamp < rangeStart || timestamp > rangeEnd) continue
       const bucketIndex = Math.min(23, Math.max(0, Math.floor((timestamp - rangeStart) / rangeSpan * 24)))
       const bucket = buckets[bucketIndex]
-      if (event.type === 'error') bucket.errors++
+      if (
+        event.type === 'error' ||
+        event.metric === 'error' ||
+        event.name === 'error' ||
+        (event.type === 'log' && (event.metric === 'error' || event.name === 'error'))
+      ) {
+        bucket.errors++
+      }
       if (
         event.type === 'api' ||
         event.metric === 'fetch' ||
@@ -62,10 +70,11 @@ function draw() {
     }
   }
 
-  const series = [
-    { color: '#ef4444', values: buckets.map(item => Number(item.errors) || 0) },
-    { color: '#1769e0', values: buckets.map(item => Number(item.requests) || 0) }
+  const allSeries = [
+    { key: 'errors', color: '#ef4444', values: buckets.map(item => Number(item.errors) || 0) },
+    { key: 'requests', color: '#1769e0', values: buckets.map(item => Number(item.requests) || 0) }
   ]
+  const series = allSeries.filter(item => !props.hiddenSeries?.[item.key])
 
   const max = Math.max(1, ...series.flatMap(item => item.values))
 
@@ -105,7 +114,7 @@ function draw() {
 
 onMounted(() => { nextTick(draw); observer = new ResizeObserver(draw); observer.observe(canvasElement.value) })
 onBeforeUnmount(() => observer?.disconnect())
-watch([() => props.events, () => props.trend], draw, { deep: true })
+watch([() => props.events, () => props.trend, () => props.hiddenSeries], draw, { deep: true })
 </script>
 
 <template><canvas ref="canvasElement" class="trend-canvas" aria-label="错误与请求趋势图"></canvas></template>
