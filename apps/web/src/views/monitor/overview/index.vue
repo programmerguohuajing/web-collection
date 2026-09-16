@@ -108,7 +108,7 @@ const ingestionStalledText = computed(() => {
 
   <section class="grid overview-insights">
     <el-card shadow="never" class="panel trend-panel">
-      <template #header><div class="panel-head"><div><h2>错误 &amp; 请求趋势</h2><small>last 24h</small></div><div class="chart-legend"><span class="red-dot" :class="{ inactive: hiddenSeries.errors }" title="点击显示/隐藏错误数" @click="toggleSeries('errors')">错误数</span><span class="blue-dot" :class="{ inactive: hiddenSeries.requests }" title="点击显示/隐藏请求数" @click="toggleSeries('requests')">请求数</span></div></div></template>
+      <template #header><div class="panel-head"><div><h2>错误 &amp; 请求趋势</h2><small>{{ store.rangeLabel }}</small></div><div class="chart-legend"><span class="red-dot" :class="{ inactive: hiddenSeries.errors }" title="点击显示/隐藏错误数" @click="toggleSeries('errors')">错误数</span><span class="blue-dot" :class="{ inactive: hiddenSeries.requests }" title="点击显示/隐藏请求数" @click="toggleSeries('requests')">请求数</span></div></div></template>
       <TrendChart :trend="summary?.trend" :events="events" :hidden-series="hiddenSeries" />
     </el-card>
     <OverviewDistribution :summary="summary" :events="events" />
