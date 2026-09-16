@@ -9,7 +9,7 @@
     "deploy": "wrangler deploy --config wrangler.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc",
     "typecheck": "tsc --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test .tmp-test/test"
+    "test": "tsc -p tsconfig.test.json && node --test .tmp-test/test/*.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
