@@ -52,6 +52,18 @@ if (isDryRun) {
   process.exit(0)
 }
 
+// 检查 Docker Daemon 守护进程是否在运行
+try {
+  execSync('docker info', { stdio: 'ignore' })
+} catch {
+  console.error(`\n❌ 构建失败: 未检测到正在运行的 Docker 服务 (Daemon)。`)
+  console.error(`💡 解决方法:`)
+  console.error(`  1. 请打开 Windows 系统的 "Docker Desktop" 应用程序。`)
+  console.error(`  2. 等待界面左下角/系统托盘显示状态为 "Docker Desktop is running" (绿灯)。`)
+  console.error(`  3. 重新在终端运行: pnpm run docker:build\n`)
+  process.exit(1)
+}
+
 try {
   console.log(`\n开始构建镜像...`)
   execSync(buildCmd, { stdio: 'inherit', cwd: rootDir })
