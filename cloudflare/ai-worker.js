@@ -59,7 +59,7 @@ export default {
       const status = Number(error?.status) || 500
       // 5xx 落日志：否则 CF 控制台/wrangler tail 看不到根因（如 subrequest 超限、绑定缺失）
       console.error(`[ai] ${request.method} ${url.pathname} failed (${status}):`, error?.stack || error?.message || error)
-      return cors(json({ error: status >= 500 ? 'internal error' : (error?.message || 'error') }, status), request)
+      return cors(json({ message: error?.message || 'error', error: error?.message || 'error' }, status), request)
     }
   },
 
@@ -469,7 +469,9 @@ async function saveAiSettings(env, input) {
     config.ai = normalized
     config.ai_keys_v = 1
     if (Object.keys(mergedKeys).length) {
-      config.ai_keys = await encryptSecrets(mergedKeys, masterKey)
+      if (masterKey) {
+        config.ai_keys = await encryptSecrets(mergedKeys, masterKey)
+      }
     } else {
       delete config.ai_keys
     }
@@ -479,7 +481,7 @@ async function saveAiSettings(env, input) {
   } catch (error) {
     if (error?.status) throw error
     console.error('saveAiSettings failed:', String(error?.stack || error?.message || error))
-    throw Object.assign(new Error('保存 AI 设置失败'), { status: 500 })
+    throw Object.assign(new Error(`保存 AI 设置失败: ${error?.message || error}`), { status: 500 })
   }
   return readAiSettings(env)
 }
