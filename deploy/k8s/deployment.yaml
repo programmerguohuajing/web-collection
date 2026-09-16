@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-collection-api
+  namespace: default
+  labels:
+    app.kubernetes.io/name: web-collection
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web-collection
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web-collection
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: api
+          image: web-collection:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8787
+              name: http
+          envFrom:
+            - configMapRef:
+                name: web-collection-config
+            - secretRef:
+                name: web-collection-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3

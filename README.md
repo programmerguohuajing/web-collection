@@ -261,3 +261,53 @@ For the full integration tutorial, all configuration options, and the API refere
 | `pnpm --filter @web-collection/sdk build` | Build the SDK only |
 | `pnpm --filter @web-collection/web build` | Build the frontend console only |
 
+
+## 🐳 Containerized Deployment
+
+The repository includes production-ready container assets: the multi-stage root `Dockerfile`, `deploy/self-hosted/docker-compose.yml`, and Kubernetes manifests under `deploy/k8s`.
+
+### Docker image
+
+```bash
+docker build -t web-collection:v0.5.0 -t web-collection:latest .
+docker run -d --name web-collection --restart unless-stopped \
+  -p 8787:8787 \
+  -e DATABASE_URL='postgresql://user:pass@db-host:5432/web_collection' \
+  -e ADMIN_API_KEY='replace-with-a-strong-secret' \
+  -e CORS_ORIGIN='https://monitor.example.com' \
+  web-collection:v0.5.0
+```
+
+The image uses a two-stage `node:20-alpine` build, produces the Web console and SDK, runs `node apps/api/src/index.js`, exposes port `8787`, and includes a `/health` container health check.
+
+Initialize the database on the first deployment:
+
+```bash
+docker exec web-collection pnpm --filter @web-collection/api db:init
+curl http://127.0.0.1:8787/health
+```
+### Docker Compose (recommended for single-host self-hosting)
+
+```bash
+cd deploy/self-hosted
+docker compose up -d --build
+docker compose ps
+docker compose logs -f api
+```
+
+The Compose stack starts PostgreSQL 16 and Web Collection together and persists PostgreSQL data in the `pgdata` named volume. Before production use, change the default database password, `ADMIN_API_KEY`, `CORS_ORIGIN`, and other secrets. Do not expose the sample defaults unchanged on a public host. Avoid `docker compose down -v` unless you intentionally want to delete the database volume.
+
+### Kubernetes
+
+`deploy/k8s` includes `ConfigMap`, `Secret`, `Deployment`, `Service`, `Ingress`, and `Kustomize` manifests. The default Deployment runs 2 replicas and uses `/health` for readiness and liveness probes.
+
+```bash
+docker tag web-collection:latest your-registry.example.com/web-collection:v0.5.0
+docker push your-registry.example.com/web-collection:v0.5.0
+# update deployment.yaml image, secret.yaml credentials, and ingress.yaml host/TLS
+kubectl apply -k deploy/k8s
+kubectl get pods -l app.kubernetes.io/name=web-collection
+kubectl logs -l app.kubernetes.io/name=web-collection --tail=100 -f
+```
+
+Do not commit real production credentials to `deploy/k8s/secret.yaml`; use your cluster's secret-management mechanism. See `deploy/k8s/README.md` and `deploy/self-hosted/README.md` for maintained deployment templates.
