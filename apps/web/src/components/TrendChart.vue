@@ -123,8 +123,10 @@ function draw() {
   }
 
   ctx.fillStyle = '#8491a3'
+  ctx.textAlign = 'center'
   const displayXLabels = xLabels.length === 5 ? xLabels : ['24小时前', '18小时前', '12小时前', '6小时前', '现在']
-  displayXLabels.forEach((label, index) => ctx.fillText(label, pad.left + chartWidth * index / 4 - 14, height - 8))
+  displayXLabels.forEach((label, index) => ctx.fillText(label, pad.left + chartWidth * index / 4, height - 8))
+  ctx.textAlign = 'start'
 }
 
 onMounted(() => { nextTick(draw); observer = new ResizeObserver(draw); observer.observe(canvasElement.value) })

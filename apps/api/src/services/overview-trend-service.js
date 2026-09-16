@@ -24,24 +24,24 @@ export async function getOverviewTrend(filters = {}) {
   let rangeEnd = userEnd || now
   let rangeStart = userStart || (rangeEnd - 24 * 3600000)
 
-  // 若未指定自定义时间范围，且在 [now - 24h, now] 范围内无数据，
-  // 从数据库最新事件时间戳推导 24h 时间窗，避免 Demo/测试数据时间戳偏早绘制空画布。
-  if (!userStart && !userEnd) {
-    try {
-      const maxRow = await all(`select max(ts) as max_ts from events`).catch(() => [])
-      const maxTs = Number(maxRow[0]?.max_ts || 0)
-      const hasRecent = await all(`select 1 from events where ts >= ? and ts <= ? limit 1`, [rangeStart, rangeEnd]).catch(() => [])
-      if (!hasRecent.length && maxTs > 0) {
-        rangeEnd = maxTs
-        rangeStart = Math.max(0, maxTs - 24 * 3600000)
-      }
-    } catch {
-      // ignore fallback error
-    }
-  }
-
   if (rangeStart >= rangeEnd) rangeStart = rangeEnd - 24 * 3600000
   const span = Math.max(1, rangeEnd - rangeStart)
+
+  // 若在指定时间窗口内无数据且窗口 <= 24.5h，尝试回退到数据库最新事件时间戳推导 24h 时间窗，避免 Demo/测试数据时间戳偏早绘制空画布
+  try {
+    const hasRecent = await all(`select 1 from events where ts >= ? and ts <= ? limit 1`, [rangeStart, rangeEnd]).catch(() => [])
+    if (!hasRecent.length && span <= 24.5 * 3600000) {
+      const maxRow = await all(`select max(ts) as max_ts from events`).catch(() => [])
+      const maxTs = Number(maxRow[0]?.max_ts || 0)
+      if (maxTs > 0) {
+        rangeEnd = maxTs
+        rangeStart = Math.max(0, maxTs - span)
+      }
+    }
+  } catch {
+    // ignore fallback error
+  }
+
   const bucketSpan = span / 24
 
   const whereParts = ['ts >= ?', 'ts <= ?']
@@ -70,10 +70,14 @@ export async function getOverviewTrend(filters = {}) {
     group by bucket_idx, type, metric, name
   `
 
+  const isMultiDay = span > 24.5 * 3600000
   const buckets = Array.from({ length: 24 }, (_, i) => {
     const bucketTs = rangeStart + i * bucketSpan
     const d = new Date(bucketTs)
-    const label = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    const pad = n => String(n).padStart(2, '0')
+    const label = isMultiDay
+      ? `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+      : `${pad(d.getHours())}:${pad(d.getMinutes())}`
     return { ts: Math.round(bucketTs), label, errors: 0, requests: 0, users: 0 }
   })
 
@@ -98,7 +102,8 @@ export async function getOverviewTrend(filters = {}) {
         row.type === 'api' ||
         row.metric === 'fetch' ||
         row.metric === 'xhr' ||
-        (row.type === 'perf' && (row.metric === 'fetch' || row.metric === 'xhr'))
+        row.metric === 'resource' ||
+        (row.type === 'perf' && (row.metric === 'fetch' || row.metric === 'xhr' || row.metric === 'resource'))
       ) {
         bucket.requests += count
       }

@@ -25,3 +25,16 @@ test('getOverviewTrend supports filter parameters', async () => {
   })
   assert.equal(buckets.length, 24)
 })
+
+test('getOverviewTrend formats bucket labels as MM-DD for multi-day range', async () => {
+  const now = Date.now()
+  const buckets = await getOverviewTrend({
+    startTime: now - 90 * 86400000,
+    endTime: now
+  })
+  assert.equal(buckets.length, 24)
+  for (const b of buckets) {
+    assert.match(b.label, /^\d{2}-\d{2}$/)
+  }
+})
+
