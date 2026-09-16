@@ -453,8 +453,19 @@ export async function api(path, options = {}) {
   }
   try {
     // D2 账号体系：刷新令牌以 HttpOnly Cookie（eys_rt）携带，需随请求一并发送；
-    // 同源 SPA 始终携带，对既有 API Key 流程无副作用。
-    const res = await fetch(`${apiBase}${path}`, { ...fetchOptions, credentials: 'include', ...(signal ? { signal } : {}) })
+    // 同时自动注入 localStorage 持久化的 Authorization Bearer 令牌与 x-team-id 团队头。
+    const headers = new Headers(fetchOptions.headers || {})
+    if (typeof localStorage !== 'undefined') {
+      const token = localStorage.getItem('eys_at')
+      if (token && !headers.has('Authorization') && !headers.has('authorization')) {
+        headers.set('Authorization', `Bearer ${token}`)
+      }
+      const teamId = localStorage.getItem('currentTeamId')
+      if (teamId && !headers.has('x-team-id')) {
+        headers.set('x-team-id', teamId)
+      }
+    }
+    const res = await fetch(`${apiBase}${path}`, { ...fetchOptions, headers, credentials: 'include', ...(signal ? { signal } : {}) })
     const text = await res.text()
     let body = {}
     if (text) {

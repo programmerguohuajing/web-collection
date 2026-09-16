@@ -131,7 +131,9 @@ export async function saveAiSettings(input) {
     config.ai = normalized
     config.ai_keys_v = 1
     if (Object.keys(mergedKeys).length) {
-      config.ai_keys = await encryptSecrets(mergedKeys, masterKey())
+      if (masterKey()) {
+        config.ai_keys = await encryptSecrets(mergedKeys, masterKey())
+      }
     } else {
       delete config.ai_keys
     }
@@ -144,7 +146,7 @@ export async function saveAiSettings(input) {
   } catch (error) {
     if (error?.status) throw error
     console.error('saveAiSettings failed:', String(error?.stack || error?.message || error))
-    throw Object.assign(new Error('保存 AI 设置失败'), { status: 500 })
+    throw Object.assign(new Error(`保存 AI 设置失败: ${error?.message || error}`), { status: 500 })
   }
   return readAiSettings()
 }
@@ -194,7 +196,9 @@ export async function testAiSettings(input) {
       return [name, { ok: false, error: String(error?.message || error).slice(0, 80), latencyMs: Date.now() - start }]
     }
   })
-  return { results: Object.fromEntries(await Promise.all(probes)) }
+  const results = Object.fromEntries(await Promise.all(probes))
+
+  return { results }
 }
 
 /** POST /settings/models：拉取单个 provider 的模型列表（apiKey 空时回落库中密钥） */
@@ -254,9 +258,17 @@ export async function listProviderModels(input) {
 /** 挂载到 /api/ai 下（settings 管理面三端点沿用外层鉴权中间件） */
 export function settingsRouter() {
   const router = Router()
-  router.get('/settings', async (req, res) => res.json(await readAiSettings()))
-  router.put('/settings', async (req, res) => res.json(await saveAiSettings(req.body)))
-  router.post('/settings/test', async (req, res) => res.json(await testAiSettings(req.body)))
-  router.post('/settings/models', async (req, res) => res.json(await listProviderModels(req.body)))
+  const handle = fn => async (req, res) => {
+    try {
+      res.json(await fn(req, res))
+    } catch (err) {
+      const status = Number(err?.status || err?.statusCode) || 500
+      res.status(status).json({ message: err?.message || '服务器内部错误', error: err?.message || 'error' })
+    }
+  }
+  router.get('/settings', handle(req => readAiSettings()))
+  router.put('/settings', handle(req => saveAiSettings(req.body)))
+  router.post('/settings/test', handle(req => testAiSettings(req.body)))
+  router.post('/settings/models', handle(req => listProviderModels(req.body)))
   return router
 }
