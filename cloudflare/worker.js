@@ -1168,6 +1168,7 @@ async function adminApi(request, env, url) {
   if (path === '/api/teams' && request.method === 'POST') return teamCreate(request, env, auth)
   if (/^\/api\/teams\/[^/]+$/.test(path) && request.method === 'GET') return teamGet(env, auth, decodeURIComponent(path.split('/').at(-1)))
   if (/^\/api\/teams\/[^/]+$/.test(path) && request.method === 'PUT') return teamUpdate(request, env, auth, decodeURIComponent(path.split('/').at(-1)))
+  if (/^\/api\/teams\/[^/]+$/.test(path) && request.method === 'DELETE') return teamDelete(env, auth, decodeURIComponent(path.split('/').at(-1)))
   if (/^\/api\/teams\/[^/]+\/members$/.test(path) && request.method === 'GET') return teamMemberList(env, auth, decodeURIComponent(path.split('/')[3]))
   if (/^\/api\/teams\/[^/]+\/members\/[^/]+\/role$/.test(path) && request.method === 'PUT') return teamMemberRole(request, env, auth, decodeURIComponent(path.split('/')[3]), decodeURIComponent(path.split('/')[5]))
   if (/^\/api\/teams\/[^/]+\/members\/[^/]+\/access-level$/.test(path) && request.method === 'PUT') return teamMemberLevel(request, env, auth, decodeURIComponent(path.split('/')[3]), decodeURIComponent(path.split('/')[5]))
