@@ -1,5 +1,5 @@
-<script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteApplication, deleteRelease, loadGovernance, loadReleases, normalizePageResponse, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease, toList } from '../../../dashboard.js'
 // PRD 04 · 远程采集配置（采集治理内嵌 Tab）
@@ -223,12 +223,19 @@ async function removeRelease(row) {
   await load()
 }
 
+const route = useRoute()
+
 async function cleanup() {
   const result = await runCleanup()
   ElMessage.success(`清理完成：${Object.values(result).reduce((sum, value) => sum + value, 0)} 条`)
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  if (route.query.action === 'create') {
+    editApp()
+  }
+})
 </script>
 
 <template>

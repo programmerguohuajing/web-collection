@@ -52,8 +52,7 @@ async function load() {
 }
 
 function openCreate() {
-  Object.assign(form, { name: '', platform: 'web', endpoint: '', description: '' })
-  dialogOpen.value = true
+  router.push({ path: '/governance', query: { action: 'create' } })
 }
 
 async function createApplication() {
@@ -63,10 +62,13 @@ async function createApplication() {
   }
   saving.value = true
   try {
+    const rawName = form.name.trim()
+    const slug = rawName.toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    const appId = slug.length >= 2 ? slug.slice(0, 48) : `app_${Date.now().toString(36)}`
     await api('/api/applications', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: form.name.trim(), platform: form.platform, endpoint: form.endpoint.trim(), description: form.description.trim() })
+      body: JSON.stringify({ appId, name: rawName, platform: form.platform, endpoint: form.endpoint.trim(), description: form.description.trim() })
     })
     dialogOpen.value = false
     ElMessage.success('应用已创建')

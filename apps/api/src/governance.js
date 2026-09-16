@@ -69,8 +69,12 @@ export async function listApplications(filters = {}) {
 }
 
 export async function saveApplication(input) {
-  const appId = String(input.appId || '').trim().slice(0, 64)
-  if (!appId) throw new Error('appId is required')
+  let appId = String(input.appId || '').trim().slice(0, 64)
+  if (!appId) {
+    const rawName = String(input.name || '').trim()
+    const slug = rawName.toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    appId = slug.length >= 2 ? slug.slice(0, 48) : `app_${randomUUID().slice(0, 8)}`
+  }
   const now = Date.now()
   const sampleRate = clampRate(input.sampleRate)
   const replaySampleRate = clampRate(input.replaySampleRate)

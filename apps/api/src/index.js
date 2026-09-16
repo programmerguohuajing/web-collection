@@ -214,7 +214,11 @@ app.get('/api/applications', async (req, res, next) => {
   } catch (err) { next(err) }
 })
 app.post('/api/applications', async (req, res, next) => {
-  try { res.json(await saveApplication(req.body || {})) } catch (err) { next(err) }
+  try { res.json(await saveApplication(req.body || {})) } catch (err) {
+    const status = Number(err?.statusCode) || 500
+    if (status >= 400 && status < 500) return res.status(status).json({ error: err.message })
+    next(err)
+  }
 })
 app.get('/api/applications/:appId/releases', async (req, res, next) => {
   try { res.json(await listReleases(req.params.appId, req.query)) } catch (err) { next(err) }
