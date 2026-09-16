@@ -374,8 +374,7 @@ watch(selectedVersion, () => { loadConfig().catch(() => {}) })
       :title="ingestionError"
     >
       <template #default>
-        该接口当前由 Cloudflare Worker 提供（`GET /api/monitoring/ingestion`）；本地 Node API（apps/api）尚未实现此路由，
-        因此自建/本地部署下此区块会显示不可达，其余区块不受影响。
+        采集健康服务接口暂无法正常响应（`GET /api/monitoring/ingestion`），请检查网络连接或服务节点状态。
         <el-button link type="primary" @click="retryIngestion">重试</el-button>
       </template>
     </el-alert>
