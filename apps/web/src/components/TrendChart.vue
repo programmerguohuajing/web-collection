@@ -9,6 +9,20 @@ const props = defineProps({
 const canvasElement = ref(null)
 let observer
 
+function getNiceMax(rawMax) {
+  if (rawMax <= 4) return 4
+  const targetTicks = 4
+  const rawStep = rawMax / targetTicks
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const norm = rawStep / mag
+  let step = 1
+  if (norm > 5) step = 10
+  else if (norm > 2.5) step = 5
+  else if (norm > 1.25) step = 2
+  else step = 1
+  return Math.ceil(rawMax / (step * mag)) * (step * mag)
+}
+
 function draw() {
   if (!canvasElement.value) return
   const rect = canvasElement.value.getBoundingClientRect()
@@ -76,7 +90,8 @@ function draw() {
   ]
   const series = allSeries.filter(item => !props.hiddenSeries?.[item.key])
 
-  const max = Math.max(1, ...series.flatMap(item => item.values))
+  const maxVal = Math.max(0, ...series.flatMap(item => item.values))
+  const yMax = getNiceMax(maxVal)
 
   ctx.strokeStyle = '#e8edf3'
   ctx.lineWidth = 1
@@ -85,7 +100,7 @@ function draw() {
   for (let index = 0; index <= 4; index++) {
     const y = pad.top + chartHeight * index / 4
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke()
-    const val = Math.round(max * (4 - index) / 4)
+    const val = Math.round(yMax * (4 - index) / 4)
     ctx.fillText(String(val), 8, y + 4)
   }
 
@@ -101,7 +116,7 @@ function draw() {
     ctx.strokeStyle = item.color; ctx.lineWidth = 2.2; ctx.beginPath()
     item.values.forEach((value, index) => {
       const x = pad.left + chartWidth * index / bucketCount
-      const y = pad.top + chartHeight - value / max * chartHeight
+      const y = pad.top + chartHeight - (value / yMax) * chartHeight
       index ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
     })
     ctx.stroke()
