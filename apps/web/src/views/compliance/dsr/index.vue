@@ -18,7 +18,7 @@ import { QuestionFilled } from '@element-plus/icons-vue'
  */
 const router = useRouter()
 const store = useFilterStore()
-const { dsrEnabled, me } = useAuth()
+const { dsrEnabled, accountsEnabled, isLoggedIn, me } = useAuth()
 
 /** 法定期限 SLA（GDPR 一个月口径，与 packages/dsr-service.js DSR_SLA_DAYS 对齐） */
 const SLA_DAYS = 30
@@ -117,8 +117,14 @@ function canCancel(item) {
 }
 
 async function load() {
-  // BUG-005 修复：能力位关闭时不再发请求（避免 503 噪音）；模板已用 v-if/v-else 只渲染占位提示。
   if (!dsrEnabled.value) return
+  if (!accountsEnabled.value || !isLoggedIn.value) {
+    loading.value = false
+    pageLoading.value = false
+    list.value = []
+    total.value = 0
+    return
+  }
   loading.value = true
   loadError.value = ''
   pageLoading.value = true
@@ -172,6 +178,25 @@ onMounted(load)
       <h1>数据主体权利 · DSR<el-tooltip content="当前部署不支持数据主体权利 DSR（capability: dsr）。DSR（查询 / 导出 / 擦除）需要后端开启 dsr 能力位后使用（Worker 部署需设置 DSR_ENABLED=1），并依赖账号体系 RBAC（ACCOUNTS_ENABLED=1）；本页当前为只读占位，不会发起写操作。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
     </div>
     <template v-if="dsrEnabled">
+      <el-alert
+        v-if="!accountsEnabled"
+        class="section"
+        type="warning"
+        title="账号体系未开启"
+        description="数据主体权利 DSR（工单查询 / 导出 / 擦除）依赖账号体系 RBAC 权限管控与责任主体认定。当前部署未开启账号体系（需服务端设置环境变量 ACCOUNTS_ENABLED=1 并配置 ACCOUNTS_JWT_SECRET）。本页面暂不可用。"
+        show-icon
+        :closable="false"
+      />
+      <el-alert
+        v-else-if="!isLoggedIn"
+        class="section"
+        type="warning"
+        title="需登录账号"
+        description="数据主体权利 DSR 依赖账号身份与角色权限（需要 Admin 及以上角色），请登录具备权限的账号后再进行工单管理与发起操作。"
+        show-icon
+        :closable="false"
+      />
+      <template v-else>
       <KpiGrid :items="kpis" />
       <el-alert v-if="loadError" class="section" type="error" :title="loadError" show-icon />
 
@@ -249,6 +274,7 @@ onMounted(load)
       <el-dialog v-model="wizardOpen" title="发起 DSR 工单" width="680px" :close-on-click-modal="false">
         <CreateWizard @changed="load" />
       </el-dialog>
+      </template>
     </template>
   </div>
 </template>
