@@ -17,7 +17,7 @@ function toResult(data: unknown) {
  *
  * 选用「新增 MCP 工具」而非「新增 HTTP 端点」的理由：
  * 1) MCP 客户端经 tools/list 即可发现模板，无需额外路由/鉴权/CORS 适配；
- * 2) 复用现有 Bearer MCP_AUTH_TOKEN 鉴权与无状态传输，改动面最小、不引入新的攻击面；
+ * 2) 复用现有 Bearer collectKey 鉴权与无状态传输，改动面最小、不引入新的攻击面；
  * 3) 结果天然落在 MCP 协议内，任何 MCP 客户端都能消费，契合「可被第三方 Agent 调用」目标。
  */
 export function registerSkillTools(server: McpServer, ds: DataSource, registry: SkillRegistry): void {

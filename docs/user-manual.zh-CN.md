@@ -693,9 +693,9 @@ const m = eys.monitoring()
 
 - **架构**：独立 Worker 服务 `web-collection-mcp`，包装后端 `/api/*` REST（Plan A `rest` 数据源，带 `x-app-key`）；预留 `d1` 直连实现（只读 SELECT + 脱敏）。
 - **暴露工具（13 个）**：`list_events` / `list_logs` / `get_summary` / `list_issues` / `list_replays` / `list_traces` / `get_analytics_sessions` / `get_analytics_paths` / `get_analytics_click_paths` / `get_analytics_heatmap` / `get_analytics_live` / `list_alerts` / `list_alert_channels`。
-- **鉴权（两层）**：① MCP 端点需 `Authorization: Bearer <MCP_AUTH_TOKEN>`；② 后端调用用 `MCP_API_KEY` 作为 `x-app-key`。
-- **部署**：`cd apps/mcp && npx wrangler secret put MCP_API_KEY / MCP_AUTH_TOKEN --config wrangler.jsonc && npx wrangler deploy --config wrangler.jsonc`。
-- **客户端接入**：传输 `Streamable HTTP`，Endpoint `https://<subdomain>/mcp`，无状态模式（每次请求独立，无需维护 session）。
+- **鉴权**：MCP 客户端直接使用目标应用的采集秘钥作为 `Authorization: Bearer <collectKey>`。MCP Worker 会校验 `applications.collect_key_hash`、锁定解析出的 `app_id`，并把同一个秘钥作为 `x-app-key` 透传到 REST 数据平面。
+- **部署**：`cd apps/mcp && npx wrangler deploy --config wrangler.jsonc`。
+- **客户端接入**：传输 `Streamable HTTP`，Endpoint `https://web-collection-mcp.jingguohua.cc.cd/mcp`，无状态模式（每次请求独立，无需维护 session）。
 
 详见 `apps/mcp/README.md`。
 

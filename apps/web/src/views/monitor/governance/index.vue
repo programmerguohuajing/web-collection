@@ -115,7 +115,7 @@ async function resetKey(row) {
 // ---- MCP 接入（调用时采集秘钥）----
 // MCP 客户端使用本应用的「采集秘钥」作为 Authorization: Bearer 鉴权，无需任何额外配置。
 // 端点为独立的 MCP worker（web-collection-mcp），鉴权后仅能访问该应用数据（按 app_id 锁定）。
-const MCP_ENDPOINT = 'https://web-collection-mcp.jingguohua.workers.dev/mcp'
+const MCP_ENDPOINT = 'https://web-collection-mcp.jingguohua.cc.cd/mcp'
 const mcpDialog = ref(false)
 const mcpAppId = ref('')
 const mcpCollectKey = ref('')

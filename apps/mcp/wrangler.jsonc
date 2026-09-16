@@ -4,7 +4,10 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-21",
   "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": true,
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "web-collection-mcp.jingguohua.cc.cd", "custom_domain": true }
+  ],
   "observability": { "enabled": true },
 
   // D1 绑定：当前 Plan A（REST 包装）不依赖，但预留给未来的 D1DataSource 直连实现，

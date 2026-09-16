@@ -10,7 +10,7 @@
 ## 架构
 
 ```
-MCP Client ──(Streamable HTTP, Bearer MCP_AUTH_TOKEN)──▶ /mcp
+MCP Client ──(Streamable HTTP, Bearer collectKey)──▶ /mcp
                                                        │
                                               Worker fetch handler
                                               (auth gate + CORS)
@@ -47,23 +47,23 @@ MCP Client ──(Streamable HTTP, Bearer MCP_AUTH_TOKEN)──▶ /mcp
 
 ## 鉴权（两层）
 
-1. **MCP 端点保护**：客户端必须带 `Authorization: Bearer <MCP_AUTH_TOKEN>`。未携带或错误返回 401。
-2. **后端 /api/* 调用**：MCP server 以 `MCP_API_KEY` 作为 `x-app-key` 调用后端（即现有 appKey / collectKey）。后端 `cloudflare/worker.js` 的 `collect()` 会以 sha256 比对 `collect_key_hash`。
+1. **MCP 端点保护**：客户端必须带 `Authorization: Bearer <collectKey>`。这里的 `collectKey` 就是目标应用的采集秘钥；服务端会校验 `sha256(collectKey) == applications.collect_key_hash` 并锁定该应用的 `app_id`。
+2. **后端 /api/* 调用**：MCP server 会把本次请求的 `collectKey` 作为 `x-app-key` 调用后端（即现有 appKey / collectKey），不再需要部署期 `MCP_API_KEY` / `MCP_AUTH_TOKEN`。
 
-> 注意：当前后端 `adminApi`（/api/*）部分接口未强制 `x-app-key`（仅 `collect` 强制）。MCP server 始终带此头，既符合既有约定，也为后端后续收紧鉴权做好准备。
+> 注意：当前后端 `adminApi`（/api/*）部分接口未强制 `x-app-key`（仅 `collect` 强制）。MCP server 始终带本次请求的采集秘钥，既符合既有约定，也为后端后续收紧鉴权做好准备。
 
 ## 数据源切换（rest / d1）
 
 `DataSource` 抽象层支持两种数据源，通过 `MCP_DATASOURCE_KIND` 切换（默认 `rest`）：
 
-- **rest（默认）**：包装现有后端 `/api/*` REST 接口。`MCP_API_KEY` 作为 `x-app-key` 调用后端，与线上后端权限/分页/脱敏逻辑一致。
+- **rest（默认）**：包装现有后端 `/api/*` REST 接口。调用方 Bearer 中的 `collectKey` 会作为 `x-app-key` 调用后端，与线上后端权限/分页/脱敏逻辑一致。
 - **d1**：直连本 worker 的 D1 绑定（`wrangler.jsonc` 已预留 `DB`），绕过后端 worker 直接查询。适用于自由分析、低延迟场景。**仅含只读 SELECT**，敏感字段（`user_phone` 等）做了与后端一致的脱敏；复杂聚合（sessions / paths / click-paths / heatmap / summary / live / traces）在 D1 模式下有独立实现，返回结构与 rest 模式保持一致。
 
 切换方式（`wrangler.jsonc` 的 `vars` 已含 `MCP_DATASOURCE_KIND: "rest"`）：
 
 ```bash
-# d1 模式：.dev.vars / secret 设 MCP_DATASOURCE_KIND=d1（无需 MCP_API_KEY）
-# rest 模式：保持 MCP_DATASOURCE_KIND=rest 并提供 MCP_API_KEY
+# d1 模式：.dev.vars / secret 设 MCP_DATASOURCE_KIND=d1
+# rest 模式：保持 MCP_DATASOURCE_KIND=rest
 ```
 
 > 直连 D1 暂未做字段级白名单之外的额外权限收敛；如需更细粒度控制，在 `src/datasource/d1.ts` 的查询处加固（呼应项目「脱敏下沉 DB 层」待决策项）。
@@ -73,11 +73,7 @@ MCP Client ──(Streamable HTTP, Bearer MCP_AUTH_TOKEN)──▶ /mcp
 ```bash
 cd apps/mcp
 
-# 1) 设置密钥（secret，不进仓库）
-npx wrangler secret put MCP_API_KEY --config wrangler.jsonc      # 后端 collectKey / appKey
-npx wrangler secret put MCP_AUTH_TOKEN --config wrangler.jsonc  # MCP 客户端 Bearer token
-
-# 2) 部署（wrangler.jsonc 已配置 name=web-collection-mcp、nodejs_compat、D1 预留绑定）
+# 部署（wrangler.jsonc 已配置 name=web-collection-mcp、nodejs_compat、D1 绑定）
 npx wrangler deploy --config wrangler.jsonc
 ```
 
@@ -91,8 +87,6 @@ npx wrangler deploy --config wrangler.jsonc
 
 ```
 BACKEND_BASE_URL=https://web-collection.jingguohua.cc.cd
-MCP_API_KEY=your-collect-key
-MCP_AUTH_TOKEN=local-dev-token
 MCP_APP_ID=default
 ```
 
@@ -105,14 +99,14 @@ npx wrangler dev --config wrangler.jsonc
 ```bash
 # 1) 列出 tools
 curl -s -X POST http://localhost:8787/mcp \
-  -H "Authorization: Bearer local-dev-token" \
+  -H "Authorization: Bearer your-collect-key" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 
 # 2) 调用一个工具
 curl -s -X POST http://localhost:8787/mcp \
-  -H "Authorization: Bearer local-dev-token" \
+  -H "Authorization: Bearer your-collect-key" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_summary","arguments":{"pageSize":5}}}'
@@ -121,8 +115,8 @@ curl -s -X POST http://localhost:8787/mcp \
 ## 客户端接入（如 Claude Desktop / MCP Inspector）
 
 - 传输方式：**Streamable HTTP**
-- Endpoint：`https://<your-subdomain>.workers.dev/mcp`
-- Headers：`{ "Authorization": "Bearer <MCP_AUTH_TOKEN>" }`
+- Endpoint：`https://web-collection-mcp.jingguohua.cc.cd/mcp`
+- Headers：`{ "Authorization": "Bearer <collectKey>" }`
 - 本服务为**无状态模式**（`sessionIdGenerator: undefined`），每次请求独立，客户端无需维护 session。
 
 ## 扩展：接入直连 D1 / Postgres

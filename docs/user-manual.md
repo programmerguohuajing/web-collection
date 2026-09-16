@@ -693,9 +693,9 @@ Exposes web-collection's data plane (events / logs / errors / traces / replays /
 
 - **Architecture**: standalone Worker `web-collection-mcp` wrapping backend `/api/*` REST (Plan A `rest` data source, with `x-app-key`); `d1` direct-connect implementation reserved (read-only SELECT + masking).
 - **Tools exposed (13)**: `list_events` / `list_logs` / `get_summary` / `list_issues` / `list_replays` / `list_traces` / `get_analytics_sessions` / `get_analytics_paths` / `get_analytics_click_paths` / `get_analytics_heatmap` / `get_analytics_live` / `list_alerts` / `list_alert_channels`.
-- **Auth (two layers)**: ① MCP endpoint requires `Authorization: Bearer <MCP_AUTH_TOKEN>`; ② backend calls use `MCP_API_KEY` as `x-app-key`.
-- **Deploy**: `cd apps/mcp && npx wrangler secret put MCP_API_KEY / MCP_AUTH_TOKEN --config wrangler.jsonc && npx wrangler deploy --config wrangler.jsonc`.
-- **Client**: transport `Streamable HTTP`, endpoint `https://<subdomain>/mcp`, stateless mode (each request independent, no session to maintain).
+- **Auth**: MCP clients use the target application's collection key as `Authorization: Bearer <collectKey>`. The MCP Worker validates the key against `applications.collect_key_hash`, locks the resolved `app_id`, and passes the same key to the REST data plane as `x-app-key`.
+- **Deploy**: `cd apps/mcp && npx wrangler deploy --config wrangler.jsonc`.
+- **Client**: transport `Streamable HTTP`, endpoint `https://web-collection-mcp.jingguohua.cc.cd/mcp`, stateless mode (each request independent, no session to maintain).
 
 See `apps/mcp/README.md` for details.
 
