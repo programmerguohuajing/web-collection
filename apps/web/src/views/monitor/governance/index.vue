@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteApplication, deleteRelease, loadGovernance, loadReleases, normalizePageResponse, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease, toList } from '../../../dashboard.js'
 // PRD 04 · 远程采集配置（采集治理内嵌 Tab）
 import RemoteConfigPanel from '../../../components/prd/RemoteConfigPanel.vue'
+import OverflowTip from '../../../components/OverflowTip.vue'
 import { QuestionFilled } from '@element-plus/icons-vue'
 
 const activeTab = ref('apps')
@@ -192,6 +193,11 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString()
 }
 
+function formatReleaseStatus(status) {
+  const map = { active: '活跃', archived: '已归档' }
+  return map[status] || status || '-'
+}
+
 async function submitRelease() {
   const release = releaseForm.release.trim()
   if (!release) return ElMessage.warning('请输入版本号')
@@ -206,6 +212,7 @@ async function submitRelease() {
     ElMessage.error(error.message || '版本保存失败')
   }
 }
+
 async function removeRelease(row) {
   const confirmed = await ElMessageBox.confirm(`确定删除版本"${row.release_name}"吗？SDK 继续上报该版本时会重新出现。`, '删除版本', { type: 'warning' }).then(() => true).catch(() => false)
   if (!confirmed) return
@@ -230,103 +237,115 @@ onMounted(load)
       <el-tab-pane label="应用与策略" name="apps">
         <el-card shadow="never" class="section panel">
           <template #header><div class="panel-head"><b>应用与采样</b><el-button type="primary" @click="editApp()">新增应用</el-button></div></template>
-      <el-alert v-if="governanceError" class="table-error" type="error" :title="governanceError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
-      <el-table :data="applications" border v-loading="governanceLoading" empty-text="暂无应用数据">
-        <el-table-column prop="app_id" label="App ID" min-width="150" cell-class-name="nowrap-cell" />
-        <el-table-column prop="name" label="应用名称" min-width="160" cell-class-name="nowrap-cell" />
-        <el-table-column prop="platform" label="平台" width="140" cell-class-name="nowrap-cell" />
-        <el-table-column prop="owner" label="负责人" min-width="120" />
-        <el-table-column label="事件采样率" width="120"><template #default="{ row }">{{ formatRate(row.sample_rate ?? row.sampleRate) }}</template></el-table-column>
-        <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ formatRate(row.replay_sample_rate ?? row.replaySampleRate) }}</template></el-table-column>
-        <el-table-column label="版本数" width="90"><template #default="{ row }">{{ row.release_count ?? row.releaseCount ?? 0 }}</template></el-table-column>
-        <el-table-column label="状态" width="100" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="330"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="success" @click="openMcp(row)">MCP 接入</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
-      </el-table>
-      <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="appPager.page" :page-size="appPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="appPager.total" @current-change="value => { appPager.page = value; load() }" @size-change="value => { appPager.page = 1; appPager.pageSize = value; load() }" />
-    </el-card>
+          <el-alert v-if="governanceError" class="table-error" type="error" :title="governanceError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
+          <el-table :data="applications" border v-loading="governanceLoading" empty-text="暂无应用数据">
+            <el-table-column label="App ID" min-width="150" cell-class-name="nowrap-cell"><template #default="{ row }"><OverflowTip :text="row.app_id" /></template></el-table-column>
+            <el-table-column label="应用名称" min-width="160" cell-class-name="nowrap-cell"><template #default="{ row }"><OverflowTip :text="row.name" /></template></el-table-column>
+            <el-table-column prop="platform" label="平台" width="140" cell-class-name="nowrap-cell" />
+            <el-table-column label="负责人" min-width="120" cell-class-name="nowrap-cell"><template #default="{ row }"><OverflowTip :text="row.owner" /></template></el-table-column>
+            <el-table-column label="事件采样率" width="120"><template #default="{ row }">{{ formatRate(row.sample_rate ?? row.sampleRate) }}</template></el-table-column>
+            <el-table-column label="回放采样率" width="120"><template #default="{ row }">{{ formatRate(row.replay_sample_rate ?? row.replaySampleRate) }}</template></el-table-column>
+            <el-table-column label="版本数" width="90"><template #default="{ row }">{{ row.release_count ?? row.releaseCount ?? 0 }}</template></el-table-column>
+            <el-table-column label="状态" width="100" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
+            <el-table-column label="操作" width="330"><template #default="{ row }"><el-button link type="primary" @click="editApp(row)">编辑</el-button><el-button link type="primary" @click="openReleases(row)">版本</el-button><el-button link type="success" @click="openMcp(row)">MCP 接入</el-button><el-button link type="warning" @click="resetKey(row)">重置密钥</el-button><el-button link type="danger" @click="removeApp(row)">删除</el-button></template></el-table-column>
+          </el-table>
+          <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="appPager.page" :page-size="appPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="appPager.total" @current-change="value => { appPager.page = value; load() }" @size-change="value => { appPager.page = 1; appPager.pageSize = value; load() }" />
+        </el-card>
 
-    <el-card shadow="never" class="section panel">
-      <template #header><b>保留与告警策略</b></template>
-      <el-form label-width="150px" class="governance-form">
-        <el-form-item label="事件保留（天）"><el-input-number v-model="settings.retention.eventsDays" :min="1" :max="3650" /></el-form-item>
-        <el-form-item label="日志保留（天）"><el-input-number v-model="settings.retention.logsDays" :min="1" :max="3650" /></el-form-item>
-        <el-form-item label="回放保留（天）"><el-input-number v-model="settings.retention.replaysDays" :min="1" :max="3650" /></el-form-item>
-        <el-form-item label="已解决错误保留（天）"><el-input-number v-model="settings.retention.resolvedIssuesDays" :min="1" :max="3650" /></el-form-item>
-        <el-form-item label="SourceMap 保留（天）"><el-input-number v-model="settings.retention.sourcemapsDays" :min="1" :max="3650" /></el-form-item>
-        <el-form-item label="告警冷却（分钟）"><el-input-number v-model="settings.alerts.cooldownMinutes" :min="1" :max="1440" /></el-form-item>
-        <el-form-item label="错误累计阈值"><el-input-number v-model="settings.alerts.errorCount" :min="1" :max="100000" /></el-form-item>
-        <el-form-item label="启用告警"><el-switch v-model="settings.alerts.enabled" /></el-form-item>
-        <el-form-item label="LCP 阈值（ms）"><el-input-number v-model="settings.alerts.lcp" :min="0" /></el-form-item>
-        <el-form-item label="INP 阈值（ms）"><el-input-number v-model="settings.alerts.inp" :min="0" /></el-form-item>
-        <el-form-item label="CLS 阈值"><el-input-number v-model="settings.alerts.cls" :min="0" :step="0.05" /></el-form-item>
-        <el-form-item label="长任务阈值（ms）"><el-input-number v-model="settings.alerts.longtask" :min="0" /></el-form-item>
-        <el-form-item label="错误通知"><el-switch v-model="settings.alerts.error" /></el-form-item>
-        <el-form-item label="error 日志通知"><el-switch v-model="settings.alerts.logError" /></el-form-item>
-        <el-form-item label="回归通知"><el-switch v-model="settings.alerts.regression" /></el-form-item>
-      </el-form>
-      <el-space>
-        <el-button type="primary" @click="submitSettings">保存策略</el-button>
-        <el-button @click="cleanup">立即清理</el-button>
-      </el-space>
+        <el-card shadow="never" class="section panel">
+          <template #header><b>保留与告警策略</b></template>
+          <el-form label-width="150px" class="governance-form">
+            <el-form-item label="事件保留（天）"><el-input-number v-model="settings.retention.eventsDays" :min="1" :max="3650" /></el-form-item>
+            <el-form-item label="日志保留（天）"><el-input-number v-model="settings.retention.logsDays" :min="1" :max="3650" /></el-form-item>
+            <el-form-item label="回放保留（天）"><el-input-number v-model="settings.retention.replaysDays" :min="1" :max="3650" /></el-form-item>
+            <el-form-item label="已解决错误保留（天）"><el-input-number v-model="settings.retention.resolvedIssuesDays" :min="1" :max="3650" /></el-form-item>
+            <el-form-item label="SourceMap 保留（天）"><el-input-number v-model="settings.retention.sourcemapsDays" :min="1" :max="3650" /></el-form-item>
+            <el-form-item label="告警冷却（分钟）"><el-input-number v-model="settings.alerts.cooldownMinutes" :min="1" :max="1440" /></el-form-item>
+            <el-form-item label="错误累计阈值"><el-input-number v-model="settings.alerts.errorCount" :min="1" :max="100000" /></el-form-item>
+            <el-form-item label="启用告警"><el-switch v-model="settings.alerts.enabled" /></el-form-item>
+            <el-form-item label="LCP 阈值（ms）"><el-input-number v-model="settings.alerts.lcp" :min="0" /></el-form-item>
+            <el-form-item label="INP 阈值（ms）"><el-input-number v-model="settings.alerts.inp" :min="0" /></el-form-item>
+            <el-form-item label="CLS 阈值"><el-input-number v-model="settings.alerts.cls" :min="0" :step="0.05" /></el-form-item>
+            <el-form-item label="长任务阈值（ms）"><el-input-number v-model="settings.alerts.longtask" :min="0" /></el-form-item>
+            <el-form-item label="错误通知"><el-switch v-model="settings.alerts.error" /></el-form-item>
+            <el-form-item label="error 日志通知"><el-switch v-model="settings.alerts.logError" /></el-form-item>
+            <el-form-item label="回归通知"><el-switch v-model="settings.alerts.regression" /></el-form-item>
+          </el-form>
+          <el-space>
+            <el-button type="primary" @click="submitSettings">保存策略设置</el-button>
+            <el-button @click="cleanup">手动触发数据清理</el-button>
+          </el-space>
         </el-card>
       </el-tab-pane>
+
       <el-tab-pane label="远程配置" name="remote-config">
-        <RemoteConfigPanel />
+        <RemoteConfigPanel :applications="applicationOptions" />
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="appDialog" title="应用配置" width="620px">
+      <el-form :model="appForm" label-width="110px">
+        <el-form-item label="App ID"><el-input v-model="appForm.appId" :disabled="applications.some(item => item.app_id === appForm.appId)" /></el-form-item>
+        <el-form-item label="应用名称"><el-input v-model="appForm.name" /></el-form-item>
+        <el-form-item label="平台"><el-select v-model="appForm.platform"><el-option v-for="item in ['web','miniapp','uni-app','taro','react-native']" :key="item" :label="item" :value="item" /></el-select></el-form-item>
+        <el-form-item label="负责人"><el-input v-model="appForm.owner" /></el-form-item>
+        <el-form-item label="启用采集"><el-switch v-model="appForm.enabled" /></el-form-item>
+        <el-form-item label="事件采样率"><el-slider v-model="appForm.sampleRate" :min="0" :max="1" :step="0.01" show-input /></el-form-item>
+        <el-form-item label="回放采样率"><el-slider v-model="appForm.replaySampleRate" :min="0" :max="1" :step="0.01" show-input /></el-form-item>
+        <el-form-item label="可信来源"><el-input v-model="appForm.allowedOrigins" type="textarea" placeholder="每行一个 Origin，例如 https://shop.example.com" /></el-form-item>
+        <el-form-item label="禁用事件类型"><el-input v-model="appForm.blockedTypes" placeholder="逗号分隔，例如 log,replay" /></el-form-item>
+        <el-form-item label="禁用事件名称"><el-input v-model="appForm.blockedNames" placeholder="逗号分隔" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="appDialog=false">取消</el-button><el-button type="primary" @click="submitApp">保存</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="collectKeyDialog" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input :model-value="newCollectKey" readonly style="margin-top:12px" /></el-dialog>
+
+    <el-dialog v-model="mcpDialog" width="720px">
+      <template #title>MCP 接入（调用时采集秘钥）<el-tooltip content="MCP 客户端直接用本应用的「采集秘钥」作为 Authorization: Bearer 鉴权，无需任何额外配置；鉴权后仅能访问该应用数据。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></template>
+      <div style="margin:12px 0">应用 App ID：<code>{{ mcpAppId }}</code></div>
+      <el-form label-width="100px">
+        <el-form-item label="采集秘钥">
+          <el-input v-model="mcpCollectKey" placeholder="粘贴本应用采集秘钥，或点右侧按钮重置并填入" style="max-width:420px" />
+          <el-button style="margin-left:8px" @click="resetAndFillKey">重置并填入</el-button>
+        </el-form-item>
+      </el-form>
+      <el-divider>Claude Desktop / Cursor MCP 配置</el-divider>
+      <pre style="background:#0f1420;color:#e6e6e6;padding:12px;border-radius:8px;overflow:auto;font-size:12px">{{ mcpConfigJson() }}</pre>
+      <el-button type="primary" @click="copyMcpConfig">复制配置</el-button>
+      <el-divider>端点信息</el-divider>
+      <div style="line-height:1.9">
+        <div>URL：<code>{{ MCP_ENDPOINT }}</code></div>
+        <div>Header：<code>Authorization: Bearer &lt;采集秘钥&gt;</code></div>
+      </div>
+    </el-dialog>
+
+    <el-dialog v-model="releaseDialog" :title="`${activeAppId} 版本管理`" width="620px">
+      <el-form inline @submit.prevent="submitRelease">
+        <el-form-item label="版本"><el-input v-model="releaseForm.release" placeholder="例如 1.2.0" /></el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="releaseForm.status" style="width: 120px">
+            <el-option label="活跃" value="active" />
+            <el-option label="已归档" value="archived" />
+          </el-select>
+        </el-form-item>
+        <el-form-item><el-button type="primary" @click="submitRelease">添加</el-button></el-form-item>
+      </el-form>
+      <el-alert v-if="releaseError" class="table-error" type="error" :title="releaseError" show-icon :closable="false"><template #default><el-button link type="primary" @click="loadReleasePage">重试</el-button></template></el-alert>
+      <el-table :data="releases" border v-loading="releaseLoading" empty-text="暂无版本数据">
+        <el-table-column label="版本" min-width="180"><template #default="{ row }">{{ row.release_name || row.release || '-' }}</template></el-table-column>
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'active'" type="success" size="small">活跃</el-tag>
+            <el-tag v-else-if="row.status === 'archived'" type="info" size="small">已归档</el-tag>
+            <span v-else>{{ formatReleaseStatus(row.status) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="首次上报时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.created_at ?? row.createdAt) }}</template></el-table-column>
+        <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" @click="removeRelease(row)">删除</el-button></template></el-table-column>
+      </el-table>
+      <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="releasePager.page" :page-size="releasePager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="releasePager.total" @current-change="value => { releasePager.page = value; loadReleasePage() }" @size-change="value => { releasePager.page = 1; releasePager.pageSize = value; loadReleasePage() }" />
+    </el-dialog>
   </div>
-
-  <el-dialog v-model="appDialog" title="应用配置" width="520px">
-    <el-form :model="appForm" label-width="110px">
-      <el-form-item label="App ID"><el-input v-model="appForm.appId" :disabled="applications.some(item => item.app_id === appForm.appId)" /></el-form-item>
-      <el-form-item label="应用名称"><el-input v-model="appForm.name" /></el-form-item>
-      <el-form-item label="平台"><el-select v-model="appForm.platform"><el-option v-for="item in ['web','miniapp','uni-app','taro','react-native']" :key="item" :label="item" :value="item" /></el-select></el-form-item>
-      <el-form-item label="负责人"><el-input v-model="appForm.owner" /></el-form-item>
-      <el-form-item label="启用采集"><el-switch v-model="appForm.enabled" /></el-form-item>
-      <el-form-item label="事件采样率"><el-slider v-model="appForm.sampleRate" :min="0" :max="1" :step="0.01" show-input /></el-form-item>
-      <el-form-item label="回放采样率"><el-slider v-model="appForm.replaySampleRate" :min="0" :max="1" :step="0.01" show-input /></el-form-item>
-      <el-form-item label="可信来源"><el-input v-model="appForm.allowedOrigins" type="textarea" placeholder="每行一个 Origin，例如 https://shop.example.com" /></el-form-item>
-      <el-form-item label="禁用事件类型"><el-input v-model="appForm.blockedTypes" placeholder="逗号分隔，例如 log,replay" /></el-form-item>
-      <el-form-item label="禁用事件名称"><el-input v-model="appForm.blockedNames" placeholder="逗号分隔" /></el-form-item>
-    </el-form>
-    <template #footer><el-button @click="appDialog=false">取消</el-button><el-button type="primary" @click="submitApp">保存</el-button></template>
-  </el-dialog>
-  <el-dialog v-model="collectKeyDialog" title="新采集密钥" width="620px"><el-alert type="warning" title="该密钥仅显示一次，请立即复制到 SDK collectKey 配置。" :closable="false" /><el-input :model-value="newCollectKey" readonly style="margin-top:12px" /></el-dialog>
-
-  <el-dialog v-model="mcpDialog" width="720px">
-    <template #title>MCP 接入（调用时采集秘钥）<el-tooltip content="MCP 客户端直接用本应用的「采集秘钥」作为 Authorization: Bearer 鉴权，无需任何额外配置；鉴权后仅能访问该应用数据。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></template>
-    <div style="margin:12px 0">应用 App ID：<code>{{ mcpAppId }}</code></div>
-    <el-form label-width="100px">
-      <el-form-item label="采集秘钥">
-        <el-input v-model="mcpCollectKey" placeholder="粘贴本应用采集秘钥，或点右侧按钮重置并填入" style="max-width:420px" />
-        <el-button style="margin-left:8px" @click="resetAndFillKey">重置并填入</el-button>
-      </el-form-item>
-    </el-form>
-    <el-divider>Claude Desktop / Cursor MCP 配置</el-divider>
-    <pre style="background:#0f1420;color:#e6e6e6;padding:12px;border-radius:8px;overflow:auto;font-size:12px">{{ mcpConfigJson() }}</pre>
-    <el-button type="primary" @click="copyMcpConfig">复制配置</el-button>
-    <el-divider>端点信息</el-divider>
-    <div style="line-height:1.9">
-      <div>URL：<code>{{ MCP_ENDPOINT }}</code></div>
-      <div>Header：<code>Authorization: Bearer &lt;采集秘钥&gt;</code></div>
-    </div>
-  </el-dialog>
-
-  <el-dialog v-model="releaseDialog" :title="`${activeAppId} 版本管理`" width="620px">
-    <el-form inline @submit.prevent="submitRelease">
-      <el-form-item label="版本"><el-input v-model="releaseForm.release" placeholder="例如 1.2.0" /></el-form-item>
-      <el-form-item label="状态"><el-select v-model="releaseForm.status" style="width: 120px"><el-option label="active" value="active" /><el-option label="archived" value="archived" /></el-select></el-form-item>
-      <el-form-item><el-button type="primary" @click="submitRelease">添加</el-button></el-form-item>
-    </el-form>
-    <el-alert v-if="releaseError" class="table-error" type="error" :title="releaseError" show-icon :closable="false"><template #default><el-button link type="primary" @click="loadReleasePage">重试</el-button></template></el-alert>
-    <el-table :data="releases" border v-loading="releaseLoading" empty-text="暂无版本数据">
-      <el-table-column label="版本" min-width="180"><template #default="{ row }">{{ row.release_name || row.release || '-' }}</template></el-table-column>
-      <el-table-column label="状态" width="120"><template #default="{ row }">{{ row.status || '-' }}</template></el-table-column>
-      <el-table-column label="首次上报时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ formatDate(row.created_at ?? row.createdAt) }}</template></el-table-column>
-      <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" @click="removeRelease(row)">删除</el-button></template></el-table-column>
-    </el-table>
-    <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="releasePager.page" :page-size="releasePager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="releasePager.total" @current-change="value => { releasePager.page = value; loadReleasePage() }" @size-change="value => { releasePager.page = 1; releasePager.pageSize = value; loadReleasePage() }" />
-  </el-dialog>
 </template>
 
 <style scoped>
