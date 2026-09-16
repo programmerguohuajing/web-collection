@@ -15,7 +15,9 @@ function processData() {
   const categoryMap = new Map()
   for (const e of props.events) {
     if (e.type !== 'error') continue
-    const hour = new Date(Number(e.ts)).toISOString().slice(0, 13)
+    const d = new Date(Number(e.ts))
+    const pad = n => String(n).padStart(2, '0')
+    const hour = `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:00`
     if (!trend.find(t => t.bucket === hour)) trend.push({ bucket: hour, errors: 0, users: new Set() })
     const bucket = trend.find(t => t.bucket === hour)
     bucket.errors++

@@ -24,7 +24,7 @@ import { listRetention } from './services/retention-service.js'
 import { listDataAccessAudit, listMembers, resolveAccessLevel, saveMember, saveMemberLevel } from './services/access-service.js'
 import { changePassword, ensureBuiltinAdmin, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
 import { listSessions, revokeSession } from './services/session-service.js'
-import { getIngestionHealth, getSdkMonitoring, getSdkSize, reportSdkMonitoring, reportSdkSize } from './services/sdk-health-service.js'
+import { getDiagnostics, getIngestionHealth, getSdkMonitoring, getSdkSize, reportSdkMonitoring, reportSdkSize } from './services/sdk-health-service.js'
 import { acceptInvitationService, assignApplication, changeMemberLevel, changeMemberRole, createInvitation, createTeam, deleteTeam, getTeam, listInvitations, listTeamAudit, listTeamMembers, migrateMembersToDefaultTeam, removeMember, revokeInvitation, updateTeam } from './services/team-service.js'
 import { identityMiddleware, isAccountsEnabled } from './auth-middleware.js'
 import { resolveCollectConfig } from '../../../packages/collect-config.js'
@@ -560,6 +560,9 @@ app.post('/api/brand/reset', async (req, res, next) => {
 
 app.get('/api/monitoring/ingestion', async (req, res, next) => {
   try { res.json(await getIngestionHealth()) } catch (err) { next(err) }
+})
+app.get('/api/diagnostics', async (req, res, next) => {
+  try { res.json(await getDiagnostics({ appId: req.query.appId })) } catch (err) { next(err) }
 })
 
 app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels(filters(req.query))) } catch (err) { next(err) } })
