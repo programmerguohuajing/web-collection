@@ -15,7 +15,9 @@
     "start": "pnpm --filter @web-collection/api start",
     "test": "pnpm --filter @web-collection/api test",
     "bench:api": "node scripts/benchmark-queries.mjs",
-    "deploy:cloudflare": "pnpm build:cloudflare && wrangler deploy"
+    "deploy:cloudflare": "pnpm build:cloudflare && wrangler deploy",
+    "docker:build": "node scripts/build-docker-release.js",
+    "docker:release": "node scripts/build-docker-release.js --push"
   },
   "dependencies": {
     "@upstash/qstash": "^2.8.4",
