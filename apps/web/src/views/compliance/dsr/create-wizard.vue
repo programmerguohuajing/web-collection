@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../../dashboard.js'
+import { authApi } from '../../../composables/useAuth'
 import { useFilterStore } from '../../../stores/filters.js'
 
 /**
@@ -77,7 +78,7 @@ async function createDraft() {
   } else {
     body.exportFormat = form.value.exportFormat
   }
-  const data = await api('/api/dsr/requests', {
+  const data = await authApi('/api/dsr/requests', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body)
@@ -93,7 +94,7 @@ async function goPreview() {
   try {
     if (request.value) {
       // 回退修改了类型/主体等身份参数：取消旧草稿后按新参数重建（不留孤儿草稿）
-      await api(`/api/dsr/requests/${request.value.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      await authApi(`/api/dsr/requests/${request.value.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       request.value = null
       emit('changed')
     }
@@ -112,7 +113,7 @@ async function goConfirm() {
   try {
     if (needsRecreate.value) {
       // 模式/格式变更：取消旧草稿并按最终参数重建（命中量随重建刷新）
-      await api(`/api/dsr/requests/${request.value.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      await authApi(`/api/dsr/requests/${request.value.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       request.value = null
       await createDraft()
     }
@@ -128,7 +129,7 @@ async function submitForApproval() {
   if (!request.value) return
   submitting.value = true
   try {
-    await api(`/api/dsr/requests/${request.value.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    await authApi(`/api/dsr/requests/${request.value.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
     ElMessage.success('已提交审批，等待第二管理员审批（审批人 ≠ 发起人）')
     emit('changed')
     reset()
@@ -147,7 +148,7 @@ async function reset() {
   step.value = 0
   if (draft && draft.status === 'draft') {
     try {
-      await api(`/api/dsr/requests/${draft.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      await authApi(`/api/dsr/requests/${draft.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
       emit('changed')
     } catch { /* 取消失败不阻塞关闭 */ }
   }
@@ -171,7 +172,7 @@ function summaryLines() {
 onMounted(async () => {
   if (store.appId) form.value.appId = store.appId
   try {
-    const data = await api('/api/applications', { requestKey: 'dsr:applications' })
+    const data = await authApi('/api/applications', { requestKey: 'dsr:applications' })
     const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []
     applications.value = items.map(item => ({
       appId: item.app_id || item.appId || '',

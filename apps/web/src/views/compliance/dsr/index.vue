@@ -18,7 +18,7 @@ import { QuestionFilled } from '@element-plus/icons-vue'
  */
 const router = useRouter()
 const store = useFilterStore()
-const { dsrEnabled, accountsEnabled, isLoggedIn, me } = useAuth()
+const { dsrEnabled, accountsEnabled, isLoggedIn, me, authApi } = useAuth()
 
 /** 法定期限 SLA（GDPR 一个月口径，与 packages/dsr-service.js DSR_SLA_DAYS 对齐） */
 const SLA_DAYS = 30
@@ -133,7 +133,7 @@ async function load() {
     if (statusFilter.value) params.set('status', statusFilter.value)
     if (typeFilter.value) params.set('requestType', typeFilter.value)
     if (store.appId) params.set('appId', store.appId)
-    const data = await api(`/api/dsr/requests?${params}`, { requestKey: 'dsr:list' })
+    const data = await authApi(`/api/dsr/requests?${params}`, { requestKey: 'dsr:list' })
     list.value = Array.isArray(data?.items) ? data.items : []
     total.value = Number(data?.total ?? list.value.length)
   } catch (error) {
@@ -148,7 +148,7 @@ async function load() {
 
 async function submitRequest(row) {
   try {
-    await api(`/api/dsr/requests/${row.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    await authApi(`/api/dsr/requests/${row.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
     ElMessage.success('已提交审批')
     await load()
   } catch (error) {
@@ -158,7 +158,7 @@ async function submitRequest(row) {
 
 async function cancelRequest(row) {
   try {
-    await api(`/api/dsr/requests/${row.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    await authApi(`/api/dsr/requests/${row.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
     ElMessage.success('工单已取消')
     await load()
   } catch (error) {

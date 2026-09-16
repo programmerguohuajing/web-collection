@@ -15,7 +15,7 @@ import { QuestionFilled } from '@element-plus/icons-vue'
  */
 const route = useRoute()
 const router = useRouter()
-const { me, dsrEnabled } = useAuth()
+const { me, dsrEnabled, authApi } = useAuth()
 
 const STATUS_META = {
   draft: { label: '草稿', tag: 'info' },
@@ -98,7 +98,7 @@ async function load() {
   loadError.value = ''
   pageLoading.value = true
   try {
-    const data = await api(`/api/dsr/requests/${requestId.value}`, { requestKey: 'dsr:detail' })
+    const data = await authApi(`/api/dsr/requests/${requestId.value}`, { requestKey: 'dsr:detail' })
     request.value = data?.request || null
     audit.value = Array.isArray(data?.audit) ? data.audit : []
   } catch (error) {
@@ -112,7 +112,7 @@ async function load() {
 async function post(path, body = {}) {
   acting.value = true
   try {
-    const data = await api(`/api/dsr/requests/${requestId.value}${path}`, {
+    const data = await authApi(`/api/dsr/requests/${requestId.value}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body)
