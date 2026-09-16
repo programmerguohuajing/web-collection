@@ -16,7 +16,13 @@ const MIN_SESSIONS = 10
  * @param {{appId?:string, dim?:'release'|'sdk', startTime?:number, endTime?:number}} input
  */
 export async function getReleaseQuality(input = {}) {
-  if (!input.appId) throw badRequest('appId 不能为空', 'MISSING_APP_ID')
+  if (!input || !input.appId) {
+    return {
+      baseline: { errorsPerKSession: null },
+      summary: { versions: 0, watching: 0, rollback: 0, converge: 0 },
+      items: []
+    }
+  }
   const dim = input.dim === 'sdk' ? 'sdk_version' : 'release_name'
   const start = finiteOr(input.startTime, Date.now() - 7 * DAY)
   const end = finiteOr(input.endTime, Date.now())
