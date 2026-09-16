@@ -16,19 +16,30 @@ const source = computed(() => {
     return result
   }, {})
 })
+
 const items = computed(() => {
   const labels = { error: 'JS 错误', resource: '资源加载', perf: '接口异常', performance: '接口异常', behavior: '行为事件', track: '埋点事件', other: '其他' }
   const colors = { error: '#ef4444', resource: '#f59e0b', perf: '#0ea5e9', performance: '#0ea5e9', behavior: '#8b5cf6', track: '#4f46e5', other: '#9aa3b2' }
   const rows = Object.entries(source.value).map(([key, value]) => ({ key, label: labels[key] || key, value: Number(value) || 0, color: colors[key] || colors.other }))
   const total = rows.reduce((sum, item) => sum + item.value, 0)
-  return rows.sort((a, b) => b.value - a.value).slice(0, 4).map(item => ({ ...item, percent: total ? Math.round(item.value / total * 100) : 0 }))
+  return rows
+    .filter(item => item.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 4)
+    .map(item => ({ ...item, percent: total ? Math.round(item.value / total * 100) : 0 }))
+    .filter(item => item.percent > 0)
 })
+
 const BROWSER_COLORS = { Chrome: '#4f46e5', Safari: '#0ea5e9', Firefox: '#f97316', Edge: '#22c55e', Unknown: '#9aa3b2' }
 const browsers = computed(() => {
   const raw = props.summary?.byBrowser || {}
   const entries = Object.entries(raw).map(([key, value]) => ({ label: key, value: Number(value) || 0, color: BROWSER_COLORS[key] || BROWSER_COLORS.Unknown }))
   const total = entries.reduce((sum, e) => sum + e.value, 0)
-  return entries.sort((a, b) => b.value - a.value).map(e => ({ ...e, percent: total ? Math.round(e.value / total * 100) : 0 }))
+  return entries
+    .filter(e => e.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .map(e => ({ ...e, percent: total ? Math.round(e.value / total * 100) : 0 }))
+    .filter(e => e.percent > 0)
 })
 </script>
 
@@ -38,29 +49,39 @@ const browsers = computed(() => {
     <div v-if="items.length" class="distribution-overview">
       <ErrorDistributionChart :items="items" />
       <div class="distribution-legend">
-        <div v-for="item in items" :key="item.key" class="legend-row"><span class="distribution-dot" :style="{ background: item.color }" /><span class="distribution-name">{{ item.label }}</span><strong>{{ item.percent }}%</strong></div>
+        <div v-for="item in items" :key="item.key" class="legend-row">
+          <span class="distribution-dot" :style="{ background: item.color }" />
+          <span class="distribution-name" :title="item.label">{{ item.label }}</span>
+          <strong>{{ item.percent }}%</strong>
+        </div>
       </div>
     </div>
     <div v-else class="distribution-empty">暂无错误分布数据</div>
-    <hr class="hr">
-    <div class="browser-title">浏览器分布</div>
-    <div v-for="item in browsers" :key="item.label" class="browser-row">
-      <span>{{ item.label }}</span><div class="distribution-track"><span :style="{ width: `${item.percent}%`, background: item.color }" /></div><strong>{{ item.percent }}%</strong>
-    </div>
+
+    <template v-if="browsers.length">
+      <hr class="hr">
+      <div class="browser-title">浏览器分布</div>
+      <div v-for="item in browsers" :key="item.label" class="browser-row">
+        <span :title="item.label">{{ item.label }}</span>
+        <div class="distribution-track"><span :style="{ width: `${item.percent}%`, background: item.color }" /></div>
+        <strong>{{ item.percent }}%</strong>
+      </div>
+    </template>
   </el-card>
 </template>
 
 <style scoped>
 .distribution-overview { display: flex; align-items: center; gap: 20px; min-height: 124px; }
-.distribution-legend, .browser-row { display: grid; gap: 10px; }
-.legend-row { display: grid; grid-template-columns: 9px minmax(84px, 1fr) 38px; align-items: center; gap: 8px; font-size: 13px; }
+.distribution-legend { display: grid; gap: 10px; }
+.legend-row { display: grid; grid-template-columns: 9px minmax(70px, 1fr) 38px; align-items: center; gap: 8px; font-size: 13px; }
 .distribution-dot { width: 9px; height: 9px; border-radius: 3px; }
-.distribution-name, .browser-row > span { color: var(--c-text-muted); }
+.distribution-name { color: var(--c-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-title { margin-bottom: 10px; color: var(--c-text-muted); font-size: 13px; font-weight: 600; }
+.browser-row { display: grid; grid-template-columns: 75px minmax(0, 1fr) 38px; align-items: center; gap: 10px; }
+.browser-row > span { color: var(--c-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .distribution-track { height: 8px; overflow: hidden; background: var(--c-surface-3); border-radius: 6px; }
 .distribution-track span { display: block; height: 100%; border-radius: inherit; }
-.distribution-row strong, .browser-row strong { color: var(--c-text); font-family: var(--font-mono); font-size: 12px; text-align: right; }
-.browser-title { margin-bottom: 10px; color: var(--c-text-muted); font-size: 13px; font-weight: 600; }
-.browser-row { grid-template-columns: 50px minmax(0, 1fr) 38px; align-items: center; }
+.legend-row strong, .browser-row strong { color: var(--c-text); font-family: var(--font-mono); font-size: 12px; text-align: right; }
 .distribution-empty { padding: 25px; color: var(--c-text-faint); text-align: center; }
 @media (max-width: 1180px) { .distribution-overview { gap: 12px; } .error-distribution-chart { width: 112px; height: 112px; flex-basis: 112px; } }
 </style>

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, reactive, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import TrendChart from '../../../components/TrendChart.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
@@ -11,6 +11,8 @@ import { formatDuration, readableText } from '../../../utils/format.js'
 
 const router = useRouter()
 const store = useFilterStore()
+const hiddenSeries = reactive({ errors: false, requests: false })
+function toggleSeries(key) { hiddenSeries[key] = !hiddenSeries[key] }
 const primaryIssue = computed(() => issues.value.find(item => item.status !== 'resolved') || issues.value[0])
 const overviewKpis = computed(() => [
   { label: '今日错误数', value: Number(summary.value?.errors ?? summary.value?.issueCount ?? issues.value.length).toLocaleString(), delta: '当前筛选范围内', valueClass: 'value-danger' },
@@ -106,8 +108,8 @@ const ingestionStalledText = computed(() => {
 
   <section class="grid overview-insights">
     <el-card shadow="never" class="panel trend-panel">
-      <template #header><div class="panel-head"><div><h2>错误 &amp; 请求趋势</h2><small>last 24h</small></div><div class="chart-legend"><span class="red-dot">错误数</span><span class="blue-dot">请求数</span></div></div></template>
-      <TrendChart :trend="summary?.trend" :events="events" />
+      <template #header><div class="panel-head"><div><h2>错误 &amp; 请求趋势</h2><small>last 24h</small></div><div class="chart-legend"><span class="red-dot" :class="{ inactive: hiddenSeries.errors }" title="点击显示/隐藏错误数" @click="toggleSeries('errors')">错误数</span><span class="blue-dot" :class="{ inactive: hiddenSeries.requests }" title="点击显示/隐藏请求数" @click="toggleSeries('requests')">请求数</span></div></div></template>
+      <TrendChart :trend="summary?.trend" :events="events" :hidden-series="hiddenSeries" />
     </el-card>
     <OverviewDistribution :summary="summary" :events="events" />
   </section>
@@ -134,6 +136,9 @@ const ingestionStalledText = computed(() => {
 </template>
 
 <style scoped>
+.chart-legend span { cursor: pointer; user-select: none; transition: opacity 0.2s ease; }
+.chart-legend span:hover { opacity: 0.8; }
+.chart-legend span.inactive { opacity: 0.35; text-decoration: line-through; }
 .overview-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .health-value { color: #0f766e; }
 .ingestion-health-panel .ingestion-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; }
