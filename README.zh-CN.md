@@ -60,6 +60,7 @@ Web Collection 不只是控制台——它内置**智能能力**并提供**面�
 - [🌟 0.5.0 新特性](#050-新特性)
 - [🤖 AI 与 MCP](#ai-与-mcp)
 - [🚀 快速开始](#快速开始)
+- [🐳 Docker 与 K8s 容器化部署](#docker--k8s-容器化部署)
 - [🔌 SDK 接入](#sdk-接入)
 - [📚 使用文档](#使用文档)
 - [📂 项目结构](#项目结构)
@@ -200,6 +201,46 @@ pm2 logs web-collection-api
 pm2 restart web-collection-api --update-env
 pm2 stop web-collection-api
 ```
+
+## 🐳 Docker 与 K8s 容器化部署
+
+本项目提供了完整的 **All-in-One 容器化支持**，单容器内打入了 Web 控制台、API 服务、AI 诊断引擎、MCP 协议网关以及内嵌的 PostgreSQL 数据库服务。
+
+### 1. Docker 极速运行 (开箱即用)
+
+在本地或服务器直接运行单容器（内置 PostgreSQL 数据库，零前置配置）：
+
+```bash
+# 1. 自动构建本地镜像并打标签
+pnpm docker:build
+
+# 2. 运行单容器（映射 8787 端口）
+docker run -d -p 8787:8787 --name web-collection web-collection:latest
+```
+
+启动后在浏览器访问 `http://localhost:8787` 即可体验全量控制台、AI 诊断与 MCP 网关服务（端点 `http://localhost:8787/mcp`）。
+
+> 💡 **Docker Desktop GUI 用户**：可在 Docker Desktop 中找到 `web-collection:latest` 镜像点击 **Run**，在 `Optional settings` -> `Host port` 输入 `8787` 即可一键启动。
+
+### 2. Docker Compose 自托管部署
+
+使用 Docker Compose 一键启动 API + PostgreSQL 服务组：
+
+```bash
+cd deploy/self-hosted
+docker compose up -d
+```
+
+### 3. Kubernetes (K8s) 集群部署
+
+项目在 `deploy/k8s/` 提供了全套生产级 Kubernetes 清单（Deployment, Service, ConfigMap, Secret, Ingress, Kustomization）：
+
+```bash
+# 一键应用全量 K8s 清单
+kubectl apply -k deploy/k8s
+```
+
+详细操作指南与环境变量配置参见 **[Kubernetes & Docker 部署指南](deploy/k8s/README.md)**。
 
 ### GitHub Actions 自托管 Runner 部署
 
