@@ -24,7 +24,7 @@ export const DEFAULT_COLLECT_CONFIG = {
     rotate_on_error: true,
     rotate_on_max_duration: false,
     max_duration_sec: 300,
-    rotate_selectors: ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
+    rotate_selectors: []
   }
 }
 
