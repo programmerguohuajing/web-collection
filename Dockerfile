@@ -36,8 +36,8 @@ ENV NODE_ENV=production \
 # 从 builder 阶段复制全量所需文件
 COPY --from=builder /app /app
 
-# 给予入口脚本执行权限
-RUN chmod +x /app/docker-entrypoint.sh
+# 转换换行符为 Linux LF 格式并给予执行权限（防止 Windows CRLF 导致 exec no such file or directory）
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
 
 # 暴露接口端口与 PostgreSQL 持久化数据卷
 EXPOSE 8787 5432
