@@ -656,6 +656,8 @@ export function createEys(options = {}) {
   let replayStopTimer = 0
   let replayStartTimer = 0
   let replayIdleTimer = 0
+  let currentSegmentBytes = 0
+  let stopLongTaskWatch = null
   /** 闲置会话切分状态：lastUserActivityAt 记录最近交互；replayIdleEnded 表示当前
    *  处于「闲置已断会话、等待交互重新录制」状态。 */
   let lastUserActivityAt = Date.now()
@@ -1038,15 +1040,35 @@ export function createEys(options = {}) {
   function applyRemoteConfig(remote) {
     if (!remote || typeof remote !== 'object') return
     if (remote.replay_rotation && typeof remote.replay_rotation === 'object') {
-      cfg.replayRotateOnRoute = remote.replay_rotation.rotate_on_route !== false
-      cfg.replayRotateOnError = remote.replay_rotation.rotate_on_error !== false
-      cfg.replayRotateOnMaxDuration = Boolean(remote.replay_rotation.rotate_on_max_duration)
-      const maxDur = Number(remote.replay_rotation.max_duration_sec ?? remote.replay_rotation.maxDurationSec ?? remote.replay_rotation.max_duration)
+      const rot = remote.replay_rotation
+      cfg.replayRotateOnRoute = rot.rotate_on_route !== false
+      cfg.replayRotateOnError = rot.rotate_on_error !== false
+      cfg.replayRotateOnMaxDuration = Boolean(rot.rotate_on_max_duration)
+      const maxDur = Number(rot.max_duration_sec ?? rot.maxDurationSec ?? rot.max_duration)
       if (Number.isFinite(maxDur) && maxDur > 0) {
         cfg.replayMaxDuration = maxDur * 1000
       }
-      if (Array.isArray(remote.replay_rotation.rotate_selectors)) {
-        cfg.replayRotateSelectors = remote.replay_rotation.rotate_selectors
+      cfg.replayRotateOnIdle = Boolean(rot.rotate_on_idle)
+      const idleSec = Number(rot.idle_threshold_sec ?? rot.idleThresholdSec ?? rot.idle_threshold)
+      if (Number.isFinite(idleSec) && idleSec > 0) {
+        cfg.replayIdleResetMs = idleSec * 1000
+      }
+      cfg.replayRotateOnMaxSize = Boolean(rot.rotate_on_max_size)
+      const maxSizeKb = Number(rot.max_size_kb ?? rot.maxSizeKb ?? rot.max_size)
+      if (Number.isFinite(maxSizeKb) && maxSizeKb > 0) {
+        cfg.replayMaxSizeKb = maxSizeKb
+      }
+      if (Array.isArray(rot.rotate_events)) {
+        cfg.replayRotateEvents = rot.rotate_events
+      }
+      cfg.replayRotateOnLongTask = Boolean(rot.rotate_on_long_task)
+      const longTaskMs = Number(rot.long_task_ms ?? rot.longTaskMs ?? rot.long_task)
+      if (Number.isFinite(longTaskMs) && longTaskMs > 0) {
+        cfg.replayLongTaskMs = longTaskMs
+        setupLongTaskWatch()
+      }
+      if (Array.isArray(rot.rotate_selectors)) {
+        cfg.replayRotateSelectors = rot.rotate_selectors
       }
     }
   }
@@ -1078,6 +1100,9 @@ export function createEys(options = {}) {
 
   /** 自定义事件追踪（供业务代码调用） */
   function track(name, props = {}) {
+    if (Array.isArray(cfg.replayRotateEvents) && cfg.replayRotateEvents.includes(name)) {
+      rotateReplayBase(`event_${name}`)
+    }
     push({ type: 'track', name, props })
   }
 
@@ -1411,8 +1436,27 @@ export function createEys(options = {}) {
     if (breadcrumbs.length > 20) breadcrumbs.shift()
   }
 
+  function setupLongTaskWatch() {
+    stopLongTaskWatch?.()
+    stopLongTaskWatch = null
+    if (!cfg.replayRotateOnLongTask || typeof PerformanceObserver === 'undefined') return
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.duration >= (cfg.replayLongTaskMs || 500)) {
+            rotateReplayBase('long_task')
+            break
+          }
+        }
+      })
+      observer.observe({ entryTypes: ['longtask'] })
+      stopLongTaskWatch = () => { try { observer.disconnect() } catch {} }
+    } catch {}
+  }
+
   /** 将回放事件写入环形缓冲，达到阈值后批量上报 */
   function queueReplay(event) {
+    if (!cfg.replay) return
     const now = Date.now()
     // SDK-211 · 错误触发升采样：窗口过期后退出升采样并恢复常态窗口。
     if (errorBoosted && now > errorBoostUntil) {
@@ -1429,6 +1473,12 @@ export function createEys(options = {}) {
     }
     const { evicted } = replayRing.push(event)
     if (evicted > 0) diagnostic.emit('replay_buffer_full', { evicted })
+    currentSegmentBytes += typeof JSON !== 'undefined' ? JSON.stringify(event).length : 200
+    if (cfg.replayRotateOnMaxSize && cfg.replayMaxSizeKb > 0 && currentSegmentBytes >= cfg.replayMaxSizeKb * 1024) {
+      currentSegmentBytes = 0
+      endReplaySegment('max_size', { rotateBase: true })
+      return
+    }
     if (replayRing.size >= cfg.replayBatchSize) flushReplay()
   }
 
@@ -1450,7 +1500,7 @@ export function createEys(options = {}) {
    * 新 sessionId 使后续事件写入独立的回放记录，与上一段完全分开。
    * max_duration 在 replayContinuous（默认）下同样自动重启新分段，实现全时段录制；
    * idle（闲置切分）不重启——由交互恢复监听负责重新开启（新 base 会话）。
-   * @param {'error'|'route'|'max_duration'|'page_unload'|'idle'|'click'|'custom'} reason - 结束原因
+   * @param {'error'|'route'|'max_duration'|'page_unload'|'idle'|'click'|'custom'|'max_size'|'long_task'} reason - 结束原因
    * @param {object} [opts]
    * @param {boolean} [opts.rotateBase] - 是否轮换 base 会话（生成全新 base_session_id 拆为独立回放文件）
    */
@@ -1467,8 +1517,12 @@ export function createEys(options = {}) {
           (reason === 'route' && cfg.replayRotateOnRoute !== false) ||
           (reason === 'error' && cfg.replayRotateOnError !== false) ||
           (reason === 'max_duration' && cfg.replayRotateOnMaxDuration === true) ||
+          (reason === 'idle' && (cfg.replayRotateOnIdle === true || opts.rotateBase === true)) ||
+          (reason === 'max_size' && cfg.replayRotateOnMaxSize === true) ||
+          (reason === 'long_task' && cfg.replayRotateOnLongTask === true) ||
           reason === 'click' ||
-          reason === 'custom'
+          reason === 'custom' ||
+          (typeof reason === 'string' && reason.startsWith('event_'))
         )
 
     if (shouldRotateBase) {

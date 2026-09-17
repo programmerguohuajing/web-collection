@@ -121,14 +121,25 @@ function normalize(body) {
     rate_limits: { per_event_per_user_10min: Number.isFinite(rateLimit) && rateLimit > 0 ? Math.floor(rateLimit) : 500 }
   }
   if (body.replay_rotation && typeof body.replay_rotation === 'object') {
-    const maxDur = Number(body.replay_rotation.max_duration_sec ?? body.replay_rotation.maxDurationSec ?? body.replay_rotation.max_duration)
+    const rot = body.replay_rotation
+    const maxDur = Number(rot.max_duration_sec ?? rot.maxDurationSec ?? rot.max_duration)
+    const idleSec = Number(rot.idle_threshold_sec ?? rot.idleThresholdSec ?? rot.idle_threshold)
+    const maxSizeKb = Number(rot.max_size_kb ?? rot.maxSizeKb ?? rot.max_size)
+    const longTaskMs = Number(rot.long_task_ms ?? rot.longTaskMs ?? rot.long_task)
     result.replay_rotation = {
-      rotate_on_route: body.replay_rotation.rotate_on_route !== false,
-      rotate_on_error: body.replay_rotation.rotate_on_error !== false,
-      rotate_on_max_duration: Boolean(body.replay_rotation.rotate_on_max_duration),
+      rotate_on_route: rot.rotate_on_route !== false,
+      rotate_on_error: rot.rotate_on_error !== false,
+      rotate_on_max_duration: Boolean(rot.rotate_on_max_duration),
       max_duration_sec: Number.isFinite(maxDur) && maxDur > 0 ? Math.max(10, Math.min(86400, Math.floor(maxDur))) : 300,
-      rotate_selectors: Array.isArray(body.replay_rotation.rotate_selectors)
-        ? body.replay_rotation.rotate_selectors.map(String).slice(0, 50)
+      rotate_on_idle: Boolean(rot.rotate_on_idle),
+      idle_threshold_sec: Number.isFinite(idleSec) && idleSec > 0 ? Math.max(10, Math.min(86400, Math.floor(idleSec))) : 300,
+      rotate_on_max_size: Boolean(rot.rotate_on_max_size),
+      max_size_kb: Number.isFinite(maxSizeKb) && maxSizeKb > 0 ? Math.max(128, Math.min(102400, Math.floor(maxSizeKb))) : 2048,
+      rotate_events: Array.isArray(rot.rotate_events) ? rot.rotate_events.map(String).filter(Boolean).slice(0, 50) : [],
+      rotate_on_long_task: Boolean(rot.rotate_on_long_task),
+      long_task_ms: Number.isFinite(longTaskMs) && longTaskMs > 0 ? Math.max(100, Math.min(60000, Math.floor(longTaskMs))) : 500,
+      rotate_selectors: Array.isArray(rot.rotate_selectors)
+        ? rot.rotate_selectors.map(String).slice(0, 50)
         : []
     }
   }

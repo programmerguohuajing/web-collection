@@ -24,6 +24,13 @@ export const DEFAULT_COLLECT_CONFIG = {
     rotate_on_error: true,
     rotate_on_max_duration: false,
     max_duration_sec: 300,
+    rotate_on_idle: false,
+    idle_threshold_sec: 300,
+    rotate_on_max_size: false,
+    max_size_kb: 2048,
+    rotate_events: [],
+    rotate_on_long_task: false,
+    long_task_ms: 500,
     rotate_selectors: []
   }
 }
@@ -110,12 +117,26 @@ export function mergeConfig(partial) {
   const base = structuredCloneDefault()
   const rot = partial.replay_rotation ?? partial.replayRotation
   const maxDurSec = Number(rot?.max_duration_sec ?? rot?.maxDurationSec ?? rot?.max_duration ?? rot?.maxDuration)
+  const idleSec = Number(rot?.idle_threshold_sec ?? rot?.idleThresholdSec ?? rot?.idle_threshold ?? rot?.idleThreshold)
+  const maxSizeKb = Number(rot?.max_size_kb ?? rot?.maxSizeKb ?? rot?.max_size ?? rot?.maxSize)
+  const longTaskMs = Number(rot?.long_task_ms ?? rot?.longTaskMs ?? rot?.long_task ?? rot?.longTask)
+  const rotateEvents = Array.isArray(rot?.rotate_events ?? rot?.rotateEvents)
+    ? (rot?.rotate_events ?? rot?.rotateEvents).map(e => String(e).slice(0, 64)).filter(Boolean).slice(0, 50)
+    : base.replay_rotation.rotate_events
+
   const replayRotation = rot && typeof rot === 'object'
     ? {
         rotate_on_route: rot.rotate_on_route ?? rot.rotateOnRoute ?? base.replay_rotation.rotate_on_route,
         rotate_on_error: rot.rotate_on_error ?? rot.rotateOnError ?? base.replay_rotation.rotate_on_error,
         rotate_on_max_duration: Boolean(rot.rotate_on_max_duration ?? rot.rotateOnMaxDuration),
         max_duration_sec: Number.isFinite(maxDurSec) && maxDurSec > 0 ? Math.max(10, Math.min(86400, Math.floor(maxDurSec))) : base.replay_rotation.max_duration_sec,
+        rotate_on_idle: Boolean(rot.rotate_on_idle ?? rot.rotateOnIdle),
+        idle_threshold_sec: Number.isFinite(idleSec) && idleSec > 0 ? Math.max(10, Math.min(86400, Math.floor(idleSec))) : base.replay_rotation.idle_threshold_sec,
+        rotate_on_max_size: Boolean(rot.rotate_on_max_size ?? rot.rotateOnMaxSize),
+        max_size_kb: Number.isFinite(maxSizeKb) && maxSizeKb > 0 ? Math.max(128, Math.min(102400, Math.floor(maxSizeKb))) : base.replay_rotation.max_size_kb,
+        rotate_events: rotateEvents,
+        rotate_on_long_task: Boolean(rot.rotate_on_long_task ?? rot.rotateOnLongTask),
+        long_task_ms: Number.isFinite(longTaskMs) && longTaskMs > 0 ? Math.max(100, Math.min(60000, Math.floor(longTaskMs))) : base.replay_rotation.long_task_ms,
         rotate_selectors: Array.isArray(rot.rotate_selectors ?? rot.rotateSelectors)
           ? (rot.rotate_selectors ?? rot.rotateSelectors).map(s => String(s).slice(0, 100)).slice(0, 50)
           : base.replay_rotation.rotate_selectors
