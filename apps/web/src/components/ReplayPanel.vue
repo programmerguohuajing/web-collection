@@ -698,9 +698,7 @@ defineExpose({ play, currentSessionCode })
             >
               <!-- 行 1：用户 / 会话 ID 独占一行，支持 OverflowTip 气泡提示 -->
               <div class="session-item-row session-item-head">
-                <strong class="session-item-user">
-                  <OverflowTip :text="replayUser(row) || row.sessionId || row.replayId" />
-                </strong>
+                <OverflowTip class="session-item-user" :text="replayUser(row) || row.sessionId || row.replayId" />
               </div>
 
               <!-- 行 2：URL (左) + 链路按钮 (中) + 格式化时间 (右) -->
@@ -842,22 +840,23 @@ defineExpose({ play, currentSessionCode })
 .replay-event-item div { display: grid; gap: 2px; min-width: 0; }
 .replay-event-item strong { overflow: hidden; color: var(--c-text); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .replay-event-item small { font-family: var(--font-mono); font-size: 11px; }
+:deep(.replay-session-card .el-card__body) { overflow: hidden; }
 .replay-page-size { width: 104px; }
-.replay-session-list { display: grid; gap: 6px; }
-.replay-session-item { width: 100%; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; color: var(--c-text); text-align: left; cursor: pointer; background: transparent; border: 1px solid transparent; border-radius: 8px; }
+.replay-session-list { display: grid; gap: 6px; width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
+.replay-session-item { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; color: var(--c-text); text-align: left; cursor: pointer; background: transparent; border: 1px solid transparent; border-radius: 8px; overflow: hidden; }
 .replay-session-item:hover { background: var(--c-surface-2); }
 .replay-session-item.active { color: var(--c-primary); background: var(--c-primary-soft); border-color: rgba(79,70,229,.22); }
-.session-item-row { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; }
+.session-item-row { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
 .session-item-head { line-height: 1.4; }
-.session-item-user { display: block; width: 100%; min-width: 0; font-size: 13px; font-weight: 600; color: var(--c-text); overflow: hidden; }
-.session-item-meta { gap: 8px; font-size: 11px; }
-.session-item-url { flex: 1 1 auto; min-width: 0; max-width: none; color: var(--c-text-muted); font-size: 11px; }
-.session-meta-right { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.session-item-time { color: var(--c-text-muted); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; }
-.session-journey-link { color: var(--c-primary); font-size: 11px; text-decoration: none; padding: 1px 5px; border-radius: 4px; background: var(--c-primary-soft); flex-shrink: 0; }
+.session-item-user { display: block; width: 100%; max-width: 100%; min-width: 0; font-size: 13px; font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: break-all; }
+.session-item-meta { gap: 6px; font-size: 11px; }
+.session-item-url { flex: 1 1 0%; width: 0; min-width: 0; max-width: 100%; color: var(--c-text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta-right { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; white-space: nowrap; }
+.session-item-time { color: var(--c-text-muted); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; flex-shrink: 0; }
+.session-journey-link { color: var(--c-primary); font-size: 11px; text-decoration: none; padding: 1px 5px; border-radius: 4px; background: var(--c-primary-soft); flex-shrink: 0; white-space: nowrap; }
 .session-journey-link:hover { opacity: 0.85; }
 .session-item-reason { margin-top: 1px; }
-.session-reason-badge { display: inline-block; padding: 2px 7px; color: var(--c-primary); background: var(--c-primary-soft); border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 1.3; }
+.session-reason-badge { display: inline-block; max-width: 100%; padding: 2px 7px; color: var(--c-primary); background: var(--c-primary-soft); border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .replay-session-pager { justify-content: center; margin-top: 12px; }
 
 @media (max-width: 1100px) {
