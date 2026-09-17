@@ -1650,8 +1650,8 @@ async function replayEvents(env,id){
   const startTime = performance.now();
   const hit=await env.DB.prepare('select session_id,base_session_id from replays where session_id=? limit 1').bind(id).first();
   const baseId=hit?.base_session_id||id;
-  const firstSnap = await env.DB.prepare('select id,created_at,session_id,events_json from replays where base_session_id=? order by created_at asc,id asc limit 1').bind(baseId).first();
-  let recentRows = (await env.DB.prepare('select id,created_at,session_id,events_json from replays where base_session_id=? order by created_at desc,id desc limit 25').bind(baseId).all()).results;
+  const firstSnap = await env.DB.prepare('select id,created_at,session_id,events_json from replays where (base_session_id=? or (base_session_id is null and session_id=?)) order by created_at asc,id asc limit 1').bind(baseId, baseId).first();
+  let recentRows = (await env.DB.prepare('select id,created_at,session_id,events_json from replays where (base_session_id=? or (base_session_id is null and session_id=?)) order by created_at desc,id desc limit 25').bind(baseId, baseId).all()).results;
   if (!recentRows.length) recentRows = (await env.DB.prepare('select id,created_at,session_id,events_json from replays where session_id=? order by created_at desc,id desc limit 25').bind(id).all()).results;
   if (!recentRows.length) recentRows = (await env.DB.prepare('select id,created_at,session_id,events_json from replays where base_session_id like ? order by created_at desc,id desc limit 25').bind(baseId+'_%').all()).results;
 

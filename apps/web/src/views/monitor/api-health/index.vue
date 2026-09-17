@@ -25,6 +25,10 @@ const drawerOpen = ref(false)
 const activeEndpoint = ref('')
 const series = ref([])
 const seriesLoading = ref(false)
+const page = ref(1)
+const pageSize = ref(10)
+const sortProp = ref('')
+const sortOrder = ref('')
 
 /** 当前全局时间范围的可读描述：与顶部选择器同源（store.rangeLabel），保证口径一致。 */
 const rangeLabel = computed(() => store.rangeLabel)
@@ -33,6 +37,38 @@ const filtered = computed(() => {
   const key = keyword.value.trim().toLowerCase()
   if (!key) return endpoints.value
   return endpoints.value.filter(item => String(item.endpoint || '').toLowerCase().includes(key))
+})
+
+const sorted = computed(() => {
+  const list = [...filtered.value]
+  if (!sortProp.value || !sortOrder.value) return list
+  const factor = sortOrder.value === 'descending' ? -1 : 1
+  const prop = sortProp.value
+  return list.sort((a, b) => {
+    let valA = a[prop]
+    let valB = b[prop]
+    if (typeof valA === 'string' || typeof valB === 'string') {
+      return String(valA || '').localeCompare(String(valB || '')) * factor
+    }
+    valA = Number(valA ?? 0)
+    valB = Number(valB ?? 0)
+    return (valA - valB) * factor
+  })
+})
+
+const paged = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return sorted.value.slice(start, start + pageSize.value)
+})
+
+function handleSortChange({ prop, order }) {
+  sortProp.value = prop || ''
+  sortOrder.value = order || ''
+  page.value = 1
+}
+
+watch(keyword, () => {
+  page.value = 1
 })
 
 const kpis = computed(() => {
@@ -87,10 +123,12 @@ async function load() {
     const data = await api(`/api/analytics/api-health?${queryFromFilters()}`, { requestKey: 'api-health:list' })
     endpoints.value = Array.isArray(data?.endpoints) ? data.endpoints : []
     total.value = Number(data?.total ?? endpoints.value.length)
+    page.value = 1
   } catch (error) {
     if (error?.code !== 'ABORT_ERR') loadError.value = error.message || 'API 健康数据加载失败'
     endpoints.value = []
     total.value = 0
+    page.value = 1
   } finally {
     loading.value = false
     pageLoading.value = false
@@ -164,10 +202,10 @@ watch(refreshVersion, () => load(), { immediate: true })
     <template #header>
       <div class="panel-head">
         <h2>API 端点健康</h2>
-        <small>{{ filtered.length }} 个端点 / 共 {{ total }} 个</small>
+        <small>{{ filtered.length }} 个端点 / 共 {{ total }} 个（第 {{ page }} / {{ Math.max(1, Math.ceil(filtered.length / pageSize)) }} 页）</small>
       </div>
     </template>
-    <el-table :data="filtered" border size="small" v-loading="loading" empty-text="暂无 API 调用数据">
+    <el-table :data="paged" border size="small" v-loading="loading" empty-text="暂无 API 调用数据" @sort-change="handleSortChange">
       <el-table-column label="端点" min-width="280">
         <template #default="{ row }">
           <div class="endpoint-cell">
@@ -176,15 +214,15 @@ watch(refreshVersion, () => load(), { immediate: true })
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="count" label="调用量" width="110" align="right" sortable />
-      <el-table-column label="错误率" width="110" align="right">
+      <el-table-column prop="count" label="调用量" width="110" align="right" sortable="custom" />
+      <el-table-column prop="errorRate" label="错误率" width="110" align="right" sortable="custom">
         <template #default="{ row }">
           <el-tag size="small" :type="errorRateType(row.errorRate)">{{ (row.errorRate * 100).toFixed(1) }}%</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="p50" label="P50(ms)" width="100" align="right" sortable />
-      <el-table-column prop="p95" label="P95(ms)" width="100" align="right" sortable />
-      <el-table-column prop="maxDuration" label="最大(ms)" width="100" align="right" />
+      <el-table-column prop="p50" label="P50(ms)" width="100" align="right" sortable="custom" />
+      <el-table-column prop="p95" label="P95(ms)" width="100" align="right" sortable="custom" />
+      <el-table-column prop="maxDuration" label="最大(ms)" width="100" align="right" sortable="custom" />
       <el-table-column label="状态码分布" min-width="230">
         <template #default="{ row }">
           <div class="status-cell">
@@ -201,6 +239,18 @@ watch(refreshVersion, () => load(), { immediate: true })
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination
+      v-if="filtered.length > 0"
+      class="pager"
+      background
+      layout="total, sizes, prev, pager, next, jumper"
+      :current-page="page"
+      :page-size="pageSize"
+      :page-sizes="[10, 20, 50, 100]"
+      :total="filtered.length"
+      @current-change="val => { page = val }"
+      @size-change="val => { pageSize = val; page = 1 }"
+    />
   </el-card>
 
   <el-card shadow="never" class="panel section">

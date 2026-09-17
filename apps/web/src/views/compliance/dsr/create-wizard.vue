@@ -13,7 +13,7 @@ import { useFilterStore } from '../../../stores/filters.js'
  * 步骤②修改模式/格式后继续时，自动取消旧草稿并按最终参数重建（命中量随重建刷新）；
  * 对话框中途关闭时若仍为 draft，自动取消工单（不留孤儿草稿）。
  */
-const emit = defineEmits(['changed'])
+const emit = defineEmits(['changed', 'close'])
 const store = useFilterStore()
 
 const SUBJECT_OPTIONS = [
@@ -45,7 +45,7 @@ function emptyForm() {
 
 const isErasure = computed(() => form.value.requestType === 'erasure')
 const createdRequest = computed(() => request.value)
-/** 步骤②参数是否与已创建草稿一致（不一致则重建） */
+/** 步骤②参数是否与已创建草稿一致 */
 const needsRecreate = computed(() => {
   if (!request.value) return false
   if (isErasure.value) return request.value.mode !== form.value.mode
@@ -72,6 +72,9 @@ async function createDraft() {
     subjectValue: String(form.value.subjectValue || '').trim(),
     requestType: form.value.requestType
   }
+  if (request.value?.id) {
+    body.draftId = request.value.id
+  }
   if (isErasure.value) {
     body.mode = form.value.mode
     if (form.value.mode === 'hard_delete') body.reason = String(form.value.reason || '').trim()
@@ -84,7 +87,6 @@ async function createDraft() {
     body: JSON.stringify(body)
   })
   request.value = data
-  emit('changed')
   return data
 }
 
@@ -92,12 +94,6 @@ async function goPreview() {
   if (!validateStep1()) return
   creating.value = true
   try {
-    if (request.value) {
-      // 回退修改了类型/主体等身份参数：取消旧草稿后按新参数重建（不留孤儿草稿）
-      await authApi(`/api/dsr/requests/${request.value.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
-      request.value = null
-      emit('changed')
-    }
     await createDraft()
     step.value = 1
   } catch (error) {
@@ -112,9 +108,6 @@ async function goConfirm() {
   creating.value = true
   try {
     if (needsRecreate.value) {
-      // 模式/格式变更：取消旧草稿并按最终参数重建（命中量随重建刷新）
-      await authApi(`/api/dsr/requests/${request.value.id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
-      request.value = null
       await createDraft()
     }
     step.value = 2
@@ -130,7 +123,7 @@ async function submitForApproval() {
   submitting.value = true
   try {
     await authApi(`/api/dsr/requests/${request.value.id}/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
-    ElMessage.success('已提交审批，等待第二管理员审批（审批人 ≠ 发起人）')
+    ElMessage.success('已提交审批')
     emit('changed')
     reset()
   } catch (error) {
@@ -140,7 +133,7 @@ async function submitForApproval() {
   }
 }
 
-/** 对话框关闭/完成后收尾：未提交的草稿自动取消（不留孤儿草稿） */
+/** 对话框关闭/完成后收尾：未提交的草稿自动取消，触发关闭事件 */
 async function reset() {
   const draft = request.value
   request.value = null
@@ -152,6 +145,7 @@ async function reset() {
       emit('changed')
     } catch { /* 取消失败不阻塞关闭 */ }
   }
+  emit('close')
 }
 
 function summaryLines() {
@@ -165,7 +159,7 @@ function summaryLines() {
       : `导出格式：${form.value.exportFormat.toUpperCase()}（单表上限 10000 行，超限截断标注）`,
     `命中量：事件 ${r.hitEvents} · 问题 ${r.hitIssues} · 回放 ${r.hitReplays}`,
     !isErasure.value && Number(r.hitReplays) > 0 ? '注意：命中会话回放（录屏敏感数据），执行导出时需二次确认' : '',
-    '提交后需另一位 Admin/Owner 审批通过方可执行（双人制衡）'
+    '提交后等待 Admin/Owner 审批（全员审计留痕）'
   ].filter(Boolean)
 }
 
@@ -329,51 +323,42 @@ onMounted(async () => {
   border: 1.5px solid var(--el-border-color, #cbd5e1);
 }
 
+/* 当前处于该步骤：高亮蓝底白字 + 蓝色粗字体标题 */
 .dsr-wizard :deep(.el-step.is-simple.is-process .el-step__icon) {
-  background: var(--el-color-primary, #4f46e5);
-  border-color: var(--el-color-primary, #4f46e5);
-  color: #ffffff;
+  background: var(--el-color-primary, #4f46e5) !important;
+  border-color: var(--el-color-primary, #4f46e5) !important;
+  color: #ffffff !important;
   box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
 }
 
-.dsr-wizard :deep(.el-step.is-simple.is-finish .el-step__icon) {
-  background: var(--el-color-primary-light-9, #eef2ff);
-  border-color: var(--el-color-primary, #4f46e5);
-  color: var(--el-color-primary, #4f46e5);
-}
-
-.dsr-wizard :deep(.el-step.is-simple.is-wait .el-step__icon) {
-  background: var(--el-fill-color-lighter, #f1f5f9);
-  border-color: var(--el-border-color-lighter, #cbd5e1);
-  color: var(--el-text-color-placeholder, #94a3b8);
-}
-
-.dsr-wizard :deep(.el-step.is-simple .el-step__main) {
-  flex: 0 1 auto;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.dsr-wizard :deep(.el-step.is-simple .el-step__title) {
-  font-size: 14px;
-  font-weight: 500;
-  white-space: nowrap !important;
-  word-break: keep-all !important;
-  max-width: none !important;
-  line-height: 1.4;
-}
-
 .dsr-wizard :deep(.el-step.is-simple.is-process .el-step__title) {
-  color: var(--el-text-color-primary, #0f172a);
-  font-weight: 600;
+  color: var(--el-color-primary, #4f46e5) !important;
+  font-weight: 600 !important;
 }
 
+/* 已完成的步骤：淡绿打勾图标 + 绿色标题 */
+.dsr-wizard :deep(.el-step.is-simple.is-success .el-step__icon),
+.dsr-wizard :deep(.el-step.is-simple.is-finish .el-step__icon) {
+  background: var(--el-color-success-light-9, #ecfdf5) !important;
+  border-color: var(--el-color-success, #10b981) !important;
+  color: var(--el-color-success, #10b981) !important;
+}
+
+.dsr-wizard :deep(.el-step.is-simple.is-success .el-step__title),
 .dsr-wizard :deep(.el-step.is-simple.is-finish .el-step__title) {
-  color: var(--el-color-primary, #4f46e5);
+  color: var(--el-color-success, #10b981) !important;
+  font-weight: 500;
+}
+
+/* 尚未到达的步骤：灰底灰字 */
+.dsr-wizard :deep(.el-step.is-simple.is-wait .el-step__icon) {
+  background: var(--el-fill-color-lighter, #f1f5f9) !important;
+  border-color: var(--el-border-color-lighter, #cbd5e1) !important;
+  color: var(--el-text-color-placeholder, #94a3b8) !important;
 }
 
 .dsr-wizard :deep(.el-step.is-simple.is-wait .el-step__title) {
-  color: var(--el-text-color-secondary, #64748b);
+  color: var(--el-text-color-secondary, #94a3b8) !important;
 }
 
 .dsr-wizard :deep(.el-step.is-simple .el-step__arrow) {

@@ -166,13 +166,15 @@ async function insertAudit(requestId, actorId, action, detail = {}) {
  * @param {string|null} actionOverride 审计 action 覆盖（executing 迁移按 PRD 归入 execute_export/execute_erasure）
  * @returns {Promise<object>} 迁移后的工单行（snake_case）
  */
-async function transition(row, to, actorId, patch = {}, actionOverride = null) {
+async function transition(row, to, actorId, patch = {}, actionOverride = null, actorRole = '') {
   if (!(DSR_TRANSITIONS[row.status] || []).includes(to)) {
     await insertAudit(row.id, actorId, 'illegal_transition', { from: row.status, to })
     throw conflict(`非法状态迁移：${row.status} → ${to}`, 'ILLEGAL_TRANSITION')
   }
-  if (to === 'approved' && String(actorId) === String(row.requested_by)) {
-    // QA #2：自批拦截落审计（action='blocked'），与 Worker 端同逻辑，保证审批制衡留痕零缺口
+  const isSelfApprove = to === 'approved' && String(actorId) === String(row.requested_by)
+  const isAdminOrOwner = ['admin', 'owner'].includes(actorRole)
+  if (isSelfApprove && !isAdminOrOwner) {
+    // 非 Admin/Owner 发起人自批拦截落审计
     await insertAudit(row.id, actorId, 'blocked', { reason: 'self_approve', from: row.status, to })
     throw forbidden('审批人不得为发起人（双人制衡）', 'FORBIDDEN')
   }
@@ -275,6 +277,18 @@ export async function createDsrRequest(input = {}, auth) {
   const v = normalizeCreateInput(input)
   const scope = await appScope(auth, input.appId)
   const hits = await countHits(scope, v.subjectType, v.subjectValue)
+  const draftId = String(input.draftId || '').trim().slice(0, 32)
+  if (draftId) {
+    const existing = await first('select * from dsr_requests where id=? and status=\'draft\'', [draftId])
+    if (existing) {
+      assertRequestVisible(existing, auth)
+      await run(
+        `update dsr_requests set app_id=?, subject_type=?, subject_value=?, request_type=?, mode=?, export_format=?, hit_events=?, hit_issues=?, hit_replays=? where id=?`,
+        [String(input.appId || '').trim().slice(0, 64), v.subjectType, v.subjectValue, v.requestType, v.mode, v.exportFormat, hits.events, hits.issues, hits.replays, existing.id]
+      )
+      return publicRequest(await requireRequest(existing.id, auth))
+    }
+  }
   const id = `dsr_${randomToken(12)}`
   const now = Date.now()
   const teamId = isAccountsEnabled() && auth?.teamId ? auth.teamId : null
@@ -330,7 +344,7 @@ export async function getDsrRequest(id, auth) {
 export async function submitDsrRequest(id, auth) {
   const actor = requireActor(auth, 'dsrCreate')
   const row = await requireRequest(id, auth)
-  const next = await transition(row, 'pending_approval', actor.userId)
+  const next = await transition(row, 'pending_approval', actor.userId, {}, null, actor.role)
   return publicRequest(next)
 }
 
@@ -346,22 +360,27 @@ export async function approveDsrRequest(id, body = {}, auth) {
   if (!decision) throw badRequest('decision 必须为 approve | reject', 'BAD_REQUEST')
   const now = Date.now()
   if (decision === 'approve') {
-    const next = await transition(row, 'approved', actor.userId, { approved_by: actor.userId, decided_at: now })
+    const next = await transition(row, 'approved', actor.userId, { approved_by: actor.userId, decided_at: now }, null, actor.role)
     return publicRequest(next)
   }
   const reason = String(body.reason || '').trim().slice(0, 512) || null
-  const next = await transition(row, 'rejected', actor.userId, { reject_reason: reason, decided_at: now })
+  const next = await transition(row, 'rejected', actor.userId, { reject_reason: reason, decided_at: now }, null, actor.role)
   return publicRequest(next)
 }
 
-/** POST /:id/cancel：仅发起人本人，draft/pending_approval 可取消（终态）。 */
+/** POST /:id/cancel：仅发起人本人，draft/pending_approval 可取消（终态）。未提交草稿直接物理清理。 */
 export async function cancelDsrRequest(id, auth) {
   const actor = requireActor(auth, 'dsrCreate')
   const row = await requireRequest(id, auth)
   if (String(actor.userId) !== String(row.requested_by)) {
     throw forbidden('仅发起人本人可取消工单', 'FORBIDDEN')
   }
-  const next = await transition(row, 'cancelled', actor.userId)
+  if (row.status === 'draft') {
+    await run('delete from dsr_requests where id=?', [row.id])
+    await run('delete from dsr_audit_logs where request_id=?', [row.id])
+    return { id: row.id, status: 'deleted' }
+  }
+  const next = await transition(row, 'cancelled', actor.userId, {}, null, actor.role)
   return publicRequest(next)
 }
 
