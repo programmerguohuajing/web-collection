@@ -284,10 +284,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub (Optional)
-        if: env.DOCKERHUB_USERNAME != ''
+        if: secrets.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@v3
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -298,6 +296,7 @@ jobs:
         with:
           images: |
             ghcr.io/${{ github.repository }}
+            jingguohua102/web-collection
           tags: |
             type=semver,pattern=v{{version}}
             type=semver,pattern=v{{major}}.{{minor}}
@@ -319,14 +318,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Update Docker Hub Description
-        if: env.DOCKERHUB_USERNAME != ''
+        if: secrets.DOCKERHUB_USERNAME != ''
         uses: peter-evans/dockerhub-description@v4
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ secrets.DOCKERHUB_USERNAME }}/web-collection
+          repository: jingguohua102/web-collection
           short-description: "Web Collection: All-in-One Frontend Monitoring, Session Replay, AI Diagnosis & MCP Server"
           readme-filepath: ./deploy/DOCKER_HUB_README.md
 
