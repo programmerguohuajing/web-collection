@@ -14,7 +14,7 @@ import {
   WarningFilled
 } from '@element-plus/icons-vue'
 import OverflowTip from './OverflowTip.vue'
-import { getReplayPlaybackBlocker } from '../utils/replay-events.js'
+import { detectReplayKind, getReplayPlaybackBlocker } from '../utils/replay-events.js'
 
 const props = defineProps({
   replays: { type: Array, default: () => [] },
@@ -40,6 +40,10 @@ const loadingReplayId = ref('')
 const failedReplayIds = ref(new Set())
 const replayEvents = ref([])
 const replayViewport = ref({ width: 0, height: 0 })
+const replayKind = ref('rrweb')
+const currentSnapshotImage = ref('')
+const activePointer = ref({ active: false, x: 0, y: 0, kind: 'down' })
+const activeRouteName = ref('')
 let currentReplayer = null
 let progressTimer = 0
 let playRequestId = 0
@@ -255,6 +259,45 @@ function ensureReplayFrameVisible(width, height) {
   iframe.setAttribute('height', String(height))
 }
 
+function syncFlutterFrame(offset) {
+  if (!replayEvents.value.length) return
+  const firstTs = Number(replayEvents.value[0]?.timestamp) || 0
+  const currentTs = firstTs + offset
+
+  if (replayKind.value === 'flutter_snapshot') {
+    const snapshots = replayEvents.value.filter(e => e.name === 'canvas_snapshot' || e.props?.snapshot_type === 'image_png')
+    let matched = null
+    for (const item of snapshots) {
+      if ((Number(item.timestamp) || 0) <= currentTs) matched = item
+      else break
+    }
+    if (!matched && snapshots.length) matched = snapshots[0]
+    currentSnapshotImage.value = matched?.props?.image_data || ''
+  } else if (replayKind.value === 'flutter_pointer') {
+    const pointers = replayEvents.value.filter(e => e.name === 'pointer_event' || e.props?.kind)
+    let matched = null
+    for (const item of pointers) {
+      if ((Number(item.timestamp) || 0) <= currentTs) matched = item
+      else break
+    }
+    if (matched) {
+      activePointer.value = {
+        active: true,
+        x: Number(matched.props?.x) || 0,
+        y: Number(matched.props?.y) || 0,
+        kind: String(matched.props?.kind || 'down')
+      }
+    } else {
+      activePointer.value.active = false
+    }
+
+    const routeEvent = replayEvents.value.filter(e => e.name === 'pv' || e.props?.path).find(e => (Number(e.timestamp) || 0) <= currentTs)
+    if (routeEvent) {
+      activeRouteName.value = routeEvent.props?.title || routeEvent.props?.path || ''
+    }
+  }
+}
+
 async function openReplay(item, autoPlay = false, isAutoFallback = false) {
   if (!item?.replayId || loadingReplayId.value === item.replayId) return
   const requestId = ++playRequestId
@@ -270,7 +313,6 @@ async function openReplay(item, autoPlay = false, isAutoFallback = false) {
   try {
     const payload = await props.loadReplay(item.replayId)
     if (requestId !== playRequestId || currentReplayId.value !== String(item.replayId)) return
-    // 超长会话截断元数据（后端 30 分钟上限）：提示用户原会话跨度与截取范围
     if (payload && typeof payload === 'object' && !Array.isArray(payload) && payload.truncated) {
       replayTruncated.value = { originalSpanMs: Number(payload.originalSpanMs) || 0, spanMs: Number(payload.spanMs) || 0 }
     }
@@ -280,7 +322,7 @@ async function openReplay(item, autoPlay = false, isAutoFallback = false) {
       : Array.isArray(payload?.events)
         ? payload.events
         : Array.isArray(payload?.data) ? payload.data : []
-    if (!events.length || !replayEl.value) {
+    if (!events.length) {
       replayError.value = '未获取到回放事件数据'
       failedReplayIds.value.add(String(item.replayId))
       emit('replay-not-found', item.replayId)
@@ -290,7 +332,10 @@ async function openReplay(item, autoPlay = false, isAutoFallback = false) {
       return
     }
 
-    const validEvents = events.filter(event => event && Number.isFinite(Number(event.timestamp)))
+    const validEvents = events
+      .filter(event => event && (Number.isFinite(Number(event.timestamp)) || Number.isFinite(Number(event.ts))))
+      .map(event => ({ ...event, timestamp: Number(event.timestamp || event.ts) }))
+
     if (!validEvents.length) {
       replayError.value = '事件数据格式不完整，无法播放'
       failedReplayIds.value.add(String(item.replayId))
@@ -300,8 +345,6 @@ async function openReplay(item, autoPlay = false, isAutoFallback = false) {
       return
     }
 
-    // 播放前校验：缺少全量快照、或快照已被 Cloudflare/HTML 错误响应污染时，
-    // rrweb 无法还原业务画面。此时直接给出错误态，避免把源码铺满播放器窗口。
     const playbackBlocker = getReplayPlaybackBlocker(validEvents)
     if (playbackBlocker) {
       replayError.value = playbackBlocker
@@ -313,35 +356,40 @@ async function openReplay(item, autoPlay = false, isAutoFallback = false) {
     }
 
     replayEvents.value = validEvents
-    const meta = validEvents.find(event => event.type === 4)?.data || {}
-    const width = Number(meta.width) || replayEl.value.clientWidth || 1024
-    const height = Number(meta.height) || replayEl.value.clientHeight || 768
-    replayViewport.value = { width, height }
-    currentReplayer = new Replayer(validEvents, {
-      root: replayEl.value,
-      width,
-      height,
-      speed: playbackRate.value,
-      UNSAFE_replayCanvas: true,
-      showWarning: false
-    })
+    const kind = detectReplayKind(validEvents)
+    replayKind.value = kind
     duration.value = Math.max(validEvents[validEvents.length - 1].timestamp - validEvents[0].timestamp, 0)
     progress.value = 0
-    currentReplayer.play(0)
-    await waitForInitialRender(currentReplayer)
-    if (requestId !== playRequestId || currentReplayId.value !== String(item.replayId)) return
-    // BUG-007 修复：被录页面引用的 http:// 资源在 HTTPS 平台回放时被浏览器阻止（Mixed Content）。
-    // 向 rrweb 回放 iframe 注入 CSP upgrade-insecure-requests，把 http 资源自动升级为 https 请求，
-    // 消除控制台大量警告；公网 http 资源升级后可恢复显示，内网地址升级失败转为安静的网络错误。
-    injectUpgradeInsecureRequests()
-    attachAssetFailurePlaceholder()
-    ensureReplayFrameVisible(width, height)
-    fitReplay(width, height)
+
+    if (kind === 'rrweb') {
+      const meta = validEvents.find(event => event.type === 4)?.data || {}
+      const width = Number(meta.width) || replayEl.value?.clientWidth || 1024
+      const height = Number(meta.height) || replayEl.value?.clientHeight || 768
+      replayViewport.value = { width, height }
+      currentReplayer = new Replayer(validEvents, {
+        root: replayEl.value,
+        width,
+        height,
+        speed: playbackRate.value,
+        UNSAFE_replayCanvas: true,
+        showWarning: false
+      })
+      currentReplayer.play(0)
+      await waitForInitialRender(currentReplayer)
+      if (requestId !== playRequestId || currentReplayId.value !== String(item.replayId)) return
+      injectUpgradeInsecureRequests()
+      attachAssetFailurePlaceholder()
+      ensureReplayFrameVisible(width, height)
+      fitReplay(width, height)
+    } else {
+      syncFlutterFrame(0)
+    }
+
     if (autoPlay) {
       isPlaying.value = true
       startProgress()
     } else {
-      currentReplayer.pause()
+      if (kind === 'rrweb') currentReplayer?.pause()
       isPlaying.value = false
     }
   } catch (error) {
@@ -360,9 +408,6 @@ function play(item) {
   return openReplay(item, true, true)
 }
 
-/**
- * 当前会话无回放数据时，自动尝试列表中第一条未失败过的可用会话（防止死循环）。
- */
 function fallbackToFirstAvailable() {
   const next = props.replays.find(row => row?.replayId && !failedReplayIds.value.has(String(row.replayId)))
   if (next) openReplay(next, false, true)
@@ -372,10 +417,6 @@ function prefetch(item) {
   if (item?.replayId) props.loadReplay(item.replayId).catch(() => {})
 }
 
-/**
- * BUG-007：向回放 iframe 注入 <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">。
- * 幂等（重复注入时跳过）；rrweb iframe 为同源 about:blank，可安全访问 contentDocument。
- */
 function injectUpgradeInsecureRequests() {
   try {
     const iframe = replayEl.value?.querySelector('iframe')
@@ -386,14 +427,9 @@ function injectUpgradeInsecureRequests() {
     meta.setAttribute('http-equiv', 'Content-Security-Policy')
     meta.setAttribute('content', 'upgrade-insecure-requests')
     doc.head.prepend(meta)
-  } catch { /* iframe 不可访问时静默降级，不影响回放 */ }
+  } catch { /* 静默降级 */ }
 }
 
-/**
- * 回放资源不可达占位：被录页面的图片（内网 / 下线 / 防盗链地址）在回放 iframe 中加载
- * 失败时给失败 img 标记并注入占位样式（浅灰块 + 虚线边框），避免破图标 / 纯空白的误导
- * 观感。资源加载 error 不冒泡但可在捕获阶段监听；iframe 随 Replayer 重建时监听随 doc 回收。
- */
 function attachAssetFailurePlaceholder() {
   try {
     const iframe = replayEl.value?.querySelector('iframe')
@@ -406,13 +442,9 @@ function attachAssetFailurePlaceholder() {
     const style = doc.createElement('style')
     style.textContent = 'img[data-eys-asset-failed]{box-sizing:border-box;min-width:36px;min-height:36px;padding:4px;border:1px dashed #c0c4cc;border-radius:4px;background:#f5f7fa;object-fit:contain}'
     doc.head.appendChild(style)
-  } catch { /* iframe 不可访问时静默降级 */ }
+  } catch { /* 静默降级 */ }
 }
 
-/**
- * BUG-009：回放列表行的 session_id 是分段 ID（{sessionId}_{ts36}_{rand}[_segN]），
- * journey 检索需基础事件会话 ID——去掉 _segN 后缀与录制实例随机后缀（后两段）。
- */
 function journeySessionIdOf(row = {}) {
   const raw = String(row.sessionId || row.session_id || row.replayId || '')
   if (!raw) return ''
@@ -424,31 +456,38 @@ function journeySessionIdOf(row = {}) {
 function playReplay() {
   const startAt = duration.value && progress.value >= duration.value ? 0 : progress.value
   progress.value = startAt
-  currentReplayer?.play(startAt)
+  if (replayKind.value === 'rrweb') {
+    currentReplayer?.play(startAt)
+  } else {
+    syncFlutterFrame(startAt)
+  }
   isPlaying.value = true
   startProgress()
 }
 
 function pauseReplay() {
-  currentReplayer?.pause()
+  if (replayKind.value === 'rrweb') {
+    currentReplayer?.pause()
+  }
   isPlaying.value = false
   window.clearInterval(progressTimer)
 }
 
 function seek(value) {
-  if (!currentReplayer) return
   const offset = Math.max(0, Number(value) || 0)
-  if (isPlaying.value) {
-    currentReplayer.play(offset)
-  } else {
-    // 暂停态用 pause(offset) 定位：rrweb 会同步应用该偏移前的事件再暂停；
-    // 若在未起播时直接 play(offset)，timer 未启动会渲染出异常内容。
-    currentReplayer.pause(offset)
-  }
   progress.value = offset
+  if (replayKind.value === 'rrweb') {
+    if (!currentReplayer) return
+    if (isPlaying.value) {
+      currentReplayer.play(offset)
+    } else {
+      currentReplayer.pause(offset)
+    }
+  } else {
+    syncFlutterFrame(offset)
+  }
 }
 
-/** 拖动进度条时仅更新本地进度值（不触发 rrweb seek），松手后由 @change=seek 真正跳转。 */
 function onSliderInput(value) {
   progress.value = Math.max(0, Number(value) || 0)
 }
@@ -461,17 +500,30 @@ function setPlaybackRate(rate) {
 function startProgress() {
   window.clearInterval(progressTimer)
   progressTimer = window.setInterval(() => {
-    if (!currentReplayer || !duration.value) return
-    const current = typeof currentReplayer.getCurrentTime === 'function'
-      ? Number(currentReplayer.getCurrentTime())
-      : progress.value + (500 * playbackRate.value)
-    const next = Math.min(Number.isFinite(current) ? current : progress.value, duration.value)
-    progress.value = next
-    if (next >= duration.value) {
-      window.clearInterval(progressTimer)
-      isPlaying.value = false
+    if (!duration.value) return
+    if (replayKind.value === 'rrweb') {
+      if (!currentReplayer) return
+      const current = typeof currentReplayer.getCurrentTime === 'function'
+        ? Number(currentReplayer.getCurrentTime())
+        : progress.value + (200 * playbackRate.value)
+      const next = Math.min(Number.isFinite(current) ? current : progress.value, duration.value)
+      progress.value = next
+      if (next >= duration.value) {
+        window.clearInterval(progressTimer)
+        isPlaying.value = false
+      }
+    } else {
+      const nextProgress = progress.value + (100 * playbackRate.value)
+      if (nextProgress >= duration.value) {
+        progress.value = duration.value
+        isPlaying.value = false
+        window.clearInterval(progressTimer)
+      } else {
+        progress.value = nextProgress
+      }
+      syncFlutterFrame(progress.value)
     }
-  }, 500)
+  }, 100)
 }
 
 function destroyPlayer() {
@@ -563,7 +615,24 @@ defineExpose({ play, currentSessionCode })
           <div v-if="replayTruncated" class="replay-truncated-tip">
             原会话跨度 {{ formatDuration(replayTruncated.originalSpanMs) }}（含长时间挂机空白），已截取最近 {{ formatDuration(replayTruncated.spanMs) }} 播放
           </div>
-          <div ref="replayEl" class="replay-stage"></div>
+          <div v-if="replayKind === 'flutter_snapshot'" class="replay-stage flutter-stage">
+            <div v-if="currentSnapshotImage" class="flutter-snapshot-container">
+              <img :src="currentSnapshotImage.startsWith('data:') ? currentSnapshotImage : 'data:image/png;base64,' + currentSnapshotImage" class="flutter-snapshot-img" alt="Flutter Canvas Snapshot" />
+            </div>
+            <div v-else class="flutter-empty-tip">未获取到 Flutter 画面快照分片</div>
+          </div>
+          <div v-else-if="replayKind === 'flutter_pointer'" class="replay-stage flutter-stage">
+            <div class="flutter-pointer-container">
+              <div class="flutter-phone-header">📱 Flutter 触控轨迹回放 {{ activeRouteName ? '· ' + activeRouteName : '' }}</div>
+              <div class="flutter-phone-screen">
+                <div v-if="activePointer.active" class="flutter-pointer-dot" :class="activePointer.kind" :style="{ left: activePointer.x + 'px', top: activePointer.y + 'px' }">
+                  <span class="pointer-coords">({{ activePointer.x }}, {{ activePointer.y }})</span>
+                </div>
+                <div class="flutter-pointer-hint">正在播放 Flutter 用户手势轨迹</div>
+              </div>
+            </div>
+          </div>
+          <div v-else ref="replayEl" class="replay-stage"></div>
           <div v-if="loadingReplayId" class="replay-stage-state">
             <el-icon class="is-loading"><RefreshRight /></el-icon>
             <strong>正在加载会话回放</strong>
@@ -876,4 +945,17 @@ defineExpose({ play, currentSessionCode })
   .replay-side-stack { grid-template-columns: 1fr; }
   .replay-session-card { grid-column: auto; }
 }
+
+.flutter-stage { display: flex; align-items: center; justify-content: center; background: #0f1420; min-height: 462px; padding: 16px; }
+.flutter-snapshot-container { display: flex; justify-content: center; align-items: center; max-width: 100%; max-height: 460px; }
+.flutter-snapshot-img { max-width: 100%; max-height: 460px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); object-fit: contain; }
+.flutter-empty-tip { color: #94a3b8; font-size: 13px; text-align: center; }
+.flutter-pointer-container { width: 320px; height: 440px; background: #1a202c; border-radius: 20px; border: 3px solid #334155; position: relative; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+.flutter-phone-header { background: #0f172a; padding: 8px 12px; color: #94a3b8; font-size: 11px; text-align: center; border-bottom: 1px solid #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flutter-phone-screen { flex: 1; position: relative; background: #1e293b; display: flex; align-items: center; justify-content: center; }
+.flutter-pointer-dot { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: rgba(99, 102, 241, 0.6); border: 2px solid #818cf8; transform: translate(-50%, -50%); transition: all 0.1s ease; pointer-events: none; z-index: 10; }
+.flutter-pointer-dot.down { background: rgba(239, 68, 68, 0.7); border-color: #fca5a5; transform: translate(-50%, -50%) scale(1.3); }
+.flutter-pointer-dot.up { background: rgba(16, 185, 129, 0.6); border-color: #6ee7b7; }
+.pointer-coords { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #f8fafc; background: rgba(15, 23, 42, 0.85); padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
+.flutter-pointer-hint { color: #64748b; font-size: 12px; text-align: center; user-select: none; }
 </style>

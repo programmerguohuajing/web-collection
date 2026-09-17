@@ -63,6 +63,19 @@ function isCloudflareEdgeErrorText(text) {
   return /worker exceeded resource limits|error code:\s*1\d{3}|error\s+1\d{3}|cloudflare ray id|ray id:\s*[a-f0-9]+|cf-error|cf-wrapper/i.test(text)
 }
 
+export function detectReplayKind(events) {
+  const list = Array.isArray(events) ? events : []
+  for (const event of list) {
+    if (event?.name === 'canvas_snapshot' || event?.props?.snapshot_type === 'image_png') {
+      return 'flutter_snapshot'
+    }
+    if (event?.name === 'pointer_event' || (event?.props?.platform === 'flutter' && event?.type === 'replay')) {
+      return 'flutter_pointer'
+    }
+  }
+  return 'rrweb'
+}
+
 export function getReplayPlaybackBlocker(events) {
   if (typeof events === 'string') {
     if (isCloudflareEdgeErrorText(events) || isHtmlSourceText(events)) {
@@ -70,6 +83,13 @@ export function getReplayPlaybackBlocker(events) {
     }
   }
   const list = Array.isArray(events) ? events : []
+
+  // 如果是 Flutter 上报的数据（包含 canvas_snapshot 或 pointer_event），无需 DOM type: 2 全量快照
+  const kind = detectReplayKind(list)
+  if (kind === 'flutter_snapshot' || kind === 'flutter_pointer') {
+    return ''
+  }
+
   if (!list.some(event => event?.type === 2)) {
     return '该会话缺少页面全量快照（仅有交互事件），无法重建播放画面'
   }
