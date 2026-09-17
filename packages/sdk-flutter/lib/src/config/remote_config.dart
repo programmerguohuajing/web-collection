@@ -54,7 +54,7 @@ class WebCollectionRemoteConfig {
 class WebCollectionRemoteConfigFetcher {
   static Future<WebCollectionRemoteConfig?> fetch(WebCollectionOptions options) async {
     try {
-      final url = Uri.parse('${options.effectiveRemoteConfigEndpoint}?appId=${options.appId}&sdkVersion=0.1.0&appVersion=${options.release}');
+      final url = Uri.parse('${options.effectiveRemoteConfigEndpoint}?appId=${options.appId}&sdkVersion=0.8.0&appVersion=${options.release}');
       final response = await http.get(url, headers: {
         'x-app-key': options.collectKey,
         'Accept': 'application/json',
