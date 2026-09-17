@@ -33,6 +33,7 @@ import { createMaskingMiddleware, MASK_SKIP_PREFIXES } from './privacy.js'
 import { badRequest } from './utils/http-error.js'
 import { buildCapabilities, NODE_CAPABILITIES } from '../../../packages/deployment-capabilities.js'
 import { createAiRouter } from './ai-service.js'
+import { createMcpRouter } from './mcp-service.js'
 import { startSloScheduler } from './slo-scheduler.js'
 import { createSlo, updateSloById, deleteSlo, listSlo, getSlo, computeBudget, computeTrend, listSloAlerts, computeSnapshot, evaluateAlerts, setAlertPolicy } from './services/slo-service.js'
 import { startSyntheticScheduler } from './synthetic-scheduler.js'
@@ -112,6 +113,9 @@ app.get('/api/capabilities', (req, res) => {
 
 // AI 诊断（M2）：/api/ai/*（Node + PG + pgvector，复用 packages/ai 共享逻辑）
 app.use('/api/ai', createAiRouter())
+
+// MCP 服务（M3）：/mcp 端点（原生打入镜像，支持 Claude Desktop / Cursor / Third-party Agent 直连）
+app.use('/mcp', createMcpRouter({ port }))
 
 // 公开埋点入口：支持单条、数组、以及 { events: [...] } 批量格式。
 app.post('/api/collect', async (req, res, next) => {

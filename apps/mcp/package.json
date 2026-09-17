@@ -6,6 +6,7 @@
   "description": "MCP server exposing web-collection SDK data (events/traces/issues/replays/analytics/alerts) to AI agents. Plan A: wraps existing /api/* REST. DataSource abstraction allows future direct D1/Postgres implementations.",
   "main": "src/index.ts",
   "scripts": {
+    "build": "esbuild src/node-entry.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --packages=external",
     "deploy": "wrangler deploy --config wrangler.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc",
     "typecheck": "tsc --noEmit",
@@ -17,6 +18,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260901.1",
+    "esbuild": "^0.24.0",
     "typescript": "^5.5.4",
     "wrangler": "^4.0.0"
   }

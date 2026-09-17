@@ -14,8 +14,8 @@ COPY . .
 # 安装工作区依赖
 RUN pnpm install
 
-# 构建前端 Web 控制台 与 SDK 产物
-RUN pnpm --filter @web-collection/web build && pnpm --filter @web-collection/sdk build
+# 构建 MCP 网关、前端 Web 控制台 与 SDK 产物
+RUN pnpm --filter @web-collection/mcp build && pnpm --filter @web-collection/web build && pnpm --filter @web-collection/sdk build
 
 # ==========================================
 # Stage 2: Runner (All-in-One 开箱即用模式)
