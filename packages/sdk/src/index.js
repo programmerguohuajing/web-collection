@@ -1034,6 +1034,19 @@ export function createEys(options = {}) {
     })
   }
 
+  /** 动态应用远程下发的采集与回放截断配置 */
+  function applyRemoteConfig(remote) {
+    if (!remote || typeof remote !== 'object') return
+    if (remote.replay_rotation && typeof remote.replay_rotation === 'object') {
+      cfg.replayRotateOnRoute = remote.replay_rotation.rotate_on_route !== false
+      cfg.replayRotateOnError = remote.replay_rotation.rotate_on_error !== false
+      cfg.replayRotateOnMaxDuration = Boolean(remote.replay_rotation.rotate_on_max_duration)
+      if (Array.isArray(remote.replay_rotation.rotate_selectors)) {
+        cfg.replayRotateSelectors = remote.replay_rotation.rotate_selectors
+      }
+    }
+  }
+
   /**
    * 白屏检测：定时检查指定选择器是否渲染出有效内容
    * - 检测到有效内容 → 上报 white_screen 耗时 + blank_screen_rate=0
