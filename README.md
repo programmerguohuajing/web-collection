@@ -60,6 +60,7 @@ Web Collection is not just a console — it ships **agent-ready interfaces and b
 - [🌟 What's New in 0.5.0](#whats-new-in-050)
 - [🤖 AI & MCP](#ai-mcp)
 - [🚀 Quick Start](#quick-start)
+- [🐳 Docker & K8s Containerized Deployment](#docker--k8s-containerized-deployment)
 - [🔌 SDK Integration](#sdk-integration)
 - [📚 Documentation](#documentation)
 - [📂 Project Structure](#project-structure)
@@ -204,6 +205,46 @@ pm2 logs web-collection-api
 pm2 restart web-collection-api --update-env
 pm2 stop web-collection-api
 ```
+
+## 🐳 Docker & K8s Containerized Deployment
+
+Web Collection provides an **All-in-One Docker container image** containing the Web Console, API server, AI Diagnosis engine, native MCP endpoint (`/mcp`), and an embedded PostgreSQL database for zero-config 1-click execution.
+
+### 1. Quick Start with Docker (Out of the box)
+
+Run a single standalone container locally (with embedded PostgreSQL database):
+
+```bash
+# 1. Build local Docker image with release tags
+pnpm docker:build
+
+# 2. Run single container (maps port 8787)
+docker run -d -p 8787:8787 --name web-collection web-collection:latest
+```
+
+Open `http://localhost:8787` in your browser for the full web console, AI assistant, and native MCP server endpoint (`http://localhost:8787/mcp`).
+
+> 💡 **Docker Desktop GUI Users**: Find `web-collection:latest` under Images, click **Run**, expand `Optional settings` -> enter `8787` in `Host port`, and launch!
+
+### 2. Docker Compose Self-Hosted Deployment
+
+Launch API + dedicated PostgreSQL container:
+
+```bash
+cd deploy/self-hosted
+docker compose up -d
+```
+
+### 3. Kubernetes (K8s) Cluster Deployment
+
+Full Kubernetes production manifests (Deployment, Service, ConfigMap, Secret, Ingress, Kustomization) are included under `deploy/k8s/`:
+
+```bash
+# Apply all K8s manifests
+kubectl apply -k deploy/k8s
+```
+
+See **[Kubernetes & Docker Deployment Guide](deploy/k8s/README.md)** for details.
 
 ### SourceMap auto-upload
 
