@@ -16,6 +16,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://web-collection.jingguohua.cc.cd
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
