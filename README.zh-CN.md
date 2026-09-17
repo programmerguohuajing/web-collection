@@ -33,15 +33,11 @@ Web Collection 是 **pnpm monorepo** 前端监控系统：Vue 3 + Element Plus �
   </tr>
 </table>
 
-## 🌟 0.5.0 新特性
+## 🌟 0.6.0 新特性
 
-- **SDK 心跳探针** —— 检测采集黑洞（客户端已发、服务端零入库），通过 `onStatus` / `eys.monitoring()` 暴露 `server-blackhole` 等级。
-- **留存 / 同期群分析** —— 新增洞察页，按首次访问同期群观测留存曲线。
-- **智能基线异常检测** —— Node 与 Cloudflare 双后端基线偏离告警。
-- **知识中枢** —— Article 模型 + 治理台 / 帮助中心。
-- **独立 MCP 服务** —— 基于 REST 数据平面的 13 个工具，并预留 D1 直连。
-- **OTLP 导出** —— 可开启的 `otlp`（http/json）导出到 OpenTelemetry Collector。
-- **多端 SDK 首发** —— 首发 `@web-collection/sdk-react-native` 与 `@web-collection/sdk-electron`（各自 0.1.0）。
+- **回放会话治理** —— 闲置 10 分钟自动切分新会话（`replayIdleResetMs`）、60s 循环连续录制（`replayContinuous`）、跨域图片/字体资源自动内联为 dataURI（`replayInlineAssets`）。
+- **SDK 采集熔断器** —— 新增客户端发送熔断（`collectBreakerThreshold` / `collectBreakerCooldownMs`），服务端故障期间自动关断并半开探测恢复，防止报错风暴。
+- **D1 行读治理与预聚合** —— 小时级预聚合表与 Summary 缝合，多级边缘缓存，D1 行读下降 50%+。
 
 完整变更见 [CHANGELOG](./CHANGELOG.md)。
 

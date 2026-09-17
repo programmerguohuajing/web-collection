@@ -33,15 +33,11 @@ Web Collection is a **pnpm monorepo** frontend monitoring system: a Vue 3 + Elem
   </tr>
 </table>
 
-## 🌟 What's New in 0.5.0
+## 🌟 What's New in 0.6.0
 
-- **SDK heartbeat probe** — detects collection black-holes (client sent, server received zero) and surfaces a `server-blackhole` level via `onStatus` / `eys.monitoring()`.
-- **Retention & cohort analysis** — new insight page observing retention curves by first-visit cohort.
-- **Smart baseline anomaly detection** — baseline-deviation alerts on both Node and Cloudflare backends.
-- **Knowledge hub** — Article model + governance console / help center.
-- **Standalone MCP service** — 13 tools over the REST data plane, with D1 direct-connect.
-- **OTLP export** — opt-in `otlp` (http/json) export to an OpenTelemetry Collector.
-- **Multi-platform SDKs** — first release of `@web-collection/sdk-react-native` and `@web-collection/sdk-electron` (each 0.1.0).
+- **Session Replay Governance** — automatic session rotation on 10m idle (`replayIdleResetMs`), 60s continuous loop recording (`replayContinuous`), and dataURI inlining for cross-origin assets (`replayInlineAssets`).
+- **SDK Circuit Breaker** — client-side circuit breaker (`collectBreakerThreshold` / `collectBreakerCooldownMs`) to freeze collection during long server outages and auto-recover gracefully.
+- **D1 Read Optimization & Summary Stitching** — 50%+ D1 read reduction with pre-aggregated hourly tables, summary stitching, and multi-tier edge caching.
 
 See [CHANGELOG](./CHANGELOG.md) for the full list.
 
