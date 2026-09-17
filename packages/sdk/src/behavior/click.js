@@ -9,9 +9,18 @@ import { elementInfo } from '../utils/dom.js'
  * @param {object} opts
  * @param {Function} opts.push - SDK 主实例的事件推入方法
  */
-export function setupClickMonitor({ push, sanitizer }) {
+export function setupClickMonitor({ push, sanitizer, onRotateClick, rotateSelectors }) {
   const onClick = event => {
     const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement
+    if (typeof onRotateClick === 'function' && source?.closest) {
+      const selectorsList = Array.isArray(rotateSelectors) && rotateSelectors.length
+        ? rotateSelectors.join(',')
+        : '.eys-rotate,[data-eys-rotate],.eys-truncate,[data-eys-truncate]'
+      const rotateEl = source.closest(selectorsList)
+      if (rotateEl) {
+        onRotateClick(rotateEl)
+      }
+    }
     const target = source?.closest?.('[data-track],button,a,input,textarea,select,[role="button"],uni-button') || source
     if (!target) return
     const props = elementInfo(target)

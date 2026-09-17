@@ -218,7 +218,11 @@ export function createEys(options = {}) {
     exposure: true,
     // replay 控制是否开启会话回放采集。
     replay: true,
-    replaySegmentByRoute: true,
+    replayRotateByRoute: true,
+    replayRotateOnRoute: true,
+    replayRotateOnError: true,
+    replayRotateOnMaxDuration: false,
+    replayRotateSelectors: ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]'],
     replayMaxDuration: 60000,
     // replayContinuous：单段达到 replayMaxDuration 后自动开新分段继续录制（默认开启）。
     // 旧行为（false）在 60s 后停录，只有路由/错误才重新启动，表现为「只录到首屏/路由切换
@@ -884,6 +888,8 @@ export function createEys(options = {}) {
     addReplayEvent: (tag, payload = {}) => addReplayEvent(tag, sanitizer.sanitizeEvent({ props: payload }).props),
     takeReplaySnapshot,
     endReplaySegment,
+    rotateReplaySession: (reason = 'custom') => endReplaySegment(reason, { rotateBase: true }),
+    cutReplay: (reason = 'custom') => endReplaySegment(reason, { rotateBase: true }),
     // 链路追踪公共 API
     startSpan: tracer ? (name, options) => tracer.startSpan(name, options) : noopSpan,
     withSpan: tracer ? (name, fn, options) => tracer.withSpan(name, fn, options) : (name, fn) => fn(),
@@ -946,8 +952,20 @@ export function createEys(options = {}) {
     safe('whiteScreen', () => observeWhiteScreen())
     // 8) JS 启动耗时（用双重 rAF 确保渲染完成后再计算）
     requestAnimationFrame(() => requestAnimationFrame(() => metric('js_boot', performance.now() - sdkStartedAt)))
-    // 9) 行为监控 + 回放路由分段
-    if (cfg.behavior) stopBehavior = safe('behavior', () => setupBehaviorMonitor({ push, sanitizer, onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute && consentMap.replay) endReplaySegment('route') }, formTracking: cfg.formTracking, rageClick: cfg.rageClick, deadClick: cfg.deadClick, interactionTracking: cfg.interactionTracking, inputTracking: cfg.inputTracking, selectTracking: cfg.selectTracking }))
+    // 9) 行为监控 + 回放路由分段与文件轮换截断
+    if (cfg.behavior) stopBehavior = safe('behavior', () => setupBehaviorMonitor({
+      push,
+      sanitizer,
+      onRoute: () => { const start = performance.now(); requestAnimationFrame(() => requestAnimationFrame(() => metric('route_render', performance.now() - start))); if (cfg.replaySegmentByRoute && consentMap.replay) endReplaySegment('route') },
+      onRotateClick: () => { if (cfg.replay && consentMap.replay) endReplaySegment('click', { rotateBase: true }) },
+      rotateSelectors: cfg.replayRotateSelectors,
+      formTracking: cfg.formTracking,
+      rageClick: cfg.rageClick,
+      deadClick: cfg.deadClick,
+      interactionTracking: cfg.interactionTracking,
+      inputTracking: cfg.inputTracking,
+      selectTracking: cfg.selectTracking
+    }))
     else if (cfg.replay && consentMap.replay && cfg.replaySegmentByRoute) stopRoute = safe('route', () => setupRouteMonitor({ push: () => {}, onRoute: () => endReplaySegment('route') }))
     // 10) 曝光采集（P1-4 · 能力位门控：无 IntersectionObserver 的环境静默跳过并发诊断）
     if (cfg.exposure && requireCapability('exposure', { required: true })) stopExposure = safe('exposure', () => setupExposureMonitor({ push }))
@@ -1415,20 +1433,34 @@ export function createEys(options = {}) {
    * 新 sessionId 使后续事件写入独立的回放记录，与上一段完全分开。
    * max_duration 在 replayContinuous（默认）下同样自动重启新分段，实现全时段录制；
    * idle（闲置切分）不重启——由交互恢复监听负责重新开启（新 base 会话）。
-   * @param {'error'|'route'|'max_duration'|'page_unload'|'idle'} reason - 结束原因
+   * @param {'error'|'route'|'max_duration'|'page_unload'|'idle'|'click'|'custom'} reason - 结束原因
+   * @param {object} [opts]
+   * @param {boolean} [opts.rotateBase] - 是否轮换 base 会话（生成全新 base_session_id 拆为独立回放文件）
    */
-  function endReplaySegment(reason) {
+  function endReplaySegment(reason, opts = {}) {
     if (!cfg.replay) return
     clearTimeout(replayStartTimer)
     stopCurrentReplay()
-    // 显式快照本段上下文再异步 flush：旧实现 fire-and-forget 的 flushReplay 内部在
-    // await 压缩之后才读 currentReplaySessionId / currentSegmentEndReason，而本函数
-    // 同步推进了两者——上一段事件几乎必被归到新分段名下，且 endReason 被置 null 后
-    // 永不落库（线上 replays.end_reason 全空即此故）。
     const segmentCtx = { segmentId: currentReplaySessionId, endReason: reason, baseId: replaySessionGroupKey }
     flushReplay(true, segmentCtx)
-    replaySegIndex++
-    currentReplaySessionId = `${replayBaseSessionId}_seg${replaySegIndex}`
+
+    const shouldRotateBase = typeof opts.rotateBase === 'boolean'
+      ? opts.rotateBase
+      : (
+          (reason === 'route' && cfg.replayRotateOnRoute !== false) ||
+          (reason === 'error' && cfg.replayRotateOnError !== false) ||
+          (reason === 'max_duration' && cfg.replayRotateOnMaxDuration === true) ||
+          reason === 'click' ||
+          reason === 'custom'
+        )
+
+    if (shouldRotateBase) {
+      rotateReplayBase(reason)
+    } else {
+      replaySegIndex++
+      currentReplaySessionId = `${replayBaseSessionId}_seg${replaySegIndex}`
+    }
+
     if (reason !== 'page_unload' && reason !== 'idle' && (reason !== 'max_duration' || cfg.replayContinuous)) {
       replayStartTimer = setTimeout(() => { startReplay() }, 120)
     }
