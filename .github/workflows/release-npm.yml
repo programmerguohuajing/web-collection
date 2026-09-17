@@ -273,7 +273,14 @@ jobs:
           if gh release view "v$version" --json assets --jq ".assets[].name" | grep -qx "$tgz"; then
             gh release delete-asset "v$version" "$tgz" -y || true
           fi
-          gh release upload "v$version" "$tgz" --clobber
+          # 打包 Flutter SDK (packages/sdk-flutter) 为 tar.gz 并上传 Asset
+          flutter_tar="web-collection-sdk-flutter-${version}.tar.gz"
+          tar -czvf "$flutter_tar" -C packages/sdk-flutter .
+          if gh release view "v$version" --json assets --jq ".assets[].name" | grep -qx "$flutter_tar"; then
+            gh release delete-asset "v$version" "$flutter_tar" -y || true
+          fi
+          gh release upload "v$version" "$flutter_tar" --clobber
+
 
   docker:
     name: Build & Push Release Docker Image
