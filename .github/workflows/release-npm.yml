@@ -302,6 +302,12 @@ jobs:
             type=semver,pattern=v{{version}}
             type=semver,pattern=v{{major}}.{{minor}}
             type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=Web Collection
+            org.opencontainers.image.description=Web Collection: All-in-One Frontend Monitoring, Session Replay, AI Diagnosis & MCP Server
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -311,4 +317,16 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Update Docker Hub Description
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: peter-evans/dockerhub-description@v4
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/web-collection
+          short-description: "Web Collection: All-in-One Frontend Monitoring, Session Replay, AI Diagnosis & MCP Server"
+          readme-filepath: ./deploy/DOCKER_HUB_README.md
 
