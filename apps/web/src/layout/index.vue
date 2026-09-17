@@ -5,7 +5,7 @@ import {
   Aim, Bell, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
-import { RANGE_PRESETS, useFilterStore } from '../stores/filters.js'
+import { RANGE_PRESETS, rangeFromPreset, useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
 import AiDiagnosisDrawer from '../components/AiDiagnosisDrawer.vue'
@@ -126,7 +126,10 @@ async function applyRangePreset(value) {
     syncCustomRange()
     return
   }
-  store.range = preset === '' ? [] : [Date.now() - Number(preset) * 3600000, Date.now()]
+  const nextRange = rangeFromPreset(preset)
+  if (nextRange !== null) {
+    store.range = nextRange
+  }
   await applyGlobal()
 }
 

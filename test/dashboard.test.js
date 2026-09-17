@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createPinia, setActivePinia } from '../apps/web/node_modules/pinia/dist/pinia.mjs'
 import { applyRoutePrefill, downloadReport, eventPager, filters, getReplay, loadGovernance, rankBehavior, resetPageFilters, resetPages } from '../apps/web/src/dashboard.js'
+import { RANGE_PRESETS, rangeFromPreset, useFilterStore } from '../apps/web/src/stores/filters.js'
 
 assert.deepEqual(rankBehavior({ route: 2, pushState: 3, popstate: 4, click: 1 }), [['路由切换', 9], ['点击', 1]])
 
@@ -17,6 +18,29 @@ assert.equal(filters.value.keyword, 'trace-1')
 assert.equal(filters.value.status, '')
 
 setActivePinia(createPinia())
+const filterStore = useFilterStore()
+
+// 校验时间预设中包含「今日」与「最近12小时」，且位于「最近1小时」与「最近24小时」之间
+const labels = RANGE_PRESETS.map(p => p.label)
+assert.deepEqual(labels.slice(0, 4), ['最近1小时', '今日', '最近12小时', '最近24小时'])
+assert.deepEqual(RANGE_PRESETS.map(p => p.value).slice(0, 4), ['1', 'today', '12', '24'])
+
+const testNow = new Date('2026-09-17T12:00:00.000Z').getTime()
+const todayRange = rangeFromPreset('today', testNow)
+const expectedStart = new Date(testNow)
+expectedStart.setHours(0, 0, 0, 0)
+assert.equal(todayRange[0], expectedStart.getTime())
+assert.equal(todayRange[1], testNow)
+
+const twelveRange = rangeFromPreset('12', testNow)
+assert.deepEqual(twelveRange, [testNow - 12 * 3600000, testNow])
+assert.equal(rangeFromPreset('custom'), null)
+assert.deepEqual(rangeFromPreset(''), [])
+
+filterStore.rangePreset = 'today'
+assert.equal(filterStore.rangeLabel, '今日')
+filterStore.rangePreset = '12'
+assert.equal(filterStore.rangeLabel, '最近12小时')
 
 eventPager.value.page = 3
 resetPages()

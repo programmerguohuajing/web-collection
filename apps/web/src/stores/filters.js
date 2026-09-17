@@ -13,6 +13,8 @@ import { defineStore } from 'pinia'
  */
 export const RANGE_PRESETS = [
   { label: '最近1小时', value: '1' },
+  { label: '今日', value: 'today' },
+  { label: '最近12小时', value: '12' },
   { label: '最近24小时', value: '24' },
   { label: '最近7天', value: '168' },
   { label: '最近30天', value: '720' },
@@ -20,6 +22,28 @@ export const RANGE_PRESETS = [
   { label: '全部时间', value: '' },
   { label: '自定义', value: 'custom' }
 ]
+
+/**
+ * 根据预设标识计算当前时间范围 [startTimeMs, endTimeMs]。
+ * - 'today': 当天 00:00:00 到当前时间
+ * - '': 全部时间 []
+ * - 'custom': 由外部自定义区间决定，此处返回 null
+ * - 其他数值字符串 (如 '1', '12', '24', '168'): [now - hours * 3600000, now]
+ */
+export function rangeFromPreset(preset, now = Date.now()) {
+  if (preset === 'custom') return null
+  if (preset === '' || preset == null) return []
+  if (preset === 'today') {
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    return [start.getTime(), now]
+  }
+  const hours = Number(preset)
+  if (Number.isFinite(hours) && hours > 0) {
+    return [now - hours * 3600000, now]
+  }
+  return []
+}
 
 /** 时间戳 → `YYYY-MM-DD HH:mm`（本地时区），用于自定义区间的可读描述。 */
 function formatRangeTime(ms) {
