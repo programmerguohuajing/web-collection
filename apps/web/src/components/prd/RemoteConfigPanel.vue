@@ -302,15 +302,15 @@ onMounted(async () => {
               <el-input v-model="configForm.blockedEventsText" placeholder='如 content_exposed, debug_trace' style="max-width: 320px" />
             </div>
             <div class="cfg-row">
-              <span class="cr-k">blocked_patterns<small>通配符前缀/后缀，逗号分隔（P0 模式拦截）</small></span>
+              <span class="cr-k">blocked_patterns<small>通配符前缀/后缀，逗号分隔</small></span>
               <el-input v-model="configForm.blockedPatternsText" placeholder='如 debug_*, test_*, *_temp' style="max-width: 320px" />
             </div>
             <div class="cfg-row">
-              <span class="cr-k">blocked_errors<small>无害 Error 报错关键字，逗号分隔（P0 噪音拦截）</small></span>
+              <span class="cr-k">blocked_errors<small>无害 Error 报错关键字，逗号分隔</small></span>
               <el-input v-model="configForm.blockedErrorsText" placeholder='如 ResizeObserver loop limit exceeded, Script error.' style="max-width: 320px" />
             </div>
             <div class="cfg-row">
-              <span class="cr-k">blocked_routes<small>页面路径 / URL 黑名单，逗号分隔（P1 环境拦截）</small></span>
+              <span class="cr-k">blocked_routes<small>页面路径 / URL 黑名单，逗号分隔</small></span>
               <el-input v-model="configForm.blockedRoutesText" placeholder='如 /internal/*, /sandbox, localhost:*' style="max-width: 320px" />
             </div>
           </div>
@@ -342,7 +342,7 @@ onMounted(async () => {
               </div>
             </div>
             <div class="cfg-row">
-              <span class="cr-k">长时间闲置无操作截断<small>开启后用户无交互超过配置秒数时切分文件（P0 痛点淘汰）</small></span>
+              <span class="cr-k">长时间闲置无操作截断<small>开启后用户无交互超过配置秒数时切分文件</small></span>
               <div style="display: flex; align-items: center; gap: 8px;">
                 <el-switch v-model="configForm.replayRotation.rotateOnIdle" />
                 <el-input-number v-model="configForm.replayRotation.idleThresholdSec" :min="10" :max="86400" :step="30" size="small" style="width: 130px" />
@@ -350,7 +350,7 @@ onMounted(async () => {
               </div>
             </div>
             <div class="cfg-row">
-              <span class="cr-k">分片字节/体积上限截断<small>开启后当前分片数据量达到配置 KB 时强制截断（P0 爆包防护）</small></span>
+              <span class="cr-k">分片字节/体积上限截断<small>开启后当前分片数据量达到配置 KB 时强制截断</small></span>
               <div style="display: flex; align-items: center; gap: 8px;">
                 <el-switch v-model="configForm.replayRotation.rotateOnMaxSize" />
                 <el-input-number v-model="configForm.replayRotation.maxSizeKb" :min="128" :max="102400" :step="512" size="small" style="width: 130px" />
@@ -358,11 +358,11 @@ onMounted(async () => {
               </div>
             </div>
             <div class="cfg-row">
-              <span class="cr-k">触发指定业务事件截断<small>事件名列表，逗号分隔（P1 转化点隔离）</small></span>
+              <span class="cr-k">触发指定业务事件截断<small>事件名列表，逗号分隔</small></span>
               <el-input v-model="configForm.replayRotation.rotateEventsText" placeholder='如 pay_success, submit_order' style="max-width: 320px" />
             </div>
             <div class="cfg-row">
-              <span class="cr-k">长任务 / 主线程卡顿截断<small>开启后页面发生指定毫秒以上的 LongTask 时截断分片（P2 诊断）</small></span>
+              <span class="cr-k">长任务 / 主线程卡顿截断<small>开启后页面发生指定毫秒以上的 LongTask 时截断分片</small></span>
               <div style="display: flex; align-items: center; gap: 8px;">
                 <el-switch v-model="configForm.replayRotation.rotateOnLongTask" />
                 <el-input-number v-model="configForm.replayRotation.longTaskMs" :min="100" :max="60000" :step="100" size="small" style="width: 130px" />
