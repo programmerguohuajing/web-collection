@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, Briefcase, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, TrendCharts, Upload, User, View, Warning
+  Aim, Bell, Briefcase, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { RANGE_PRESETS, useFilterStore } from '../stores/filters.js'
@@ -58,7 +58,7 @@ const baseGroups = [
   { label: '洞察', items: [
     { title: '用户链路', path: '/journey', icon: Guide },
     { title: '行为分析', path: '/behavior', icon: PieChart },
-    { title: '产品分析', path: '/analytics', icon: TrendCharts },
+    { title: '产品分析', path: '/analytics', icon: DataAnalysis },
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Switch },
     { title: '漏斗分析', path: '/funnels', icon: Filter },
