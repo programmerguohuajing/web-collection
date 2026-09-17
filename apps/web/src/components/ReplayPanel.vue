@@ -696,22 +696,32 @@ defineExpose({ play, currentSessionCode })
               @focus="prefetch(row)"
               @click="openReplay(row, true, false)"
             >
-              <span>
-                <strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong>
+              <!-- 行 1：用户 / 会话 ID 独占一行，支持 OverflowTip 气泡提示 -->
+              <div class="session-item-row session-item-head">
+                <strong class="session-item-user">
+                  <OverflowTip :text="replayUser(row) || row.sessionId || row.replayId" />
+                </strong>
+              </div>
+
+              <!-- 行 2：URL (左) + 链路按钮 (中) + 格式化时间 (右) -->
+              <div class="session-item-row session-item-meta">
                 <OverflowTip class="session-item-url" :text="row.url || '未记录页面地址'" />
-                <span v-if="row.endReason" class="session-reason-badge">{{ reasonLabel(row.endReason) }}</span>
-              </span>
-              <small class="session-item-side">
-                <!-- BUG-009（PRD 01 FR-5 入口 ②）：会话回放页 → 用户链路（分段 ID 提取基础会话 ID） -->
-                <router-link
-                  v-if="journeySessionIdOf(row)"
-                  class="session-journey-link"
-                  title="查看该会话的用户链路时间线"
-                  :to="`/journey?type=session&value=${encodeURIComponent(journeySessionIdOf(row))}`"
-                  @click.stop
-                >链路</router-link>
-                {{ formatDate(row.lastSeen) }}
-              </small>
+                <div class="session-meta-right">
+                  <router-link
+                    v-if="journeySessionIdOf(row)"
+                    class="session-journey-link"
+                    title="查看该会话的用户链路时间线"
+                    :to="`/journey?type=session&value=${encodeURIComponent(journeySessionIdOf(row))}`"
+                    @click.stop
+                  >链路</router-link>
+                  <span class="session-item-time">{{ formatDate(row.lastSeen) }}</span>
+                </div>
+              </div>
+
+              <!-- 行 3：截断原因 独占一行 -->
+              <div v-if="row.endReason" class="session-item-row session-item-reason">
+                <span class="session-reason-badge">{{ reasonLabel(row.endReason) }}</span>
+              </div>
             </button>
           </div>
           <el-empty v-else :image-size="54" description="暂无回放会话" />
@@ -833,24 +843,21 @@ defineExpose({ play, currentSessionCode })
 .replay-event-item strong { overflow: hidden; color: var(--c-text); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .replay-event-item small { font-family: var(--font-mono); font-size: 11px; }
 .replay-page-size { width: 104px; }
-.replay-session-list { display: grid; gap: 5px; }
-.replay-session-item { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 9px 10px; color: var(--c-text); text-align: left; cursor: pointer; background: transparent; border: 1px solid transparent; border-radius: 8px; }
+.replay-session-list { display: grid; gap: 6px; }
+.replay-session-item { width: 100%; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; color: var(--c-text); text-align: left; cursor: pointer; background: transparent; border: 1px solid transparent; border-radius: 8px; }
 .replay-session-item:hover { background: var(--c-surface-2); }
 .replay-session-item.active { color: var(--c-primary); background: var(--c-primary-soft); border-color: rgba(79,70,229,.22); }
-.replay-session-item > span { display: grid; gap: 3px; min-width: 0; }
-.replay-session-item strong, .replay-session-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.replay-session-item strong { font-size: 12px; }
-.replay-session-item small { max-width: 104px; color: var(--c-text-muted); font-size: 10px; }
-/* 会话地址行：复用 OverflowTip（.cell-ellipsis）承载溢出 tooltip，宽度与左侧原文案一致 */
-.session-item-url { max-width: 104px; min-width: 0; color: var(--c-text-muted); font-size: 10px; }
-.session-reason-badge { display: inline-block; width: fit-content; max-width: 104px; padding: 1px 5px; color: var(--c-primary); background: var(--c-primary-soft); border-radius: 4px; font-size: 10px; line-height: 1.4; }
-.replay-session-item > small { align-self: center; }
-/* BUG-009：会话项右侧的链路入口 + 日期 */
-.session-item-side { display: inline-flex; align-items: center; gap: 8px; }
-/* 右侧整块（链路 + 时间）不能被左侧文本的 104px 上限裁掉，否则日期尾部被截断 */
-.replay-session-item small.session-item-side { max-width: none; flex-shrink: 0; white-space: nowrap; overflow: visible; }
-.session-journey-link { color: var(--c-primary); font-size: 11px; text-decoration: none; padding: 2px 6px; border-radius: 4px; }
-.session-journey-link:hover { background: var(--c-primary-soft); }
+.session-item-row { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; }
+.session-item-head { line-height: 1.4; }
+.session-item-user { display: block; width: 100%; min-width: 0; font-size: 13px; font-weight: 600; color: var(--c-text); overflow: hidden; }
+.session-item-meta { gap: 8px; font-size: 11px; }
+.session-item-url { flex: 1 1 auto; min-width: 0; max-width: none; color: var(--c-text-muted); font-size: 11px; }
+.session-meta-right { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.session-item-time { color: var(--c-text-muted); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; }
+.session-journey-link { color: var(--c-primary); font-size: 11px; text-decoration: none; padding: 1px 5px; border-radius: 4px; background: var(--c-primary-soft); flex-shrink: 0; }
+.session-journey-link:hover { opacity: 0.85; }
+.session-item-reason { margin-top: 1px; }
+.session-reason-badge { display: inline-block; padding: 2px 7px; color: var(--c-primary); background: var(--c-primary-soft); border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 1.3; }
 .replay-session-pager { justify-content: center; margin-top: 12px; }
 
 @media (max-width: 1100px) {
