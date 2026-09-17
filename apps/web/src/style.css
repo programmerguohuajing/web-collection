@@ -195,10 +195,11 @@ button, input, textarea, select { font-family: inherit; }
 .topbar-title h1 { margin: 0; color: var(--c-text); font-size: 17px; font-weight: 700; line-height: 1.25; }
 .topbar-title .sub { color: var(--c-text-muted); font-size: 11px; line-height: 1.25; }
 .topbar-spacer { flex: 1; }
-.context-selectors { display: grid; grid-template-columns: 140px 120px 140px; gap: 8px; min-width: 0; }
-.context-selectors .el-select, .context-selectors .el-input { width: 100%; }
-/* 顶部「自定义」时间区间选择器：换行占满整行，避免挤占三个固定列 */
-.context-selectors .range-custom-picker { grid-column: 1 / -1; width: 100%; }
+.context-selectors { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: nowrap; }
+.context-selectors .app-selector { width: 130px; flex-shrink: 0; }
+.context-selectors .release-selector { width: 110px; flex-shrink: 0; }
+.context-selectors .preset-selector { width: 125px; flex-shrink: 0; }
+.context-selectors .range-custom-picker { width: 340px !important; flex-shrink: 0; }
 .context-selectors .el-input__wrapper, .context-selectors .el-select__wrapper { min-height: 34px; box-shadow: 0 0 0 1px var(--c-border) inset; border-radius: 8px; }
 .context-selectors .el-input__wrapper:hover, .context-selectors .el-select__wrapper:hover { box-shadow: 0 0 0 1px #cfd3dd inset; }
 .context-selectors .el-input__wrapper.is-focus, .context-selectors .el-select__wrapper.is-focused { box-shadow: var(--sh-focus), 0 0 0 1px var(--c-primary) inset; }
