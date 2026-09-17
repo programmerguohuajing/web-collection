@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Avatar, Bell, BellFilled, Brush, ChatDotRound, Coin, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataBoard, DataLine, Document, DocumentChecked, EditPen, Files, Film, Fold, Grid, Histogram, House, Lock, MagicStick, Management, MapLocation, Medal, Menu, Monitor, Operation, Opportunity, Promotion, Reading, Setting, Share, SetUp, Stamp, Stopwatch, Switch, TrendCharts, Upload, User, View, Warning
+  Aim, Bell, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, TrendCharts, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { RANGE_PRESETS, useFilterStore } from '../stores/filters.js'
@@ -41,7 +41,7 @@ watch(() => route.query, () => {
 
 const baseGroups = [
   { label: '监测', items: [
-    { title: '总览看板', path: '/overview', icon: DataBoard },
+    { title: '总览看板', path: '/overview', icon: Odometer },
     { title: '告警中心', path: '/alerts', icon: Bell },
     { title: '实时监控', path: '/live', icon: Monitor },
     { title: '错误监控', path: '/errors', icon: Warning },
@@ -56,20 +56,20 @@ const baseGroups = [
     { title: 'SDK 健康', path: '/sdk-health', icon: Cpu }
   ] },
   { label: '洞察', items: [
-    { title: '用户链路', path: '/journey', icon: Promotion },
-    { title: '行为分析', path: '/behavior', icon: Histogram },
-    { title: '产品分析', path: '/analytics', icon: DataAnalysis },
-    { title: '用户会话', path: '/sessions', icon: Avatar },
+    { title: '用户链路', path: '/journey', icon: Guide },
+    { title: '行为分析', path: '/behavior', icon: PieChart },
+    { title: '产品分析', path: '/analytics', icon: TrendCharts },
+    { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Switch },
-    { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
-    { title: '留存分析', path: '/retention', icon: Grid },
-    { title: '实验分析', path: '/experiments', icon: Medal, cap: 'experiments' },
+    { title: '漏斗分析', path: '/funnels', icon: Filter },
+    { title: '留存分析', path: '/retention', icon: Tickets },
+    { title: '实验分析', path: '/experiments', icon: Aim, cap: 'experiments' },
     { title: '发布管理', path: '/releases', icon: Upload },
-    { title: 'AI 洞察', path: '/ai-insights', icon: Opportunity }
+    { title: 'AI 洞察', path: '/ai-insights', icon: Sunny }
   ] },
   { label: '治理', items: [
     { title: '事件字典', path: '/dictionary', icon: Document },
-    { title: '采集治理', path: '/governance', icon: Management },
+    { title: '采集治理', path: '/governance', icon: Operation },
     { title: 'SourceMap', path: '/sourcemaps', icon: MapLocation },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
     { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
@@ -81,7 +81,7 @@ const baseGroups = [
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },
-    { title: '团队管理', path: '/teams', icon: Avatar },
+    { title: '团队管理', path: '/teams', icon: User },
     { title: '成员与数据等级', path: '/access-levels', icon: Lock },
     { title: '用量与套餐', path: '/usage', icon: CreditCard, cap: 'metering' },
     { title: '品牌白标', path: '/brand', icon: EditPen, cap: 'whiteLabel' }
