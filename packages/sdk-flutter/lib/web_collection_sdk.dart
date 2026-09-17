@@ -9,7 +9,9 @@ export 'src/config/options.dart';
 export 'src/core/client.dart';
 export 'src/events/event.dart';
 export 'src/integrations/http_client.dart';
+export 'src/integrations/pointer_integration.dart';
 export 'src/integrations/route_observer.dart';
+export 'src/integrations/snapshot_integration.dart';
 
 /// Facade entry point for Web Collection Flutter SDK.
 class WebCollectionSdk {
