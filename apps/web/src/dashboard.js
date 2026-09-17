@@ -321,10 +321,22 @@ function hasReplayEvents(payload) {
     : Array.isArray(payload?.data) ? payload.data.length > 0 : false
 }
 
-/** 拉取 AI 洞察未读数（status=open 总数），供右上角通知铃铛徽标展示；失败非阻塞。 */
+const INSIGHTS_LAST_READ_KEY = 'eys_insights_last_read'
+
+/** 标记 AI 洞察已读：清除右上角通知铃铛徽标，并记录已读时间戳 */
+export function markInsightsAsRead() {
+  try {
+    localStorage.setItem(INSIGHTS_LAST_READ_KEY, String(Date.now()))
+  } catch {}
+  insightUnread.value = 0
+}
+
+/** 拉取 AI 洞察未读数（上次浏览之后新增的 status=open 洞察数），供右上角通知铃铛徽标展示；失败非阻塞。 */
 export async function loadInsightUnread() {
   try {
-    const r = await api('/api/ai/findings?status=open&limit=1', { requestKey: 'layout:insights' })
+    const lastRead = Number(localStorage.getItem(INSIGHTS_LAST_READ_KEY) || 0)
+    const sinceParam = lastRead > 0 ? `&sinceTs=${lastRead}` : ''
+    const r = await api(`/api/ai/findings?status=open&limit=1${sinceParam}`, { requestKey: 'layout:insights' })
     insightUnread.value = r?.total || 0
   } catch { /* 非阻塞：未读数拉取失败不影响主流程 */ }
 }

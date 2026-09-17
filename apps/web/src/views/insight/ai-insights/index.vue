@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { BellFilled, Refresh, MagicStick, Promotion, QuestionFilled } from '@element-plus/icons-vue'
-import { api, insightUnread } from '../../../dashboard.js'
+import { api, insightUnread, markInsightsAsRead } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 
 const router = useRouter()
@@ -127,8 +127,8 @@ function askInAssistant(f) {
 }
 
 onMounted(() => {
-  // 进入洞察页即视为已读：清除右上角铃铛的未读徽标（覆盖侧边栏等非铃铛入口）。
-  insightUnread.value = 0
+  // 进入洞察页即视为已读：记录已读时间戳并清除右上角铃铛的未读徽标。
+  markInsightsAsRead()
   load()
 })
 </script>

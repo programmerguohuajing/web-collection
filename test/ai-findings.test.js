@@ -19,11 +19,22 @@ function memDb(seed = {}) {
             let rows = findings
             if (sql.includes('scope=? and object=?')) rows = rows.filter(r => r.scope === this._v[0] && r.object === this._v[1])
             if (sql.includes('status=? and created_at>=')) rows = rows.filter(r => r.status === this._v[2] && Number(r.created_at) >= this._v[3])
+            else if (sql.includes('created_at >= ?')) rows = rows.filter(r => Number(r.created_at) >= this._v[this._v.length - 2])
+            else if (sql.includes('status = ?')) rows = rows.filter(r => r.status === this._v[0])
             return rows.slice(0, (this._v[this._v.length - 1] || 50))
           }
           return []
         },
         async first() {
+          if (sql.includes('select count(*)')) {
+            let rows = findings
+            if (sql.includes('status = ?')) rows = rows.filter(r => r.status === this._v[0])
+            if (sql.includes('created_at >= ?')) {
+              const ts = this._v[this._v.length - 1]
+              rows = rows.filter(r => Number(r.created_at) >= ts)
+            }
+            return { c: rows.length, 'count(*)': rows.length }
+          }
           if (sql.includes('from ai_findings where id=')) return findings.find(r => r.id === this._v[0]) || null
           return null
         },

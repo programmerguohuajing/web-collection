@@ -275,13 +275,18 @@ async function route(request, env, url, path) {
   }
   if (path === '/api/ai/findings' && request.method === 'GET') {
     const repo = createFindingsRepo(db)
-    const list = await repo.list({
+    const filter = {
       appId: url.searchParams.get('appId') || undefined,
       scope: url.searchParams.get('scope') || undefined,
       status: url.searchParams.get('status') || undefined,
+      sinceTs: Number(url.searchParams.get('sinceTs')) || undefined,
       limit: Number(url.searchParams.get('limit')) || 50
-    })
-    return json({ items: list, total: list.length })
+    }
+    const [list, total] = await Promise.all([
+      repo.list(filter),
+      repo.count(filter)
+    ])
+    return json({ items: list, total })
   }
   const findingStatus = path.match(/^\/api\/ai\/findings\/([^/]+)\/status$/)
   if (findingStatus && request.method === 'POST') {
