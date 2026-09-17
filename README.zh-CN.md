@@ -33,11 +33,11 @@ Web Collection 是 **pnpm monorepo** 前端监控系统：Vue 3 + Element Plus �
   </tr>
 </table>
 
-## 🌟 0.6.0 新特性
+## 🌟 0.7.0 新特性
 
-- **回放会话治理** —— 闲置 10 分钟自动切分新会话（`replayIdleResetMs`）、60s 循环连续录制（`replayContinuous`）、跨域图片/字体资源自动内联为 dataURI（`replayInlineAssets`）。
-- **SDK 采集熔断器** —— 新增客户端发送熔断（`collectBreakerThreshold` / `collectBreakerCooldownMs`），服务端故障期间自动关断并半开探测恢复，防止报错风暴。
-- **D1 行读治理与预聚合** —— 小时级预聚合表与 Summary 缝合，多级边缘缓存，D1 行读下降 50%+。
+- **侧边栏图标 UI 重构** —— 全量 36 个侧边栏菜单项统一为 100% 纯线条描边图标，且全量解耦互不重复。
+- **AI 洞察未读通知治理** —— 持久化已读时间戳与增量未读查询（`markInsightsAsRead` + `sinceTs`），彻底根治刷新重复提醒问题。
+- **合规 DSR 全流程强化** —— 完整 DSR 工单生命周期治理，包含草稿修改、审批防护与自动化测试套件全覆盖。
 
 完整变更见 [CHANGELOG](./CHANGELOG.md)。
 
