@@ -18,6 +18,13 @@ const configForm = reactive({
     rotateOnError: true,
     rotateOnMaxDuration: false,
     maxDurationSec: 300,
+    rotateOnIdle: false,
+    idleThresholdSec: 300,
+    rotateOnMaxSize: false,
+    maxSizeKb: 2048,
+    rotateEventsText: '',
+    rotateOnLongTask: false,
+    longTaskMs: 500,
     rotateSelectorsText: ''
   }
 })
@@ -74,6 +81,22 @@ function fillFromConfig(config) {
   configForm.replayRotation.rotateOnMaxDuration = Boolean(rot.rotate_on_max_duration ?? rot.rotateOnMaxDuration)
   const maxDur = Number(rot.max_duration_sec ?? rot.maxDurationSec ?? rot.max_duration ?? rot.maxDuration)
   configForm.replayRotation.maxDurationSec = Number.isFinite(maxDur) && maxDur > 0 ? Math.floor(maxDur) : 300
+
+  configForm.replayRotation.rotateOnIdle = Boolean(rot.rotate_on_idle ?? rot.rotateOnIdle)
+  const idleSec = Number(rot.idle_threshold_sec ?? rot.idleThresholdSec ?? rot.idle_threshold ?? rot.idleThreshold)
+  configForm.replayRotation.idleThresholdSec = Number.isFinite(idleSec) && idleSec > 0 ? Math.floor(idleSec) : 300
+
+  configForm.replayRotation.rotateOnMaxSize = Boolean(rot.rotate_on_max_size ?? rot.rotateOnMaxSize)
+  const maxSize = Number(rot.max_size_kb ?? rot.maxSizeKb ?? rot.max_size ?? rot.maxSize)
+  configForm.replayRotation.maxSizeKb = Number.isFinite(maxSize) && maxSize > 0 ? Math.floor(maxSize) : 2048
+
+  const events = rot.rotate_events || rot.rotateEvents || []
+  configForm.replayRotation.rotateEventsText = Array.isArray(events) ? events.join(', ') : ''
+
+  configForm.replayRotation.rotateOnLongTask = Boolean(rot.rotate_on_long_task ?? rot.rotateOnLongTask)
+  const longTask = Number(rot.long_task_ms ?? rot.longTaskMs ?? rot.long_task ?? rot.longTask)
+  configForm.replayRotation.longTaskMs = Number.isFinite(longTask) && longTask > 0 ? Math.floor(longTask) : 500
+
   const selectors = rot.rotate_selectors ?? rot.rotateSelectors ?? []
   configForm.replayRotation.rotateSelectorsText = Array.isArray(selectors) ? selectors.join(', ') : ''
 }
@@ -145,6 +168,16 @@ async function saveConfig() {
         rotateOnError: Boolean(configForm.replayRotation.rotateOnError),
         rotateOnMaxDuration: Boolean(configForm.replayRotation.rotateOnMaxDuration),
         maxDurationSec: Math.max(10, Math.floor(Number(configForm.replayRotation.maxDurationSec) || 300)),
+        rotateOnIdle: Boolean(configForm.replayRotation.rotateOnIdle),
+        idleThresholdSec: Math.max(10, Math.floor(Number(configForm.replayRotation.idleThresholdSec) || 300)),
+        rotateOnMaxSize: Boolean(configForm.replayRotation.rotateOnMaxSize),
+        maxSizeKb: Math.max(128, Math.floor(Number(configForm.replayRotation.maxSizeKb) || 2048)),
+        rotateEvents: String(configForm.replayRotation.rotateEventsText || '')
+          .split(/[,，\n]/)
+          .map(s => s.trim())
+          .filter(Boolean),
+        rotateOnLongTask: Boolean(configForm.replayRotation.rotateOnLongTask),
+        longTaskMs: Math.max(100, Math.floor(Number(configForm.replayRotation.longTaskMs) || 500)),
         rotateSelectors: String(configForm.replayRotation.rotateSelectorsText || '')
           .split(/[,，\n]/)
           .map(s => s.trim())
@@ -190,7 +223,7 @@ async function rollback(item) {
     ElMessage.success(`已回滚，新 config_version = ${result?.configVersion}`)
     await Promise.all([loadHistory(), loadStats()])
   } catch (error) {
-    ElMessage.error(error.message || '回滚失败')
+    ElMessage.error(error.message || '回退失败')
   }
 }
 const ACTION_ICONS = { create: '✅', update: '🔧', rollback: '↺' }
@@ -292,7 +325,35 @@ onMounted(async () => {
               </div>
             </div>
             <div class="cfg-row">
-              <span class="cr-k">点击特定元素截断<small>选择器列表，逗号分隔 (如 .eys-rotate, [data-eys-rotate])</small></span>
+              <span class="cr-k">长时间闲置无操作截断<small>开启后用户无交互超过配置秒数时切分文件（P0 痛点淘汰）</small></span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <el-switch v-model="configForm.replayRotation.rotateOnIdle" />
+                <el-input-number v-model="configForm.replayRotation.idleThresholdSec" :min="10" :max="86400" :step="30" size="small" style="width: 130px" />
+                <span style="font-size: 12px; color: var(--el-text-color-secondary)">秒</span>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">分片字节/体积上限截断<small>开启后当前分片数据量达到配置 KB 时强制截断（P0 爆包防护）</small></span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <el-switch v-model="configForm.replayRotation.rotateOnMaxSize" />
+                <el-input-number v-model="configForm.replayRotation.maxSizeKb" :min="128" :max="102400" :step="512" size="small" style="width: 130px" />
+                <span style="font-size: 12px; color: var(--el-text-color-secondary)">KB</span>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">触发指定业务事件截断<small>事件名列表，逗号分隔（P1 转化点隔离）</small></span>
+              <el-input v-model="configForm.replayRotation.rotateEventsText" placeholder='如 pay_success, submit_order' style="max-width: 320px" />
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">长任务 / 主线程卡顿截断<small>开启后页面发生指定毫秒以上的 LongTask 时截断分片（P2 诊断）</small></span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <el-switch v-model="configForm.replayRotation.rotateOnLongTask" />
+                <el-input-number v-model="configForm.replayRotation.longTaskMs" :min="100" :max="60000" :step="100" size="small" style="width: 130px" />
+                <span style="font-size: 12px; color: var(--el-text-color-secondary)">ms</span>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">点击特定元素截断<small>选择器列表，逗号分隔</small></span>
               <el-input v-model="configForm.replayRotation.rotateSelectorsText" placeholder='如 .eys-rotate, [data-eys-rotate]' style="max-width: 320px" />
             </div>
           </div>
