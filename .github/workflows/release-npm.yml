@@ -42,7 +42,7 @@ jobs:
         run: npm install -g pnpm@11.7.0
 
       - name: Install SDK dependencies (package-only)
-        run: pnpm --filter @web-collection/sdk install --workspace-root=false
+        run: pnpm --filter @web-collection/sdk install --workspace-root=false --no-frozen-lockfile
 
       - name: Build SDK
         run: pnpm --filter @web-collection/sdk build
@@ -161,7 +161,7 @@ jobs:
       # tag 校验（Verify 步骤）仅针对主 sdk，下面的发布按各自 package.json 版本走，
       # 幂等保护各自独立。dist 已被 gitignore，发布前必须在本工作流内 build。
       - name: Install sdk-react-native dependencies
-        run: pnpm --filter @web-collection/sdk-react-native install --workspace-root=false
+        run: pnpm --filter @web-collection/sdk-react-native install --workspace-root=false --no-frozen-lockfile
 
       - name: Build sdk-react-native
         run: pnpm --filter @web-collection/sdk-react-native build
@@ -187,7 +187,7 @@ jobs:
         run: pnpm publish --no-git-checks --access public
 
       - name: Install sdk-electron dependencies
-        run: pnpm --filter @web-collection/sdk-electron install --workspace-root=false
+        run: pnpm --filter @web-collection/sdk-electron install --workspace-root=false --no-frozen-lockfile
 
       - name: Build sdk-electron
         run: pnpm --filter @web-collection/sdk-electron build
