@@ -121,10 +121,12 @@ function normalize(body) {
     rate_limits: { per_event_per_user_10min: Number.isFinite(rateLimit) && rateLimit > 0 ? Math.floor(rateLimit) : 500 }
   }
   if (body.replay_rotation && typeof body.replay_rotation === 'object') {
+    const maxDur = Number(body.replay_rotation.max_duration_sec ?? body.replay_rotation.maxDurationSec ?? body.replay_rotation.max_duration)
     result.replay_rotation = {
       rotate_on_route: body.replay_rotation.rotate_on_route !== false,
       rotate_on_error: body.replay_rotation.rotate_on_error !== false,
       rotate_on_max_duration: Boolean(body.replay_rotation.rotate_on_max_duration),
+      max_duration_sec: Number.isFinite(maxDur) && maxDur > 0 ? Math.max(10, Math.min(86400, Math.floor(maxDur))) : 300,
       rotate_selectors: Array.isArray(body.replay_rotation.rotate_selectors)
         ? body.replay_rotation.rotate_selectors.map(String).slice(0, 50)
         : ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']

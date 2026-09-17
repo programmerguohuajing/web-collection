@@ -23,6 +23,7 @@ export const DEFAULT_COLLECT_CONFIG = {
     rotate_on_route: true,
     rotate_on_error: true,
     rotate_on_max_duration: false,
+    max_duration_sec: 300,
     rotate_selectors: ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
   }
 }
@@ -108,11 +109,13 @@ export function resolveCollectConfig(rows, context) {
 export function mergeConfig(partial) {
   const base = structuredCloneDefault()
   const rot = partial.replay_rotation ?? partial.replayRotation
+  const maxDurSec = Number(rot?.max_duration_sec ?? rot?.maxDurationSec ?? rot?.max_duration ?? rot?.maxDuration)
   const replayRotation = rot && typeof rot === 'object'
     ? {
         rotate_on_route: rot.rotate_on_route ?? rot.rotateOnRoute ?? base.replay_rotation.rotate_on_route,
         rotate_on_error: rot.rotate_on_error ?? rot.rotateOnError ?? base.replay_rotation.rotate_on_error,
         rotate_on_max_duration: Boolean(rot.rotate_on_max_duration ?? rot.rotateOnMaxDuration),
+        max_duration_sec: Number.isFinite(maxDurSec) && maxDurSec > 0 ? Math.max(10, Math.min(86400, Math.floor(maxDurSec))) : base.replay_rotation.max_duration_sec,
         rotate_selectors: Array.isArray(rot.rotate_selectors ?? rot.rotateSelectors)
           ? (rot.rotate_selectors ?? rot.rotateSelectors).map(s => String(s).slice(0, 100)).slice(0, 50)
           : base.replay_rotation.rotate_selectors

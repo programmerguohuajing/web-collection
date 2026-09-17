@@ -17,6 +17,7 @@ const configForm = reactive({
     rotateOnRoute: true,
     rotateOnError: true,
     rotateOnMaxDuration: false,
+    maxDurationSec: 300,
     rotateSelectorsText: '.eys-rotate, [data-eys-rotate], .eys-truncate, [data-eys-truncate]'
   }
 })
@@ -71,6 +72,8 @@ function fillFromConfig(config) {
   configForm.replayRotation.rotateOnRoute = rot.rotate_on_route !== false && rot.rotateOnRoute !== false
   configForm.replayRotation.rotateOnError = rot.rotate_on_error !== false && rot.rotateOnError !== false
   configForm.replayRotation.rotateOnMaxDuration = Boolean(rot.rotate_on_max_duration ?? rot.rotateOnMaxDuration)
+  const maxDur = Number(rot.max_duration_sec ?? rot.maxDurationSec ?? rot.max_duration ?? rot.maxDuration)
+  configForm.replayRotation.maxDurationSec = Number.isFinite(maxDur) && maxDur > 0 ? Math.floor(maxDur) : 300
   const selectors = rot.rotate_selectors || rot.rotateSelectors || ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
   configForm.replayRotation.rotateSelectorsText = Array.isArray(selectors) ? selectors.join(', ') : String(selectors)
 }
@@ -141,6 +144,7 @@ async function saveConfig() {
         rotateOnRoute: Boolean(configForm.replayRotation.rotateOnRoute),
         rotateOnError: Boolean(configForm.replayRotation.rotateOnError),
         rotateOnMaxDuration: Boolean(configForm.replayRotation.rotateOnMaxDuration),
+        maxDurationSec: Math.max(10, Math.floor(Number(configForm.replayRotation.maxDurationSec) || 300)),
         rotateSelectors: String(configForm.replayRotation.rotateSelectorsText || '')
           .split(/[,，\n]/)
           .map(s => s.trim())
@@ -280,8 +284,12 @@ onMounted(async () => {
               <el-switch v-model="configForm.replayRotation.rotateOnError" />
             </div>
             <div class="cfg-row">
-              <span class="cr-k">达到时长上限时截断分片<small>达到默认单次录制上限时长时截断分片</small></span>
-              <el-switch v-model="configForm.replayRotation.rotateOnMaxDuration" />
+              <span class="cr-k">达到时长上限时截断分片<small>开启后当单段录制时长达到配置秒数时截断并重新分片</small></span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <el-switch v-model="configForm.replayRotation.rotateOnMaxDuration" />
+                <el-input-number v-model="configForm.replayRotation.maxDurationSec" :min="10" :max="86400" :step="30" size="small" style="width: 130px" />
+                <span style="font-size: 12px; color: var(--el-text-color-secondary)">秒</span>
+              </div>
             </div>
             <div class="cfg-row">
               <span class="cr-k">点击特定元素截断<small>选择器列表，逗号分隔 (如 .eys-rotate, [data-eys-rotate])</small></span>

@@ -1041,6 +1041,10 @@ export function createEys(options = {}) {
       cfg.replayRotateOnRoute = remote.replay_rotation.rotate_on_route !== false
       cfg.replayRotateOnError = remote.replay_rotation.rotate_on_error !== false
       cfg.replayRotateOnMaxDuration = Boolean(remote.replay_rotation.rotate_on_max_duration)
+      const maxDur = Number(remote.replay_rotation.max_duration_sec ?? remote.replay_rotation.maxDurationSec ?? remote.replay_rotation.max_duration)
+      if (Number.isFinite(maxDur) && maxDur > 0) {
+        cfg.replayMaxDuration = maxDur * 1000
+      }
       if (Array.isArray(remote.replay_rotation.rotate_selectors)) {
         cfg.replayRotateSelectors = remote.replay_rotation.rotate_selectors
       }
