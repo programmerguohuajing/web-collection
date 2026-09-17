@@ -35,17 +35,17 @@ const saving = ref(false)
 const previewHit = ref(null)
 
 const PLUGIN_ROWS = [
-  { key: 'performance', label: 'performance', hint: '' },
-  { key: 'error', label: 'error', hint: '' },
-  { key: 'replay', label: 'replay', hint: '低端机关闭场景' },
-  { key: 'behavior', label: 'behavior', hint: '' },
-  { key: 'exposure', label: 'exposure / trace', hint: '' }
+  { key: 'performance', label: '页面性能监控插件', hint: 'Performance Monitoring · performance' },
+  { key: 'error', label: '异常报错监控插件', hint: 'Error & Exception · error' },
+  { key: 'replay', label: '会话回放录制插件', hint: 'Session Replay · replay（低端机降级关闭场景）' },
+  { key: 'behavior', label: '用户行为追踪插件', hint: 'User Behavior · behavior' },
+  { key: 'exposure', label: '元素曝光与链路追踪', hint: 'Exposure & Trace · exposure / trace' }
 ]
 const SAMPLING_ROWS = [
-  { key: 'error', label: '采样率 · 错误' },
-  { key: 'performance', label: '采样率 · 性能' },
-  { key: 'replay', label: '采样率 · 回放' },
-  { key: 'behavior', label: '采样率 · 行为' }
+  { key: 'error', label: '错误事件采样率', hint: 'Error Event Sampling · error' },
+  { key: 'performance', label: '性能指标采样率', hint: 'Performance Sampling · performance' },
+  { key: 'replay', label: '会话回放采样率', hint: 'Session Replay Sampling · replay' },
+  { key: 'behavior', label: '行为数据采样率', hint: 'User Behavior Sampling · behavior' }
 ]
 
 async function loadPreview() {
@@ -288,7 +288,7 @@ onMounted(async () => {
               <el-switch v-model="configForm.masterSwitch" />
             </div>
             <div v-for="row in SAMPLING_ROWS" :key="row.key" class="cfg-row">
-              <span class="cr-k">{{ row.label }}</span>
+              <span class="cr-k">{{ row.label }}<small v-if="row.hint">{{ row.hint }}</small></span>
               <el-input-number v-model="configForm.sampling[row.key]" :min="0" :max="100" :step="5" size="small" style="width: 130px" />
             </div>
           </div>
