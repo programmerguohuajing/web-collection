@@ -1,12 +1,93 @@
-# Web Collection — All-in-One 前端遥测监控平台
+# 🛰️ Web Collection — All-in-One Frontend Monitoring & MCP Platform
 
-> **一端多能、开箱即用**：集 **错误监控 (Error)**、**性能分析 (Web Vitals)**、**会话回放 (rrweb Replay)**、**链路追踪 (Tracing)**、**AI 智能诊断** 以及原生 **MCP (Model Context Protocol) 协议服务** 于一体的前端监控全栈平台。
+<div align="center">
+
+🌐 **[English](#english) · [中文文档](#中文文档)**
+
+</div>
 
 ---
 
-## 🚀 极速开始 (Docker 1 键运行)
+<a name="english"></a>
+## 🇬🇧 English
 
-### 单容器 All-in-One 模式（内置 PostgreSQL，零前置配置）
+> **All-in-One, Out of the Box**: Unified platform combining **Error Monitoring**, **Web Vitals Performance**, **Session Replay (rrweb)**, **Distributed Tracing**, **AI Diagnosis**, and native **MCP (Model Context Protocol) Services**.
+
+### 🚀 Quick Start (Docker 1-Click Run)
+
+#### Single Container All-in-One Mode (Embedded PostgreSQL, Zero Config)
+
+Run a single standalone container without installing or configuring an external database:
+
+```bash
+docker run -d \
+  --name web-collection \
+  -p 8787:8787 \
+  web-collection:latest
+```
+
+Then open **`http://localhost:8787`** in your browser.
+
+> 💡 **Docker Desktop GUI Users**: Find the `web-collection:latest` image in Docker Desktop, click **Run**, expand `Optional settings` -> enter `8787` under `Host port`, and launch!
+
+### ✨ Key Features
+
+- 🐛 **Error Monitoring**: Automatically captures JS runtime exceptions, unhandled promise rejections, resource load failures, and Web Worker errors with SourceMap stack unwinding.
+- ⚡ **Performance Analytics**: Tracks Core Web Vitals (LCP, INP, CLS) and Long Tasks to identify user-perceived performance bottlenecks.
+- 🎬 **Session Replay**: Integrated high-fidelity rrweb recording and playback to reconstruct actual user sessions.
+- 🔗 **Distributed Tracing**: Full W3C `traceparent` propagation and topology visualization connecting frontend and backend requests.
+- 🤖 **Embedded AI Diagnosis**: Built-in LLM root-cause analysis, blast-radius estimation, and fix recommendations.
+- 🔌 **Native MCP Protocol**: Built-in `/mcp` endpoint enabling direct connection for AI agents (Claude Desktop, Cursor, Windsurf).
+- 🏷️ **White-Label Support**: Customizable brand name, logo, primary color scheme, and login title out of the box.
+
+### 🔌 Endpoints & Port Reference
+
+| Service Name | Access Address / Endpoint | Description |
+| :--- | :--- | :--- |
+| **Web Console** | `http://localhost:8787/` | Visual analytics and management console |
+| **Health Probe** | `http://localhost:8787/health` | Liveness / Readiness probe (`{"ok":true}`) |
+| **Collect Endpoint** | `http://localhost:8787/api/collect` | Telemetry SDK data collection endpoint |
+| **MCP Server** | `http://localhost:8787/mcp` | MCP Agent interface (`Authorization: Bearer <CollectKey>`) |
+| **AI Diagnosis** | `http://localhost:8787/api/ai/*` | AI Q&A and baseline anomaly API |
+
+### ⚙️ Environment Variables
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `PORT` | `8787` | HTTP listening port |
+| `HOST` | `0.0.0.0` | Network binding interface |
+| `DATABASE_URL` | *Embedded Postgres* | PostgreSQL connection string (`postgresql://user:pass@host:5432/web_eys`). Supplying an external URL disables embedded Postgres |
+| `ADMIN_API_KEY` | `change-me-in-prod` | Admin API authentication key |
+| `CORS_ORIGIN` | `*` | Allowed CORS origins |
+| `BRAND_NAME` | `Web Collection` | White-label brand title |
+| `BRAND_PRIMARY_COLOR` | `#4f46e5` | Primary theme color |
+
+### 🛠️ Docker Compose & Kubernetes
+
+**Docker Compose (Dedicated PostgreSQL)**:
+```bash
+cd deploy/self-hosted
+docker compose up -d
+```
+
+**Kubernetes Deployment**:
+```bash
+kubectl apply -k deploy/k8s
+```
+
+- Kubernetes Deployment Guide: [deploy/k8s/README.md](https://github.com/programmerguohuajing/web-collection/tree/main/deploy/k8s)
+- GitHub Repository: [programmerguohuajing/web-collection](https://github.com/programmerguohuajing/web-collection)
+
+---
+
+<a name="中文文档"></a>
+## 🇨🇳 中文文档
+
+> **一端多能、开箱即用**：集 **错误监控 (Error)**、**性能分析 (Web Vitals)**、**会话回放 (rrweb Replay)**、**链路追踪 (Tracing)**、**AI 智能诊断** 以及原生 **MCP (Model Context Protocol) 协议服务** 于一体的前端监控全栈平台。
+
+### 🚀 极速开始 (Docker 1 键运行)
+
+#### 单容器 All-in-One 模式（内置 PostgreSQL，零前置配置）
 
 无需安装或配置外部数据库，运行单个容器即可提供全量服务：
 
@@ -21,9 +102,7 @@ docker run -d \
 
 > 💡 **Docker Desktop GUI 用户**：可在 Docker Desktop UI 中找到镜像点击 **Run**，在 `Optional settings` -> `Host port` 输入 `8787` 即可一键启动。
 
----
-
-## ✨ 核心特性
+### ✨ 核心特性
 
 - 🐛 **错误监控**：自动捕获 JS 运行时异常、Uncaught Promise 拒绝、静态资源加载错误及 Web Worker 错误，支持 SourceMap 解析与分发追踪。
 - ⚡ **性能分析**：实时监测 Core Web Vitals (LCP, INP, CLS) 与 Long Tasks，洞察页面性能瓶颈。
@@ -33,9 +112,7 @@ docker run -d \
 - 🔌 **原生 MCP 协议支持**：内置 `/mcp` 端点，支持 Claude Desktop、Cursor、Windsurf 等 AI Agent 直接接入并调取遥测数据。
 - 🏷️ **白标与私有化支持**：支持自定义品牌名称、Logo、主色调及登录标题，启动即生效。
 
----
-
-## 🔌 常见连接与服务接口
+### 🔌 常见连接与服务接口
 
 | 服务名称 | 访问地址 / 端点 | 说明 |
 | :--- | :--- | :--- |
@@ -45,9 +122,7 @@ docker run -d \
 | **MCP 网关服务** | `http://localhost:8787/mcp` | MCP Agent 直连接口 (`Authorization: Bearer <CollectKey>`) |
 | **AI 诊断接口** | `http://localhost:8787/api/ai/*` | AI 问答与基线诊断 API |
 
----
-
-## ⚙️ 环境变量说明 (Environment Variables)
+### ⚙️ 环境变量说明 (Environment Variables)
 
 容器启动时支持通过 `-e` 传入以下环境变量来自定义配置：
 
@@ -61,19 +136,15 @@ docker run -d \
 | `BRAND_NAME` | `Web Collection` | 白标品牌名称 |
 | `BRAND_PRIMARY_COLOR` | `#4f46e5` | 控制台主题主色调 |
 
----
+### 🛠️ Docker Compose & Kubernetes 部署
 
-## 🛠️ Docker Compose & Kubernetes 部署
-
-使用 Docker Compose（包含独立 PostgreSQL）：
-
+**使用 Docker Compose（包含独立 PostgreSQL）**：
 ```bash
 cd deploy/self-hosted
 docker compose up -d
 ```
 
-部署到 Kubernetes 集群：
-
+**部署到 Kubernetes 集群**：
 ```bash
 kubectl apply -k deploy/k8s
 ```
