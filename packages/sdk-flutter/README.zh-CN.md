@@ -40,11 +40,49 @@ void main() async {
       release: '1.0.0',
       enableAutoErrorTracking: true,
       enableAutoHttpTracking: true,
+      enablePointerReplay: true,  // 方案二：手势轨迹回放（默认开启）
+      enableSnapshotReplay: false, // 方案一：画面快照回放（默认关闭，用户可选开启）
     ),
   );
 
-  runApp(const MyApp());
+  runApp(
+    // 方案二：手势触控监听（默认推荐）
+    const WebCollectionPointerListener(
+      child: MyApp(),
+    ),
+  );
 }
+```
+
+---
+
+## 🎬 会话回放（Session Replay）双模式说明
+
+由于 Flutter 采用图形引擎（Skia/Impeller Canvas）进行绘制，不包含传统 Web DOM 节点，SDK 提供了以下两种回放模式：
+
+| 模式 | 机制说明 | 默认状态 | 性能开销 | 适用场景 |
+| :--- | :--- | :---: | :---: | :--- |
+| **方案二：手势轨迹回放** (`PointerListener`) | 记录触摸点 `(x, y)` 坐标、动作类型与路由跳转 | **默认开启** | **极低 (≈0 CPU)** | 追求性能、高频交互轨迹记录 |
+| **方案一：画面快照回放** (`RepaintBoundary`) | 定期抓取低帧率 Widget 画布图像并生成 PNG/JPEG 分片 | **默认关闭（由用户决定）** | 依赖设备渲染 | 需要 100% 视觉还原的崩溃现场复现 |
+
+### 如何开启【方案一：画面快照回放】
+
+若项目对视觉还原度有要求，可由开发者显式配置开启：
+
+```dart
+// 1. 初始化时开启配置
+WebCollectionOptions(
+  enableSnapshotReplay: true,     // 显式开启画面快照
+  snapshotIntervalMs: 2000,        // 截图间隔（毫秒，默认 2000ms）
+  snapshotQuality: 50,             // 压缩质量 (1-100)
+);
+
+// 2. 在根 Widget 外包裹 WebCollectionRepaintBoundary
+runApp(
+  const WebCollectionRepaintBoundary(
+    child: MyApp(),
+  ),
+);
 ```
 
 ---
@@ -97,7 +135,7 @@ WebCollectionSdk.behavior('click_banner', props: {
 
 // 4. 手动报错上报 (error)
 try {
-  // 某些可能抛异常的代码...
+  // 代码执行...
 } catch (e, stack) {
   WebCollectionSdk.error(e, stack, '数据解析失败', {'raw_data': raw});
 }

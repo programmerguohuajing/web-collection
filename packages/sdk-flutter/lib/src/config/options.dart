@@ -35,6 +35,18 @@ class WebCollectionOptions {
   /// Enable automatic HTTP performance capturing. Default true.
   final bool enableAutoHttpTracking;
 
+  /// Enable automatic user pointer/touch gesture replay recording. Default true (Option 2).
+  final bool enablePointerReplay;
+
+  /// Enable automatic Widget canvas snapshot replay recording. Default false (Option 1 - User Opt-in).
+  final bool enableSnapshotReplay;
+
+  /// Snapshot interval in milliseconds if [enableSnapshotReplay] is true. Default 2000ms.
+  final int snapshotIntervalMs;
+
+  /// Snapshot image compression quality (1-100). Default 50.
+  final int snapshotQuality;
+
   /// Exact event names to block/drop before ingestion.
   final List<String> blockedEvents;
 
@@ -62,6 +74,10 @@ class WebCollectionOptions {
     this.sampleRate = 1.0,
     this.enableAutoErrorTracking = true,
     this.enableAutoHttpTracking = true,
+    this.enablePointerReplay = true,
+    this.enableSnapshotReplay = false,
+    this.snapshotIntervalMs = 2000,
+    this.snapshotQuality = 50,
     this.blockedEvents = const [],
     this.blockedPatterns = const [],
     this.blockedErrors = const [],

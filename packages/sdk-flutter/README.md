@@ -19,6 +19,34 @@ dependencies:
 
 ---
 
+## 🎬 Dual-Mode Session Replay
+
+Flutter renders UI directly via Skia/Impeller Canvas instead of Web DOM. The SDK provides two replay modes:
+
+| Mode | Mechanism | Default | Overhead |
+| :--- | :--- | :---: | :---: |
+| **Option 2: Pointer Event Replay** (`WebCollectionPointerListener`) | Touch `(x, y)` coordinates & gestures | **Enabled (Default)** | ~0 CPU (Ultra-light) |
+| **Option 1: Canvas Snapshot Replay** (`WebCollectionRepaintBoundary`) | Low-framerate Widget image snapshots | **Disabled (User Opt-in)** | Render Dependent |
+
+### Enabling Option 1 (Canvas Snapshot Replay)
+
+```dart
+// 1. Enable in options
+WebCollectionOptions(
+  enableSnapshotReplay: true,
+  snapshotIntervalMs: 2000,
+);
+
+// 2. Wrap root widget
+runApp(
+  const WebCollectionRepaintBoundary(
+    child: MyApp(),
+  ),
+);
+```
+
+---
+
 ## 🚀 Quickstart
 
 ```dart
@@ -37,25 +65,10 @@ void main() async {
     ),
   );
 
-  runApp(const MyApp());
+  runApp(
+    const WebCollectionPointerListener(
+      child: MyApp(),
+    ),
+  );
 }
-```
-
----
-
-## 🛠️ Automatic Telemetry
-
-- **Route Tracking**: Register `WebCollectionRouteObserver` in `MaterialApp.navigatorObservers`.
-- **HTTP Monitoring**: Wrap your client with `WebCollectionHttpClient()`.
-- **Uncaught Errors**: Automatically enabled via `enableAutoErrorTracking: true`.
-
----
-
-## 📊 Manual Event Tracking
-
-```dart
-WebCollectionSdk.track('event_name', props: {'key': 'value'});
-WebCollectionSdk.metric('metric_name', 123.45);
-WebCollectionSdk.behavior('user_action');
-WebCollectionSdk.error(exception, stackTrace);
 ```
