@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
-import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
+import { api, error, insightUnread, loading, loadInsightUnread, markInsightsAsRead, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { RANGE_PRESETS, rangeFromPreset, useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
@@ -28,9 +28,9 @@ function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
 function navigate(path) { closeMenu(); router.push(path) }
 
-/** 点击通知铃铛：先清除未读徽标（视为已读）再跳转 AI 洞察页，避免跳转后红点残留。 */
+/** 点击通知铃铛：标记已读并记录时间戳，避免刷新后再次被旧洞察触发红点 */
 function openInsights() {
-  insightUnread.value = 0
+  markInsightsAsRead()
   navigate('/ai-insights')
 }
 

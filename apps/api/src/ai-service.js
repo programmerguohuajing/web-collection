@@ -272,13 +272,19 @@ export function createAiRouter(opts = {}) {
   }))
 
   router.get('/findings', wrap(async req => {
-    const list = await createFindingsRepo(db).list({
+    const repo = createFindingsRepo(db)
+    const filter = {
       appId: req.query.appId || undefined,
       scope: req.query.scope || undefined,
       status: req.query.status || undefined,
+      sinceTs: Number(req.query.sinceTs) || undefined,
       limit: Number(req.query.limit) || 50
-    })
-    return { items: list, total: list.length }
+    }
+    const [list, total] = await Promise.all([
+      repo.list(filter),
+      repo.count(filter)
+    ])
+    return { items: list, total }
   }))
 
   router.post('/findings/:id/status', wrap(async req => {

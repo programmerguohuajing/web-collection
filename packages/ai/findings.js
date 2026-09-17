@@ -46,12 +46,13 @@ export function createFindingsRepo(db) {
     return rows?.[0]?.id || null
   }
 
-  async function list({ appId, scope, status, limit = 50 } = {}) {
+  async function list({ appId, scope, status, sinceTs, limit = 50 } = {}) {
     const where = []
     const params = []
     if (appId) { where.push('app_id = ?'); params.push(appId) }
     if (scope) { where.push('scope = ?'); params.push(scope) }
     if (status) { where.push('status = ?'); params.push(status) }
+    if (sinceTs) { where.push('created_at >= ?'); params.push(sinceTs) }
     const sql = `select * from ai_findings${where.length ? ' where ' + where.join(' and ') : ''} order by created_at desc limit ?`
     const rows = await db.prepare(sql).bind(...params, limit).all()
     return (rows || []).map(row => ({
@@ -59,6 +60,18 @@ export function createFindingsRepo(db) {
       summary: row.summary, evidence: safeParse(row.evidence_json, []), detail: safeParse(row.detail_json, {}),
       confidence: row.confidence, status: row.status, createdAt: Number(row.created_at), updatedAt: Number(row.updated_at || row.created_at)
     }))
+  }
+
+  async function count({ appId, scope, status, sinceTs } = {}) {
+    const where = []
+    const params = []
+    if (appId) { where.push('app_id = ?'); params.push(appId) }
+    if (scope) { where.push('scope = ?'); params.push(scope) }
+    if (status) { where.push('status = ?'); params.push(status) }
+    if (sinceTs) { where.push('created_at >= ?'); params.push(sinceTs) }
+    const sql = `select count(*) as c from ai_findings${where.length ? ' where ' + where.join(' and ') : ''}`
+    const row = await db.prepare(sql).bind(...params).first()
+    return Number(row?.c || row?.['count(*)'] || 0)
   }
 
   async function get(id) {
@@ -76,7 +89,7 @@ export function createFindingsRepo(db) {
     return get(id)
   }
 
-  return { insert, findOpen, list, get, updateStatus }
+  return { insert, findOpen, list, count, get, updateStatus }
 }
 
 // ---------------- 检测器 ----------------
