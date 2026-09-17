@@ -33,11 +33,11 @@ Web Collection is a **pnpm monorepo** frontend monitoring system: a Vue 3 + Elem
   </tr>
 </table>
 
-## 🌟 What's New in 0.6.0
+## 🌟 What's New in 0.7.0
 
-- **Session Replay Governance** — automatic session rotation on 10m idle (`replayIdleResetMs`), 60s continuous loop recording (`replayContinuous`), and dataURI inlining for cross-origin assets (`replayInlineAssets`).
-- **SDK Circuit Breaker** — client-side circuit breaker (`collectBreakerThreshold` / `collectBreakerCooldownMs`) to freeze collection during long server outages and auto-recover gracefully.
-- **D1 Read Optimization & Summary Stitching** — 50%+ D1 read reduction with pre-aggregated hourly tables, summary stitching, and multi-tier edge caching.
+- **Sidebar Icon UI Refactoring** — 100% stroke/line outline icons across all 36 sidebar menu items with zero duplicates.
+- **AI Insights Unread Notification Governance** — persistent read timestamp filtering (`markInsightsAsRead` + `sinceTs`) to prevent recurring unread bell badge alerts on page refresh.
+- **Full DSR Compliance Workflow** — full-flow DSR request lifecycle with draft edits, self-approval controls, and complete automated test coverage.
 
 See [CHANGELOG](./CHANGELOG.md) for the full list.
 
