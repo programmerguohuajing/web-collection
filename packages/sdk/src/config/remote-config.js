@@ -115,6 +115,16 @@ function normalize(body) {
       behavior: num01(sampling.behavior)
     },
     blocked_events: Array.isArray(body.blocked_events) ? body.blocked_events.map(String).slice(0, 100) : [],
+    blocked_patterns: Array.isArray(body.blocked_patterns) ? body.blocked_patterns.map(String).slice(0, 100) : [],
+    blocked_errors: Array.isArray(body.blocked_errors) ? body.blocked_errors.map(String).slice(0, 100) : [],
+    blocked_routes: Array.isArray(body.blocked_routes) ? body.blocked_routes.map(String).slice(0, 100) : [],
+    blocked_conditions: Array.isArray(body.blocked_conditions)
+      ? body.blocked_conditions.slice(0, 50).map(c => ({
+          key: String(c?.key || '').slice(0, 64),
+          operator: ['eq', 'ne', 'contains', 'in'].includes(c?.operator) ? c.operator : 'eq',
+          value: c?.value
+        })).filter(c => c.key)
+      : [],
     plugins: body.plugins && typeof body.plugins === 'object'
       ? Object.fromEntries(Object.entries(body.plugins).map(([key, value]) => [String(key).slice(0, 32), value !== false]))
       : {},

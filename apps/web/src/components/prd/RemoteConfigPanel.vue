@@ -11,6 +11,9 @@ const configForm = reactive({
   masterSwitch: true,
   sampling: { error: 100, performance: 10, replay: 5, behavior: 100 },
   blockedEventsText: '',
+  blockedPatternsText: '',
+  blockedErrorsText: '',
+  blockedRoutesText: '',
   plugins: { performance: true, error: true, replay: true, behavior: true, exposure: true, trace: true },
   rateLimit: 500,
   replayRotation: {
@@ -69,6 +72,10 @@ function fillFromConfig(config) {
   }
   const blocked = config?.blocked_events || []
   configForm.blockedEventsText = blocked.join(', ')
+  configForm.blockedPatternsText = (config?.blocked_patterns || []).join(', ')
+  configForm.blockedErrorsText = (config?.blocked_errors || []).join(', ')
+  configForm.blockedRoutesText = (config?.blocked_routes || []).join(', ')
+
   const plugins = { ...configForm.plugins, ...(config?.plugins || {}) }
   for (const key of Object.keys(plugins)) plugins[key] = plugins[key] !== false
   Object.assign(configForm.plugins, plugins)
@@ -146,8 +153,7 @@ async function saveConfig() {
       })
     } catch { return }
   }
-  let blocked = String(configForm.blockedEventsText || '').split(/[,，\n]/).map(item => item.trim()).filter(Boolean)
-  blocked = [...new Set(blocked)]
+  const parseList = (text) => [...new Set(String(text || '').split(/[,，\n]/).map(item => item.trim()).filter(Boolean))]
   const payload = {
     scope: scopeForm.mode === 'global' ? {} : {
       ...(scopeForm.appId.trim() ? { appId: scopeForm.appId.trim() } : {}),
@@ -160,7 +166,10 @@ async function saveConfig() {
     config: {
       masterSwitch: configForm.masterSwitch ? 'on' : 'off',
       sampling: Object.fromEntries(Object.entries(configForm.sampling).map(([key, value]) => [key, Math.max(0, Math.min(100, Number(value))) / 100])),
-      blockedEvents: blocked,
+      blockedEvents: parseList(configForm.blockedEventsText),
+      blockedPatterns: parseList(configForm.blockedPatternsText),
+      blockedErrors: parseList(configForm.blockedErrorsText),
+      blockedRoutes: parseList(configForm.blockedRoutesText),
       plugins: { ...configForm.plugins },
       rateLimits: { per_event_per_user_10min: Math.max(1, Math.floor(Number(configForm.rateLimit) || 500)) },
       replayRotation: {
@@ -172,16 +181,10 @@ async function saveConfig() {
         idleThresholdSec: Math.max(10, Math.floor(Number(configForm.replayRotation.idleThresholdSec) || 300)),
         rotateOnMaxSize: Boolean(configForm.replayRotation.rotateOnMaxSize),
         maxSizeKb: Math.max(128, Math.floor(Number(configForm.replayRotation.maxSizeKb) || 2048)),
-        rotateEvents: String(configForm.replayRotation.rotateEventsText || '')
-          .split(/[,，\n]/)
-          .map(s => s.trim())
-          .filter(Boolean),
+        rotateEvents: parseList(configForm.replayRotation.rotateEventsText),
         rotateOnLongTask: Boolean(configForm.replayRotation.rotateOnLongTask),
         longTaskMs: Math.max(100, Math.floor(Number(configForm.replayRotation.longTaskMs) || 500)),
-        rotateSelectors: String(configForm.replayRotation.rotateSelectorsText || '')
-          .split(/[,，\n]/)
-          .map(s => s.trim())
-          .filter(Boolean)
+        rotateSelectors: parseList(configForm.replayRotation.rotateSelectorsText)
       }
     },
     operator: 'admin'
@@ -291,10 +294,22 @@ onMounted(async () => {
           </div>
 
           <div class="cfg-block">
-            <h4>⛔ L1 · 事件拉黑（采样前精确匹配丢弃）</h4>
+            <h4>⛔ L1 · 事件拉黑与规则过滤（采样前丢弃）</h4>
             <div class="cfg-row">
-              <span class="cr-k">blocked_events<small>事件名列表，逗号分隔</small></span>
+              <span class="cr-k">blocked_events<small>精确事件名列表，逗号分隔</small></span>
               <el-input v-model="configForm.blockedEventsText" placeholder='如 content_exposed, debug_trace' style="max-width: 320px" />
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">blocked_patterns<small>通配符前缀/后缀，逗号分隔（P0 模式拦截）</small></span>
+              <el-input v-model="configForm.blockedPatternsText" placeholder='如 debug_*, test_*, *_temp' style="max-width: 320px" />
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">blocked_errors<small>无害 Error 报错关键字，逗号分隔（P0 噪音拦截）</small></span>
+              <el-input v-model="configForm.blockedErrorsText" placeholder='如 ResizeObserver loop limit exceeded, Script error.' style="max-width: 320px" />
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">blocked_routes<small>页面路径 / URL 黑名单，逗号分隔（P1 环境拦截）</small></span>
+              <el-input v-model="configForm.blockedRoutesText" placeholder='如 /internal/*, /sandbox, localhost:*' style="max-width: 320px" />
             </div>
           </div>
 
