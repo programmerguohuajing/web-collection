@@ -314,7 +314,6 @@ jobs:
             jingguohua102/web-collection
           tags: |
             type=semver,pattern=v{{version}}
-            type=semver,pattern=v{{major}}.{{minor}}
             type=raw,value=latest
           labels: |
             org.opencontainers.image.title=Web Collection
