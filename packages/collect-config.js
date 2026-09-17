@@ -17,6 +17,10 @@ export const DEFAULT_COLLECT_CONFIG = {
   master_switch: 'on',
   sampling: { error: 1, performance: 0.1, replay: 0.05, behavior: 1 },
   blocked_events: [],
+  blocked_patterns: [],
+  blocked_errors: [],
+  blocked_routes: [],
+  blocked_conditions: [],
   plugins: { performance: true, error: true, replay: true, behavior: true, exposure: true, trace: true },
   rate_limits: { per_event_per_user_10min: 500 },
   replay_rotation: {
@@ -146,7 +150,25 @@ export function mergeConfig(partial) {
   const merged = {
     master_switch: partial.master_switch === 'off' ? 'off' : 'on',
     sampling: pickRates(partial.sampling, base.sampling),
-    blocked_events: Array.isArray(partial.blocked_events) ? partial.blocked_events.map(item => String(item).slice(0, 160)).slice(0, 200) : base.blocked_events,
+    blocked_events: Array.isArray(partial.blocked_events ?? partial.blockedEvents)
+      ? (partial.blocked_events ?? partial.blockedEvents).map(item => String(item).slice(0, 160)).slice(0, 200)
+      : base.blocked_events,
+    blocked_patterns: Array.isArray(partial.blocked_patterns ?? partial.blockedPatterns)
+      ? (partial.blocked_patterns ?? partial.blockedPatterns).map(item => String(item).slice(0, 160)).slice(0, 100)
+      : base.blocked_patterns,
+    blocked_errors: Array.isArray(partial.blocked_errors ?? partial.blockedErrors)
+      ? (partial.blocked_errors ?? partial.blockedErrors).map(item => String(item).slice(0, 200)).slice(0, 100)
+      : base.blocked_errors,
+    blocked_routes: Array.isArray(partial.blocked_routes ?? partial.blockedRoutes)
+      ? (partial.blocked_routes ?? partial.blockedRoutes).map(item => String(item).slice(0, 200)).slice(0, 100)
+      : base.blocked_routes,
+    blocked_conditions: Array.isArray(partial.blocked_conditions ?? partial.blockedConditions)
+      ? (partial.blocked_conditions ?? partial.blockedConditions).slice(0, 50).map(c => ({
+          key: String(c?.key || '').slice(0, 64),
+          operator: ['eq', 'ne', 'contains', 'in'].includes(c?.operator) ? c.operator : 'eq',
+          value: c?.value
+        })).filter(c => c.key)
+      : base.blocked_conditions,
     plugins: pickBooleans(partial.plugins, base.plugins),
     rate_limits: normalizeRateLimits(partial.rate_limits),
     replay_rotation: replayRotation
@@ -226,6 +248,18 @@ export function sanitizeCollectConfigInput(input = {}) {
     blocked_events: Array.isArray(input.blockedEvents ?? input.blocked_events)
       ? (input.blockedEvents ?? input.blocked_events)
       : parseIfJson(input.blockedEvents ?? input.blocked_events),
+    blocked_patterns: Array.isArray(input.blockedPatterns ?? input.blocked_patterns)
+      ? (input.blockedPatterns ?? input.blocked_patterns)
+      : parseIfJson(input.blockedPatterns ?? input.blocked_patterns),
+    blocked_errors: Array.isArray(input.blockedErrors ?? input.blocked_errors)
+      ? (input.blockedErrors ?? input.blocked_errors)
+      : parseIfJson(input.blockedErrors ?? input.blocked_errors),
+    blocked_routes: Array.isArray(input.blockedRoutes ?? input.blocked_routes)
+      ? (input.blockedRoutes ?? input.blocked_routes)
+      : parseIfJson(input.blockedRoutes ?? input.blocked_routes),
+    blocked_conditions: Array.isArray(input.blockedConditions ?? input.blocked_conditions)
+      ? (input.blockedConditions ?? input.blocked_conditions)
+      : parseIfJson(input.blockedConditions ?? input.blocked_conditions),
     plugins: input.plugins,
     rate_limits: input.rateLimits ?? input.rate_limits,
     replay_rotation: input.replayRotation ?? input.replay_rotation,

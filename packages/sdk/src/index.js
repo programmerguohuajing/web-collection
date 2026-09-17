@@ -1262,11 +1262,66 @@ export function createEys(options = {}) {
     sender.persist()
   }
 
+  function matchPattern(pattern, text) {
+    if (!pattern || !text) return false
+    const strPattern = String(pattern).trim()
+    const strText = String(text).trim()
+    if (strPattern === strText) return true
+    if (strPattern.includes('*')) {
+      const escaped = strPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
+      try {
+        return new RegExp(`^${escaped}$`, 'i').test(strText)
+      } catch { return false }
+    }
+    return false
+  }
+
+  function isEventBlocked(item, rc) {
+    if (!rc || !item) return false
+    if (Array.isArray(rc.blocked_events) && item.name && rc.blocked_events.includes(item.name)) return true
+    if (Array.isArray(rc.blocked_patterns) && item.name) {
+      for (const pattern of rc.blocked_patterns) {
+        if (matchPattern(pattern, item.name)) return true
+      }
+    }
+    if (Array.isArray(rc.blocked_errors)) {
+      const errorText = `${item.name || ''} ${item.message || ''} ${item.props?.message || ''}`.trim()
+      if (errorText) {
+        for (const errPattern of rc.blocked_errors) {
+          if (!errPattern) continue
+          if (errorText.toLowerCase().includes(String(errPattern).toLowerCase())) return true
+          if (matchPattern(errPattern, errorText)) return true
+        }
+      }
+    }
+    if (Array.isArray(rc.blocked_routes) && rc.blocked_routes.length > 0) {
+      const currentUrl = typeof window !== 'undefined' ? (window.location?.href || window.location?.pathname || '') : (item.url || item.props?.url || '')
+      const currentPath = typeof window !== 'undefined' ? (window.location?.pathname || '') : ''
+      for (const routePattern of rc.blocked_routes) {
+        if (!routePattern) continue
+        if (matchPattern(routePattern, currentUrl) || matchPattern(routePattern, currentPath)) return true
+      }
+    }
+    if (Array.isArray(rc.blocked_conditions) && rc.blocked_conditions.length > 0) {
+      const props = item.props || {}
+      for (const cond of rc.blocked_conditions) {
+        if (!cond || !cond.key) continue
+        const val = props[cond.key] ?? item[cond.key]
+        if (val === undefined) continue
+        const op = cond.operator || 'eq'
+        const targetVal = cond.value
+        if (op === 'eq' && String(val) === String(targetVal)) return true
+        if (op === 'ne' && String(val) !== String(targetVal)) return true
+        if (op === 'contains' && String(val).toLowerCase().includes(String(targetVal).toLowerCase())) return true
+        if (op === 'in' && Array.isArray(targetVal) && targetVal.map(String).includes(String(val))) return true
+      }
+    }
+    return false
+  }
 
   /**
-   * 将事件推入上报队列。
-   * @param {object} event - 事件对象
-   * @param {boolean} [urgent=false] - 是否立即触发上报
+   * 将构建完成的事件推入发送缓冲区。
+   * 当队列事件数触及 batchSize 或配置了 urgent 标记时自动触发 flushAll。
    */
   function push(event, urgent = false) {
     // P2-5 · 采集就绪前缓冲：ready 前事件先入 pendingTracks，就绪后回放（不丢初始化早期事件）。
@@ -1282,13 +1337,14 @@ export function createEys(options = {}) {
       // PRD 04 · 远程配置门控：L3 总开关 / L1 拉黑 / L2 插件开关 / 上限保护。
       // 错误事件始终保留止血通道，不受门控影响。
       const rc = remoteCtl.getConfig()
-      if (rc && item.type !== 'error') {
+      if (rc) {
         const category = eventCategory(item) || item.type
+        const blocked = isEventBlocked(item, rc)
         const gated =
-          rc.master_switch === 'off' ||
-          (Array.isArray(rc.blocked_events) && item.name && rc.blocked_events.includes(item.name)) ||
-          pluginKeyOf(item) && rc.plugins?.[pluginKeyOf(item)] === false ||
-          !withinRemoteRateLimit(category, rc.rate_limits?.per_event_per_user_10min)
+          (rc.master_switch === 'off' && item.type !== 'error') ||
+          blocked ||
+          (item.type !== 'error' && pluginKeyOf(item) && rc.plugins?.[pluginKeyOf(item)] === false) ||
+          (item.type !== 'error' && !withinRemoteRateLimit(category, rc.rate_limits?.per_event_per_user_10min))
         if (gated) {
           stats.dropped++
           stats.droppedByRemote++
