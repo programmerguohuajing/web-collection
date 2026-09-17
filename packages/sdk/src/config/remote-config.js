@@ -129,7 +129,7 @@ function normalize(body) {
       max_duration_sec: Number.isFinite(maxDur) && maxDur > 0 ? Math.max(10, Math.min(86400, Math.floor(maxDur))) : 300,
       rotate_selectors: Array.isArray(body.replay_rotation.rotate_selectors)
         ? body.replay_rotation.rotate_selectors.map(String).slice(0, 50)
-        : ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
+        : []
     }
   }
   // C1 · OTLP 导出配置：仅当远端显式携带 otlp 块时透传（默认不含 → 导出保持关闭，绝不因配置故障误开）。

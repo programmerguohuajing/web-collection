@@ -18,7 +18,7 @@ const configForm = reactive({
     rotateOnError: true,
     rotateOnMaxDuration: false,
     maxDurationSec: 300,
-    rotateSelectorsText: '.eys-rotate, [data-eys-rotate], .eys-truncate, [data-eys-truncate]'
+    rotateSelectorsText: ''
   }
 })
 const saving = ref(false)
@@ -74,8 +74,8 @@ function fillFromConfig(config) {
   configForm.replayRotation.rotateOnMaxDuration = Boolean(rot.rotate_on_max_duration ?? rot.rotateOnMaxDuration)
   const maxDur = Number(rot.max_duration_sec ?? rot.maxDurationSec ?? rot.max_duration ?? rot.maxDuration)
   configForm.replayRotation.maxDurationSec = Number.isFinite(maxDur) && maxDur > 0 ? Math.floor(maxDur) : 300
-  const selectors = rot.rotate_selectors || rot.rotateSelectors || ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
-  configForm.replayRotation.rotateSelectorsText = Array.isArray(selectors) ? selectors.join(', ') : String(selectors)
+  const selectors = rot.rotate_selectors ?? rot.rotateSelectors ?? []
+  configForm.replayRotation.rotateSelectorsText = Array.isArray(selectors) ? selectors.join(', ') : ''
 }
 
 async function onScopeChange() {
