@@ -50,6 +50,8 @@ const RRWEB_FULL_SNAPSHOT = 'fullsnapshot-rebuilded'
 const REASON_MAP = {
   error: '报错结束',
   route: '页面跳转',
+  click: '点击按钮截断',
+  custom: '自定义截断',
   page_unload: '页面关闭',
   max_duration: '达到时长上限',
   idle: '长时间无操作',
@@ -697,6 +699,7 @@ defineExpose({ play, currentSessionCode })
               <span>
                 <strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong>
                 <OverflowTip class="session-item-url" :text="row.url || '未记录页面地址'" />
+                <span v-if="row.endReason" class="session-reason-badge">{{ reasonLabel(row.endReason) }}</span>
               </span>
               <small class="session-item-side">
                 <!-- BUG-009（PRD 01 FR-5 入口 ②）：会话回放页 → 用户链路（分段 ID 提取基础会话 ID） -->
@@ -840,6 +843,7 @@ defineExpose({ play, currentSessionCode })
 .replay-session-item small { max-width: 104px; color: var(--c-text-muted); font-size: 10px; }
 /* 会话地址行：复用 OverflowTip（.cell-ellipsis）承载溢出 tooltip，宽度与左侧原文案一致 */
 .session-item-url { max-width: 104px; min-width: 0; color: var(--c-text-muted); font-size: 10px; }
+.session-reason-badge { display: inline-block; width: fit-content; max-width: 104px; padding: 1px 5px; color: var(--c-primary); background: var(--c-primary-soft); border-radius: 4px; font-size: 10px; line-height: 1.4; }
 .replay-session-item > small { align-self: center; }
 /* BUG-009：会话项右侧的链路入口 + 日期 */
 .session-item-side { display: inline-flex; align-items: center; gap: 8px; }

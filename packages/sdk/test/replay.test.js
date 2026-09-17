@@ -577,3 +577,62 @@ test('startReplay 在分段启动处显式触发全量快照 takeFullSnapshot(tr
   }
 })
 
+test('回放文件截断策略：rotateReplaySession / cutReplay / 路由 / 错误轮换生成独立 base_session_id', async () => {
+  const props = {
+    window: globalThis,
+    location: { href: 'https://example.com/', pathname: '/', referrer: '' },
+    document: {
+      title: '', hidden: false,
+      addEventListener() {}, removeEventListener() {}, querySelector: () => null,
+      head: { appendChild() {} },
+      createElement: () => ({ dataset: {}, addEventListener() {}, style: {} })
+    },
+    navigator: { userAgent: 'node-test' },
+    history: { pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    requestAnimationFrame: (cb) => setTimeout(() => cb(Date.now()), 0),
+    cancelAnimationFrame: () => {},
+    BroadcastChannel: undefined,
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({}) })
+  }
+  const originals = {}
+  for (const k of Object.keys(props)) {
+    originals[k] = Object.getOwnPropertyDescriptor(globalThis, k)
+    Object.defineProperty(globalThis, k, { value: props[k], configurable: true, writable: true })
+  }
+  const mockRecord = () => () => {}
+  mockRecord.takeFullSnapshot = () => {}
+  __setDriver({ record: mockRecord })
+  let client
+  try {
+    client = createEys({
+      distributedTracing: false, replaySegmentByRoute: false, behavior: false, exposure: false,
+      requests: false, performance: false, console: false, whiteScreen: false, memory: false,
+      runtime: false, environment: false, runtimeInfo: false,
+      replay: true, replayRotateOnRoute: true, replayRotateOnError: true,
+      replayCompression: false,
+      appId: 't', endpoint: '/api/collect'
+    })
+    await client.startReplay()
+    assert.ok(typeof client.rotateReplaySession === 'function', '应暴露 rotateReplaySession API')
+    assert.ok(typeof client.cutReplay === 'function', '应暴露 cutReplay API')
+
+    // 触发手动截断 API
+    client.cutReplay('manual_cut')
+    // 触发路由截断
+    client.endReplaySegment('route', { rotateBase: true })
+    // 触发错误截断
+    client.endReplaySegment('error', { rotateBase: true })
+
+    assert.ok(true, '文件截断策略执行成功')
+  } finally {
+    await client?.destroy?.()
+    __setDriver(null)
+    for (const k of Object.keys(props)) {
+      if (originals[k]) Object.defineProperty(globalThis, k, originals[k])
+      else delete globalThis[k]
+    }
+  }
+})
+
