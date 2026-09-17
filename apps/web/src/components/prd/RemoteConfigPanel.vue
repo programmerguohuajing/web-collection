@@ -12,7 +12,13 @@ const configForm = reactive({
   sampling: { error: 100, performance: 10, replay: 5, behavior: 100 },
   blockedEventsText: '',
   plugins: { performance: true, error: true, replay: true, behavior: true, exposure: true, trace: true },
-  rateLimit: 500
+  rateLimit: 500,
+  replayRotation: {
+    rotateOnRoute: true,
+    rotateOnError: true,
+    rotateOnMaxDuration: false,
+    rotateSelectorsText: '.eys-rotate, [data-eys-rotate], .eys-truncate, [data-eys-truncate]'
+  }
 })
 const saving = ref(false)
 const previewHit = ref(null)
@@ -60,6 +66,13 @@ function fillFromConfig(config) {
   Object.assign(configForm.plugins, plugins)
   const limit = Number(config?.rate_limits?.per_event_per_user_10min)
   if (Number.isFinite(limit) && limit > 0) configForm.rateLimit = limit
+
+  const rot = config?.replay_rotation || config?.replayRotation || {}
+  configForm.replayRotation.rotateOnRoute = rot.rotate_on_route !== false && rot.rotateOnRoute !== false
+  configForm.replayRotation.rotateOnError = rot.rotate_on_error !== false && rot.rotateOnError !== false
+  configForm.replayRotation.rotateOnMaxDuration = Boolean(rot.rotate_on_max_duration ?? rot.rotateOnMaxDuration)
+  const selectors = rot.rotate_selectors || rot.rotateSelectors || ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
+  configForm.replayRotation.rotateSelectorsText = Array.isArray(selectors) ? selectors.join(', ') : String(selectors)
 }
 
 async function onScopeChange() {
@@ -123,7 +136,16 @@ async function saveConfig() {
       sampling: Object.fromEntries(Object.entries(configForm.sampling).map(([key, value]) => [key, Math.max(0, Math.min(100, Number(value))) / 100])),
       blockedEvents: blocked,
       plugins: { ...configForm.plugins },
-      rateLimits: { per_event_per_user_10min: Math.max(1, Math.floor(Number(configForm.rateLimit) || 500)) }
+      rateLimits: { per_event_per_user_10min: Math.max(1, Math.floor(Number(configForm.rateLimit) || 500)) },
+      replayRotation: {
+        rotateOnRoute: Boolean(configForm.replayRotation.rotateOnRoute),
+        rotateOnError: Boolean(configForm.replayRotation.rotateOnError),
+        rotateOnMaxDuration: Boolean(configForm.replayRotation.rotateOnMaxDuration),
+        rotateSelectors: String(configForm.replayRotation.rotateSelectorsText || '')
+          .split(/[,，\n]/)
+          .map(s => s.trim())
+          .filter(Boolean)
+      }
     },
     operator: 'admin'
   }
@@ -244,6 +266,26 @@ onMounted(async () => {
             <div v-for="row in PLUGIN_ROWS" :key="row.key" class="cfg-row">
               <span class="cr-k">{{ row.label }}<small v-if="row.hint">{{ row.hint }}</small></span>
               <el-switch v-model="configForm.plugins[row.key]" />
+            </div>
+          </div>
+
+          <div class="cfg-block">
+            <h4>🎬 会话回放截断策略（动态旋转分片）</h4>
+            <div class="cfg-row">
+              <span class="cr-k">路由切换时截断分片<small>spa / history 发生路由跳转时自动生成新回放文件</small></span>
+              <el-switch v-model="configForm.replayRotation.rotateOnRoute" />
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">页面报错时截断分片<small>发生未捕获错误或资源错误时截断分片</small></span>
+              <el-switch v-model="configForm.replayRotation.rotateOnError" />
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">达到时长上限时截断分片<small>达到默认单次录制上限时长时截断分片</small></span>
+              <el-switch v-model="configForm.replayRotation.rotateOnMaxDuration" />
+            </div>
+            <div class="cfg-row">
+              <span class="cr-k">点击特定元素截断<small>选择器列表，逗号分隔 (如 .eys-rotate, [data-eys-rotate])</small></span>
+              <el-input v-model="configForm.replayRotation.rotateSelectorsText" placeholder='如 .eys-rotate, [data-eys-rotate]' style="max-width: 320px" />
             </div>
           </div>
 

@@ -18,7 +18,13 @@ export const DEFAULT_COLLECT_CONFIG = {
   sampling: { error: 1, performance: 0.1, replay: 0.05, behavior: 1 },
   blocked_events: [],
   plugins: { performance: true, error: true, replay: true, behavior: true, exposure: true, trace: true },
-  rate_limits: { per_event_per_user_10min: 500 }
+  rate_limits: { per_event_per_user_10min: 500 },
+  replay_rotation: {
+    rotate_on_route: true,
+    rotate_on_error: true,
+    rotate_on_max_duration: false,
+    rotate_selectors: ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
+  }
 }
 
 const PLUGIN_KEYS = ['performance', 'error', 'replay', 'behavior', 'exposure', 'trace']
@@ -101,12 +107,25 @@ export function resolveCollectConfig(rows, context) {
 /** 深合并默认值：下发配置允许只携带变更字段 */
 export function mergeConfig(partial) {
   const base = structuredCloneDefault()
+  const rot = partial.replay_rotation ?? partial.replayRotation
+  const replayRotation = rot && typeof rot === 'object'
+    ? {
+        rotate_on_route: rot.rotate_on_route ?? rot.rotateOnRoute ?? base.replay_rotation.rotate_on_route,
+        rotate_on_error: rot.rotate_on_error ?? rot.rotateOnError ?? base.replay_rotation.rotate_on_error,
+        rotate_on_max_duration: Boolean(rot.rotate_on_max_duration ?? rot.rotateOnMaxDuration),
+        rotate_selectors: Array.isArray(rot.rotate_selectors ?? rot.rotateSelectors)
+          ? (rot.rotate_selectors ?? rot.rotateSelectors).map(s => String(s).slice(0, 100)).slice(0, 50)
+          : base.replay_rotation.rotate_selectors
+      }
+    : base.replay_rotation
+
   const merged = {
     master_switch: partial.master_switch === 'off' ? 'off' : 'on',
     sampling: pickRates(partial.sampling, base.sampling),
     blocked_events: Array.isArray(partial.blocked_events) ? partial.blocked_events.map(item => String(item).slice(0, 160)).slice(0, 200) : base.blocked_events,
     plugins: pickBooleans(partial.plugins, base.plugins),
-    rate_limits: normalizeRateLimits(partial.rate_limits)
+    rate_limits: normalizeRateLimits(partial.rate_limits),
+    replay_rotation: replayRotation
   }
   // C1 · OTLP 导出：仅当配置显式携带 otlp 块时纳入（默认不含 → 导出保持关闭）。
   if (partial.otlp && typeof partial.otlp === 'object') merged.otlp = normalizeOtlp(partial.otlp)
@@ -185,6 +204,7 @@ export function sanitizeCollectConfigInput(input = {}) {
       : parseIfJson(input.blockedEvents ?? input.blocked_events),
     plugins: input.plugins,
     rate_limits: input.rateLimits ?? input.rate_limits,
+    replay_rotation: input.replayRotation ?? input.replay_rotation,
     otlp: input.otlp && typeof input.otlp === 'object' ? input.otlp : undefined
   })
 }

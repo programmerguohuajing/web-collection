@@ -120,6 +120,16 @@ function normalize(body) {
       : {},
     rate_limits: { per_event_per_user_10min: Number.isFinite(rateLimit) && rateLimit > 0 ? Math.floor(rateLimit) : 500 }
   }
+  if (body.replay_rotation && typeof body.replay_rotation === 'object') {
+    result.replay_rotation = {
+      rotate_on_route: body.replay_rotation.rotate_on_route !== false,
+      rotate_on_error: body.replay_rotation.rotate_on_error !== false,
+      rotate_on_max_duration: Boolean(body.replay_rotation.rotate_on_max_duration),
+      rotate_selectors: Array.isArray(body.replay_rotation.rotate_selectors)
+        ? body.replay_rotation.rotate_selectors.map(String).slice(0, 50)
+        : ['.eys-rotate', '[data-eys-rotate]', '.eys-truncate', '[data-eys-truncate]']
+    }
+  }
   // C1 · OTLP 导出配置：仅当远端显式携带 otlp 块时透传（默认不含 → 导出保持关闭，绝不因配置故障误开）。
   if (body.otlp && typeof body.otlp === 'object') result.otlp = normalizeOtlp(body.otlp)
   // A3 · 实验定义块（PRD 14 §3.3）：白名单透传 running 实验（key/salt/traffic/variants），
