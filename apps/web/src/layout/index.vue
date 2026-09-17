@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, BellFilled, Brush, ChatDotRound, Coin, Collection, Connection, Cpu, DataAnalysis, DataLine, Document, Files, Film, Fold, Grid, Histogram, House, Lock, MagicStick, Management, MapLocation, Medal, Menu, Monitor, Operation, Promotion, Reading, Setting, Share, SetUp, Stamp, Stopwatch, Switch, TrendCharts, Upload, User, View, Warning
+  Aim, Avatar, Bell, BellFilled, Brush, ChatDotRound, Coin, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataBoard, DataLine, Document, DocumentChecked, EditPen, Files, Film, Fold, Grid, Histogram, House, Lock, MagicStick, Management, MapLocation, Medal, Menu, Monitor, Operation, Opportunity, Promotion, Reading, Setting, Share, SetUp, Stamp, Stopwatch, Switch, TrendCharts, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { RANGE_PRESETS, useFilterStore } from '../stores/filters.js'
@@ -41,7 +41,7 @@ watch(() => route.query, () => {
 
 const baseGroups = [
   { label: '监测', items: [
-    { title: '总览看板', path: '/overview', icon: House },
+    { title: '总览看板', path: '/overview', icon: DataBoard },
     { title: '告警中心', path: '/alerts', icon: Bell },
     { title: '实时监控', path: '/live', icon: Monitor },
     { title: '错误监控', path: '/errors', icon: Warning },
@@ -59,13 +59,13 @@ const baseGroups = [
     { title: '用户链路', path: '/journey', icon: Promotion },
     { title: '行为分析', path: '/behavior', icon: Histogram },
     { title: '产品分析', path: '/analytics', icon: DataAnalysis },
-    { title: '用户会话', path: '/sessions', icon: User },
+    { title: '用户会话', path: '/sessions', icon: Avatar },
     { title: '用户路径', path: '/paths', icon: Switch },
     { title: '漏斗分析', path: '/funnels', icon: TrendCharts },
     { title: '留存分析', path: '/retention', icon: Grid },
     { title: '实验分析', path: '/experiments', icon: Medal, cap: 'experiments' },
     { title: '发布管理', path: '/releases', icon: Upload },
-    { title: 'AI 洞察', path: '/ai-insights', icon: BellFilled }
+    { title: 'AI 洞察', path: '/ai-insights', icon: Opportunity }
   ] },
   { label: '治理', items: [
     { title: '事件字典', path: '/dictionary', icon: Document },
@@ -73,7 +73,7 @@ const baseGroups = [
     { title: 'SourceMap', path: '/sourcemaps', icon: MapLocation },
     { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
     { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
-    { title: '合规 DSR', path: '/dsr', icon: Stamp, cap: 'dsr' }
+    { title: '合规 DSR', path: '/dsr', icon: DocumentChecked, cap: 'dsr' }
   ] },
   { label: '知识中枢', items: [
     { title: '治理台', path: '/knowledge', icon: Collection },
@@ -81,10 +81,10 @@ const baseGroups = [
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },
-    { title: '团队管理', path: '/teams', icon: User },
+    { title: '团队管理', path: '/teams', icon: Avatar },
     { title: '成员与数据等级', path: '/access-levels', icon: Lock },
-    { title: '用量与套餐', path: '/usage', icon: Coin, cap: 'metering' },
-    { title: '品牌白标', path: '/brand', icon: Brush, cap: 'whiteLabel' }
+    { title: '用量与套餐', path: '/usage', icon: CreditCard, cap: 'metering' },
+    { title: '品牌白标', path: '/brand', icon: EditPen, cap: 'whiteLabel' }
   ] }
 ]
 
@@ -219,12 +219,12 @@ onMounted(async () => {
         </div>
         <div class="topbar-spacer" />
         <div class="context-selectors" aria-label="全局筛选">
-          <el-select v-model="store.appId" clearable placeholder="全部应用" @change="applyGlobal">
+          <el-select v-model="store.appId" clearable placeholder="全部应用" class="app-selector" @change="applyGlobal">
             <el-option v-for="item in applications" :key="item.app_id" :label="item.name || item.app_id" :value="item.app_id" />
             <el-option label="全部应用" value="" />
           </el-select>
-          <el-input v-model="store.release" placeholder="全部版本" clearable @change="applyGlobal" />
-          <el-select v-model="store.rangePreset" placeholder="最近24小时" @change="applyRangePreset">
+          <el-input v-model="store.release" placeholder="全部版本" class="release-selector" clearable @change="applyGlobal" />
+          <el-select v-model="store.rangePreset" placeholder="最近24小时" class="preset-selector" @change="applyRangePreset">
             <el-option v-for="item in RANGE_PRESETS" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
           <el-date-picker
