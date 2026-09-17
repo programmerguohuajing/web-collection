@@ -222,17 +222,17 @@ onMounted(load)
           <el-table-column label="工单号" width="200">
             <template #default="{ row }"><OverflowTip :text="row.id" /></template>
           </el-table-column>
-          <el-table-column label="类型" width="100">
+          <el-table-column label="类型" width="110">
             <template #default="{ row }">
-              <el-tag :type="typeTag(row)" effect="light">{{ typeLabel(row) }}</el-tag>
+              <el-tag :type="typeTag(row)" effect="light" style="white-space: nowrap">{{ typeLabel(row) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="主体标识" min-width="220">
             <template #default="{ row }"><OverflowTip :text="subjectDisplay(row)" /></template>
           </el-table-column>
-          <el-table-column label="状态" width="100">
+          <el-table-column label="状态" width="110">
             <template #default="{ row }">
-              <el-tag :type="statusMeta(row.status).tag" effect="light">{{ statusMeta(row.status).label }}</el-tag>
+              <el-tag :type="statusMeta(row.status).tag" effect="light" style="white-space: nowrap">{{ statusMeta(row.status).label }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="命中量 (事件/问题/回放)" width="180">
@@ -246,9 +246,9 @@ onMounted(load)
           <el-table-column label="审批人" width="110">
             <template #default="{ row }"><OverflowTip :text="row.approvedBy || '-'" /></template>
           </el-table-column>
-          <el-table-column label="发起时间" width="180" cell-class-name="time-cell">
+          <el-table-column label="发起时间" width="185" cell-class-name="time-cell">
             <template #default="{ row }">
-              <span :class="{ 'overdue-text': isOverdue(row) }">{{ formatTime(row.createdAt) }}</span>
+              <span style="white-space: nowrap" :class="{ 'overdue-text': isOverdue(row) }">{{ formatTime(row.createdAt) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="200" fixed="right">
@@ -272,7 +272,7 @@ onMounted(load)
       </section>
 
       <el-dialog v-model="wizardOpen" title="发起 DSR 工单" width="680px" :close-on-click-modal="false">
-        <CreateWizard @changed="load" />
+        <CreateWizard @changed="load" @close="wizardOpen = false" />
       </el-dialog>
       </template>
     </template>

@@ -37,6 +37,7 @@ const replayView = ref(null)
 const currentReplayId = ref('')
 const selectedReplay = ref(null)
 const loadingReplayId = ref('')
+const failedReplayIds = ref(new Set())
 const replayEvents = ref([])
 const replayViewport = ref({ width: 0, height: 0 })
 let currentReplayer = null
@@ -252,12 +253,12 @@ function ensureReplayFrameVisible(width, height) {
   iframe.setAttribute('height', String(height))
 }
 
-async function openReplay(item, autoPlay = false) {
+async function openReplay(item, autoPlay = false, isAutoFallback = false) {
   if (!item?.replayId || loadingReplayId.value === item.replayId) return
   const requestId = ++playRequestId
-    replayError.value = ''
-    replayTruncated.value = null
-    currentReplayId.value = String(item.replayId)
+  replayError.value = ''
+  replayTruncated.value = null
+  currentReplayId.value = String(item.replayId)
   selectedReplay.value = props.replays.find(row => String(row.replayId) === String(item.replayId)) || item
   loadingReplayId.value = item.replayId
   destroyPlayer()
@@ -279,16 +280,21 @@ async function openReplay(item, autoPlay = false) {
         : Array.isArray(payload?.data) ? payload.data : []
     if (!events.length || !replayEl.value) {
       replayError.value = '未获取到回放事件数据'
-      // 深链 / 旧列表指向的会话已无回放数据：通知外层清理 URL 参数，
-      // 并自动回落到列表中第一条可播的会话，避免停留在死状态。
+      failedReplayIds.value.add(String(item.replayId))
       emit('replay-not-found', item.replayId)
-      fallbackToFirstAvailable(item.replayId)
+      if (isAutoFallback) {
+        fallbackToFirstAvailable()
+      }
       return
     }
 
     const validEvents = events.filter(event => event && Number.isFinite(Number(event.timestamp)))
     if (!validEvents.length) {
       replayError.value = '事件数据格式不完整，无法播放'
+      failedReplayIds.value.add(String(item.replayId))
+      if (isAutoFallback) {
+        fallbackToFirstAvailable()
+      }
       return
     }
 
@@ -297,6 +303,10 @@ async function openReplay(item, autoPlay = false) {
     const playbackBlocker = getReplayPlaybackBlocker(validEvents)
     if (playbackBlocker) {
       replayError.value = playbackBlocker
+      failedReplayIds.value.add(String(item.replayId))
+      if (isAutoFallback) {
+        fallbackToFirstAvailable()
+      }
       return
     }
 
@@ -333,24 +343,27 @@ async function openReplay(item, autoPlay = false) {
       isPlaying.value = false
     }
   } catch (error) {
+    failedReplayIds.value.add(String(item.replayId))
     if (requestId === playRequestId && error?.code !== 'ABORT_ERR') replayError.value = error?.message || '回放加载失败，请稍后重试'
     destroyPlayer()
+    if (isAutoFallback) {
+      fallbackToFirstAvailable()
+    }
   } finally {
     if (loadingReplayId.value === item.replayId) loadingReplayId.value = ''
   }
 }
 
 function play(item) {
-  return openReplay(item, true)
+  return openReplay(item, true, true)
 }
 
 /**
- * 当前会话无回放数据时，自动改播列表中第一条有数据的会话。
- * @param {string} failedId - 加载失败的 replayId，跳过它避免递归
+ * 当前会话无回放数据时，自动尝试列表中第一条未失败过的可用会话（防止死循环）。
  */
-function fallbackToFirstAvailable(failedId) {
-  const next = props.replays.find(row => row?.replayId && String(row.replayId) !== String(failedId))
-  if (next) openReplay(next, false)
+function fallbackToFirstAvailable() {
+  const next = props.replays.find(row => row?.replayId && !failedReplayIds.value.has(String(row.replayId)))
+  if (next) openReplay(next, false, true)
 }
 
 function prefetch(item) {
@@ -500,7 +513,8 @@ function formatDate(value) {
 }
 
 watch(() => props.replays, rows => {
-  if (!currentReplayId.value && rows?.length) openReplay(rows[0], false)
+  failedReplayIds.value.clear()
+  if (!currentReplayId.value && rows?.length) openReplay(rows[0], false, true)
 }, { immediate: true })
 
 onBeforeUnmount(() => {
@@ -678,7 +692,7 @@ defineExpose({ play, currentSessionCode })
               :class="{ active: String(row.replayId) === String(currentReplayId) }"
               @mouseenter="prefetch(row)"
               @focus="prefetch(row)"
-              @click="openReplay(row, true)"
+              @click="openReplay(row, true, false)"
             >
               <span>
                 <strong>{{ replayUser(row) || row.sessionId || row.replayId }}</strong>

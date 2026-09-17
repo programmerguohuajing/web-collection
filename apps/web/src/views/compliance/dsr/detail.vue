@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, pageLoading } from '../../../dashboard.js'
@@ -9,13 +9,13 @@ import { QuestionFilled } from '@element-plus/icons-vue'
 
 /**
  * D1 工单详情页（PRD §7）：
- * 工单信息 + 命中预览 + 审批区（当前用户 ≠ 发起人 且 Admin+ 才显示同意/拒绝）+ 执行结果（影响行数）+ el-timeline 审计时间线。
+ * 工单信息 + 命中预览 + 审批区（Admin+ 可审批，包含 Admin/Owner 发起人）+ 执行结果（影响行数）+ el-timeline 审计时间线。
  * subject_value 展示限权（本页仅 dsr:view 可达）；执行完成后的清空占位 [DSR-CLEARED] 原样展示（服务端已清空原文）。
  * access 执行返回导出文件包（csv/json），前端逐文件 Blob 下载。
  */
 const route = useRoute()
 const router = useRouter()
-const { me, dsrEnabled, authApi } = useAuth()
+const { me, dsrEnabled, authApi, loadCapabilities } = useAuth()
 
 const STATUS_META = {
   draft: { label: '草稿', tag: 'info' },
@@ -48,10 +48,9 @@ const acting = ref(false)
 const currentUserId = computed(() => me.value?.user?.id || '')
 const isAdminPlus = computed(() => ['owner', 'admin'].includes(me.value?.role || ''))
 
-/** 审批区显隐：待审批 + 当前用户为 Admin+ 且 ≠ 发起人（后端仍服务端强制兜底） */
+/** 审批区显隐：待审批 + 当前用户为 Admin+（包含 Admin/Owner 自批） */
 const canApprove = computed(() =>
-  request.value?.status === 'pending_approval' && isAdminPlus.value &&
-  currentUserId.value && request.value.requestedBy !== currentUserId.value)
+  request.value?.status === 'pending_approval' && isAdminPlus.value)
 /** 执行/继续执行：approved 可执行；executing 为 partial 续跑（QA #3，复用 execute 端点幂等重跑） */
 const canExecute = computed(() =>
   ['approved', 'executing'].includes(request.value?.status || '') && isAdminPlus.value)
@@ -92,8 +91,9 @@ function formatDetail(detail) {
 }
 
 async function load() {
-  // BUG-005 修复：能力位关闭时不再发请求（避免 503 噪音）；模板已用 v-if/v-else 只渲染占位提示。
-  if (!dsrEnabled.value || !requestId.value) return
+  if (!requestId.value) return
+  try { await loadCapabilities() } catch { /* 忽略瞬时错误 */ }
+  if (!dsrEnabled.value) return
   loading.value = true
   loadError.value = ''
   pageLoading.value = true
@@ -205,13 +205,13 @@ function downloadFile(file) {
   URL.revokeObjectURL(url)
 }
 
+watch(dsrEnabled, (enabled) => { if (enabled) load() })
 onMounted(load)
 </script>
 
 <template>
   <div class="dsr-detail">
-    <!-- BUG-005 修复：能力位关闭时显式占位（对齐 slo/synthetic/experiment 详情页模式），不发请求。 -->
-    <template>
+    <template v-if="dsrEnabled">
     <div class="detail-head">
       <el-button text @click="router.push('/dsr')">← 返回列表</el-button>
       <div class="head-main" v-if="request">
@@ -307,7 +307,16 @@ onMounted(load)
         <el-empty v-else description="暂无审计记录" :image-size="60" />
       </section>
     </template>
-    </template>
+  </template>
+  <el-alert
+    v-else
+      class="section"
+      type="warning"
+      title="当前部署不支持 DSR"
+      description="数据主体权利 DSR 需要后端开启 dsr 能力位（Worker 部署需设置 DSR_ENABLED=1）。"
+      show-icon
+      :closable="false"
+    />
   </div>
 </template>
 
