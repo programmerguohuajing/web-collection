@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, TrendCharts, Upload, User, View, Warning
+  Aim, Bell, Briefcase, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, TrendCharts, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
 import { RANGE_PRESETS, useFilterStore } from '../stores/filters.js'
@@ -81,7 +81,7 @@ const baseGroups = [
   ] },
   { label: '系统设置', items: [
     { title: '系统设置', path: '/settings', icon: Setting },
-    { title: '团队管理', path: '/teams', icon: User },
+    { title: '团队管理', path: '/teams', icon: Briefcase },
     { title: '成员与数据等级', path: '/access-levels', icon: Lock },
     { title: '用量与套餐', path: '/usage', icon: CreditCard, cap: 'metering' },
     { title: '品牌白标', path: '/brand', icon: EditPen, cap: 'whiteLabel' }
