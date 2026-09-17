@@ -61,7 +61,7 @@ class WebCollectionEvent {
       if (extraContext != null) ...extraContext,
       'platform': 'flutter',
       'sdk_name': 'flutter',
-      'sdk_version': '0.1.0',
+      'sdk_version': '0.8.0',
       'app_id': appId,
       'app_version': release,
     };
