@@ -28,7 +28,7 @@ if (regIdx !== -1 && args[regIdx + 1]) {
   registry = args[regIdx + 1].replace(/\/$/, '') + '/'
 }
 
-const version = pkg.version || '0.5.0'
+const version = pkg.version || '0.6.0'
 const tagVersion = `v${version}`
 const imageName = 'web-collection'
 
