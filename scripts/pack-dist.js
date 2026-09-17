@@ -9,6 +9,7 @@ rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
 
 copy('apps/web/dist', 'apps/web/dist')
+copy('apps/mcp/dist', 'apps/mcp/dist')
 copy('packages/sdk/dist', 'packages/sdk/dist')
 copy('apps/api/src', 'apps/api/src')
 copy('apps/api/package.json', 'apps/api/package.json')
