@@ -4,6 +4,15 @@
   "description": "Web Collection React Native SDK：移动端宿主适配层 + 移动端指标采集（冷启动 / 帧率卡顿 / 崩溃 / 前后台会话 / 网络），上报链路 100% 复用 @web-collection/sdk 平台内核。",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/programmerguohuajing/web-collection.git",
+    "directory": "packages/sdk-react-native"
+  },
+  "homepage": "https://github.com/programmerguohuajing/web-collection/tree/main/packages/sdk-react-native#readme",
+  "bugs": {
+    "url": "https://github.com/programmerguohuajing/web-collection/issues"
+  },
   "keywords": [
     "react-native",
     "monitoring",

@@ -1,6 +1,6 @@
 <div align="center">
 
-🌐 **[中文文档](./README.zh-CN.md) · [English](./README.md)**
+🌐 **[中文文档](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/README.zh-CN.md) · [English](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk/README.md)**
 
 # 📦 Web Collection SDK 指标说明
 

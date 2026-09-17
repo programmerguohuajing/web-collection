@@ -1,10 +1,10 @@
 <div align="center">
 
-🌐 **[English](./README.md) · [中文文档](./README.zh-CN.md)**
+🌐 **[English](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-react-native/README.md) · [中文文档](https://github.com/programmerguohuajing/web-collection/blob/main/packages/sdk-react-native/README.zh-CN.md)**
 
 # 📦 @web-collection/sdk-react-native
 
-> React Native SDK for [Web Collection](https://github.com/programmerhuohuajing/web-collection): a mobile host adapter layer + mobile metrics collection (cold start / frame jank / crash / foreground-background session / network), reusing **100% of the `@web-collection/sdk` platform kernel's reporting pipeline**.
+> React Native SDK for [Web Collection](https://github.com/programmerguohuajing/web-collection): a mobile host adapter layer + mobile metrics collection (cold start / frame jank / crash / foreground-background session / network), reusing **100% of the `@web-collection/sdk` platform kernel's reporting pipeline**.
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@web-collection/sdk-react-native"><img src="https://img.shields.io/npm/v/@web-collection/sdk-react-native" alt="npm version" /></a>

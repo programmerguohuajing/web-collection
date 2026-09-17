@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Web Collection SDK for Electron (main process app-level telemetry + renderer IPC bridge). Event types reuse the existing backend whitelist; electron APIs are dependency-injected (never imported) so the package stays unit-testable.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/programmerguohuajing/web-collection.git",
+    "directory": "packages/sdk-electron"
+  },
+  "homepage": "https://github.com/programmerguohuajing/web-collection/tree/main/packages/sdk-electron#readme",
+  "bugs": {
+    "url": "https://github.com/programmerguohuajing/web-collection/issues"
+  },
   "main": "./dist/sdk-electron.cjs",
   "module": "./dist/sdk-electron.js",
   "types": "./index.d.ts",
