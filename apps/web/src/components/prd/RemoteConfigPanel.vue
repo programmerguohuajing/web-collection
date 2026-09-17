@@ -275,7 +275,9 @@ onMounted(async () => {
             </template>
             <el-tag type="info" size="small">最具体者生效：版本区间 &gt; 应用 &gt; 全局</el-tag>
             <el-tooltip content="SDK 版本 = SDK 包自身版本（0.3.0），随依赖升级变化；应用版本 = 你业务的 release（1.2.0），由 createEys({ release }) 上报。二者独立。" placement="top">
-              <el-tag type="warning" size="small" style="cursor: help">两个版本维度？</el-tag>
+              <span style="display: inline-flex; align-items: center; cursor: help">
+                <el-tag type="warning" size="small">两个版本维度？</el-tag>
+              </span>
             </el-tooltip>
             <el-button size="small" @click="queryHit">命中查询</el-button>
           </div>
