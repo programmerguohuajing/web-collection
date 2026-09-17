@@ -52,13 +52,17 @@ jobs:
         id: target
         shell: bash
         run: |
-          tag_version="${GITHUB_REF_NAME#v}"
           package_version="$(node -p "require('./packages/sdk/package.json').version")"
-          echo "tag_version=$tag_version" >> "$GITHUB_OUTPUT"
           echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
-          if [ "$tag_version" != "$package_version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME (v$tag_version) does not match package version v$package_version"
-            exit 1
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            echo "tag_version=$tag_version" >> "$GITHUB_OUTPUT"
+            if [ "$tag_version" != "$package_version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME (v$tag_version) does not match package version v$package_version"
+              exit 1
+            fi
+          else
+            echo "Workflow triggered on ref $GITHUB_REF_NAME. Using package version v$package_version"
           fi
 
       # Next Horizon E4/E1 补齐：发版时把 SDK 体积（gzip / raw / min）上报到 /api/sdk-size，
@@ -85,7 +89,7 @@ jobs:
           node -e '
             const fs=require("fs"); const zlib=require("zlib"); const path=require("path");
             const dir="packages/sdk/dist";
-            const version=process.env.TARGET_VERSION||"";
+            const version=process.env.TARGET_VERSION || require("./packages/sdk/package.json").version || "";
             if(!version){ console.log("::warning::skip SDK size report: empty version"); process.exit(1); }
             if(!fs.existsSync(dir)){ console.log("::warning::skip SDK size report: dist not built"); process.exit(1); }
             const files=fs.readdirSync(dir);
@@ -127,6 +131,9 @@ jobs:
         shell: bash
         run: |
           version="${{ steps.target.outputs.package_version }}"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./packages/sdk/package.json').version")"
+          fi
           exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk/$version" || true)"
           if [ "$exists" = "200" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -216,11 +223,14 @@ jobs:
       # 用 conclusion 而非 result：publish 被自身 if 跳过时 conclusion=skipped，仍 != failure。
       - name: Create GitHub Release
         id: release
-        if: always() && steps.publish.conclusion != 'failure'
+        if: always() && steps.target.conclusion == 'success' && steps.publish.conclusion != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${{ steps.target.outputs.package_version }}"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./packages/sdk/package.json').version")"
+          fi
           if gh release view "v$version" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release v$version already exists — will upload tgz to existing release."
@@ -247,12 +257,15 @@ jobs:
       # 命名沿用历史风格（v0.1.5/6/7 为 web-collection-sdk-{ver}.tgz），保持前后一致。
       # 放在建 Release 之后上传，确保重试安全（release 已存在则仅追加 asset）。
       - name: Pack and upload SDK tgz
-        if: always() && steps.release.conclusion != 'failure'
+        if: always() && steps.target.conclusion == 'success' && steps.release.conclusion != 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           version="${{ steps.target.outputs.package_version }}"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./packages/sdk/package.json').version")"
+          fi
           tgz="web-collection-sdk-${version}.tgz"
           (cd packages/sdk && pnpm pack)
           mv "packages/sdk/${tgz}" "$tgz"
