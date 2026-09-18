@@ -42,25 +42,21 @@ defineProps({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
+  padding: 16px 12px;
   text-align: center;
 }
 .empty-icon {
-  margin-bottom: 10px;
+  margin-bottom: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s ease;
-}
-.app-empty-state:hover .empty-icon {
-  transform: translateY(-2px);
 }
 .empty-description {
   color: var(--c-text-muted, #6b7585);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 .empty-action {
-  margin-top: 14px;
+  margin-top: 10px;
 }
 </style>
