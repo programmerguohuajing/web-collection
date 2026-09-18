@@ -156,71 +156,6 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
         run: pnpm publish --no-git-checks --access public
 
-      # ---- Next Horizon E4/E1：同步发布 sdk-react-native 与 sdk-electron ----
-      # 这两个包各自走独立版本线（当前 0.1.0），不与主 sdk 的 0.5.0 强绑定；
-      # tag 校验（Verify 步骤）仅针对主 sdk，下面的发布按各自 package.json 版本走，
-      # 幂等保护各自独立。dist 已被 gitignore，发布前必须在本工作流内 build。
-      - name: Install sdk-react-native dependencies
-        run: pnpm --filter @web-collection/sdk-react-native install --workspace-root=false --no-frozen-lockfile
-
-      - name: Build sdk-react-native
-        run: pnpm --filter @web-collection/sdk-react-native build
-
-      - name: Check sdk-react-native version already published
-        id: rncheck
-        shell: bash
-        run: |
-          version="$(node -p "require('./packages/sdk-react-native/package.json').version")"
-          exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk-react-native/$version" || true)"
-          if [ "$exists" = "200" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::Version $version already exists on npm — skipping publish."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish sdk-react-native
-        if: steps.rncheck.outputs.skip != 'true'
-        working-directory: packages/sdk-react-native
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
-        run: pnpm publish --no-git-checks --access public
-
-      - name: Install sdk-electron dependencies
-        run: pnpm --filter @web-collection/sdk-electron install --workspace-root=false --no-frozen-lockfile
-
-      - name: Build sdk-electron
-        run: pnpm --filter @web-collection/sdk-electron build
-
-      - name: Check sdk-electron version already published
-        id: electroncheck
-        shell: bash
-        run: |
-          version="$(node -p "require('./packages/sdk-electron/package.json').version")"
-          exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk-electron/$version" || true)"
-          if [ "$exists" = "200" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::Version $version already exists on npm — skipping publish."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish sdk-electron
-        if: steps.electroncheck.outputs.skip != 'true'
-        working-directory: packages/sdk-electron
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
-        run: pnpm publish --no-git-checks --access public
-
-      # 建 GitHub Release。Release 说明从 CHANGELOG.md 抽取本版本章节（--notes-file），
-      # 而非仅 --generate-notes 生成的 "Full Changelog: vX.Y.Z...vX.Y.Z" 占位。
-      # 抽取逻辑：从 "## [<version>]" 行起、到下一个 "## [" 行之前，写入 release-notes.md；
-      # 若该章节为空（CHANGELOG 未补该版本），回退 --generate-notes 以保证 Release 仍创建。
-      # 两种情况都建：① npm 已存在（跳过发布，补建 Release）；② npm 发布成功。
-      # 若 npm 发布失败，则不建 Release，避免“发了 Release 却没上 npm”。
-      # 注意：必须用 always() 包裹，否则当表达式引用了被条件跳过的步骤上下文时，
-      # GitHub 会把整个 if 视为求值失败而静默 SKIP（曾导致 0.2.4 的 Release 未创建）。
-      # 用 conclusion 而非 result：publish 被自身 if 跳过时 conclusion=skipped，仍 != failure。
       - name: Create GitHub Release
         id: release
         if: always() && steps.target.conclusion == 'success' && steps.publish.conclusion != 'failure'
@@ -283,11 +218,96 @@ jobs:
           gh release upload "v$version" "$flutter_tar" --clobber
 
 
+  publish-react-native:
+    name: Publish React Native SDK to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node and pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install pnpm
+        run: npm install -g pnpm@11.7.0
+      - name: Install React Native SDK dependencies
+        run: pnpm --filter @web-collection/sdk-react-native install --workspace-root=false --no-frozen-lockfile
+      - name: Build React Native SDK
+        run: pnpm --filter @web-collection/sdk-react-native build
+      - name: Check React Native SDK version
+        id: rncheck
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/sdk-react-native/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk-react-native/$version" || true)"
+          if [ "$exists" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@web-collection/sdk-react-native@$version already exists on npm; skipping publish."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Configure npm auth
+        if: steps.rncheck.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
+        run: echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+      - name: Publish React Native SDK
+        if: steps.rncheck.outputs.skip != 'true'
+        working-directory: packages/sdk-react-native
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
+        run: pnpm publish --no-git-checks --access public
+
+  publish-electron:
+    name: Publish Electron SDK to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node and pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Install pnpm
+        run: npm install -g pnpm@11.7.0
+      - name: Install Electron SDK dependencies
+        run: pnpm --filter @web-collection/sdk-electron install --workspace-root=false --no-frozen-lockfile
+      - name: Build Electron SDK
+        run: pnpm --filter @web-collection/sdk-electron build
+      - name: Check Electron SDK version
+        id: electroncheck
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/sdk-electron/package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          exists="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/@web-collection/sdk-electron/$version" || true)"
+          if [ "$exists" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::@web-collection/sdk-electron@$version already exists on npm; skipping publish."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Configure npm auth
+        if: steps.electroncheck.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
+        run: echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+      - name: Publish Electron SDK
+        if: steps.electroncheck.outputs.skip != 'true'
+        working-directory: packages/sdk-electron
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH }}
+        run: pnpm publish --no-git-checks --access public
+
+
   docker:
     name: Build & Push Release Docker Image
     runs-on: ubuntu-latest
-    needs: publish
-    if: always() && needs.publish.result != 'failure'
+    needs: [publish, publish-react-native, publish-electron]
+    if: always() && needs.publish.result != 'failure' && needs.publish-react-native.result != 'failure' && needs.publish-electron.result != 'failure'
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
