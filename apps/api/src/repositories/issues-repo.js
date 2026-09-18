@@ -21,8 +21,10 @@ export async function countIssueRows(filters = {}) {
  * @param {string} fingerprint - issue 指纹
  * @returns {Promise<object|null>} issue 行或 null
  */
-export async function getIssueRow(fingerprint) {
-  const rows = await all('select * from issues where fingerprint = ? limit 1', [fingerprint])
+export async function getIssueRow(fingerprint, filters = {}) {
+  const { where, params } = issueWhere(filters)
+  const clause = where ? `${where} and fingerprint = ?` : 'where fingerprint = ?'
+  const rows = await all(`select * from issues ${clause} limit 1`, [...params, fingerprint])
   return rows[0] || null
 }
 
@@ -30,6 +32,7 @@ function issueWhere(filters = {}) {
   const parts = []
   const params = []
   addRange(parts, params, 'last_seen', filters.startTime, filters.endTime)
+  if (filters.teamId) { parts.push('app_id in (select app_id from applications where team_id = ?)'); params.push(filters.teamId) }
   addEq(parts, params, 'app_id', filters.appId)
   addEq(parts, params, 'release', filters.release)
   addEq(parts, params, 'status', filters.status)
@@ -77,8 +80,11 @@ function addLike(parts, params, field, value) {
  * @param {string} fingerprint - issue 指纹
  * @param {number} resolvedAt - 解决时间戳
  */
-export async function resolveIssueRow(fingerprint, resolvedAt, resolutionNotes) {
-  await run('update issues set status = ?, resolved_at = ?, resolution_notes = coalesce(?, resolution_notes) where fingerprint = ?', ['resolved', resolvedAt, resolutionNotes ?? null, fingerprint])
+export async function resolveIssueRow(fingerprint, resolvedAt, resolutionNotes, filters = {}) {
+  const { where, params } = issueWhere(filters)
+  const scope = where ? ` and ${where.slice(6)}` : ''
+  await run(`update issues set status = ?, resolved_at = ?, resolution_notes = coalesce(?, resolution_notes) where fingerprint = ?${scope}`,
+    ['resolved', resolvedAt, resolutionNotes ?? null, fingerprint, ...params])
 }
 
 /**

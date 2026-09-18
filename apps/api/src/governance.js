@@ -52,8 +52,11 @@ export async function listApplications(filters = {}) {
   // D2 FR-7：应用列表按当前团队过滤（teamScope='member' 且带 teamId 时启用）。
   // 未归属应用（team_id null）全员可见，便于 Admin 认领；跨团队已归属应用隐藏。
   const teamScoped = filters.teamScope === 'member' && filters.teamId
-  const where = teamScoped ? 'where (a.team_id is null or a.team_id = ?)' : ''
-  const teamParams = teamScoped ? [filters.teamId] : []
+  const conditions = []
+  const teamParams = []
+  if (teamScoped) { conditions.push('(a.team_id is null or a.team_id = ?)'); teamParams.push(filters.teamId) }
+  if (filters.appId) { conditions.push('a.app_id = ?'); teamParams.push(String(filters.appId).slice(0, 64)) }
+  const where = conditions.length ? `where ${conditions.join(' and ')}` : ''
   const select = `select a.app_id, a.name, a.platform, a.owner, a.enabled, a.sample_rate, a.replay_sample_rate, a.rules_json, a.privacy_mode, a.team_id, a.created_at, a.updated_at,
     (a.collect_key_hash is not null) as collect_key_enabled, count(distinct r.release_name)::integer as release_count
     from applications a left join releases r on r.app_id = a.app_id
@@ -61,9 +64,7 @@ export async function listApplications(filters = {}) {
     group by a.app_id, a.team_id order by a.updated_at desc`
   const [items, total] = await Promise.all([
     all(`${select} limit ? offset ?`, [...teamParams, page.pageSize, (page.page - 1) * page.pageSize]),
-    teamScoped
-      ? scalar('select count(*) count from applications where (team_id is null or team_id = ?)', teamParams)
-      : scalar('select count(*) count from applications')
+    scalar(`select count(*) count from applications a ${where}`, teamParams)
   ])
   return { ...page, total, items: items.map(row => ({ ...row, teamId: row.team_id || null })) }
 }
@@ -80,11 +81,11 @@ export async function saveApplication(input) {
   const replaySampleRate = clampRate(input.replaySampleRate)
   const privacyMode = normalizeAppPrivacyMode(input.privacyMode)
   await run(
-    `insert into applications (app_id, name, platform, owner, enabled, sample_rate, replay_sample_rate, rules_json, privacy_mode, created_at, updated_at)
-     values (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)
+    `insert into applications (app_id, name, platform, owner, enabled, sample_rate, replay_sample_rate, rules_json, privacy_mode, team_id, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
      on conflict(app_id) do update set name=excluded.name, platform=excluded.platform, owner=excluded.owner,
        enabled=excluded.enabled, sample_rate=excluded.sample_rate, replay_sample_rate=excluded.replay_sample_rate, rules_json=excluded.rules_json, privacy_mode=excluded.privacy_mode, updated_at=excluded.updated_at`,
-    [appId, String(input.name || appId).slice(0, 128), String(input.platform || 'web').slice(0, 32), String(input.owner || '').slice(0, 128), input.enabled !== false, sampleRate, replaySampleRate, JSON.stringify(normalizeRules(input.rules)), privacyMode, now, now]
+    [appId, String(input.name || appId).slice(0, 128), String(input.platform || 'web').slice(0, 32), String(input.owner || '').slice(0, 128), input.enabled !== false, sampleRate, replaySampleRate, JSON.stringify(normalizeRules(input.rules)), privacyMode, input.teamId || null, now, now]
   )
   applicationCache.delete(appId)
   rulesCache.delete(appId)

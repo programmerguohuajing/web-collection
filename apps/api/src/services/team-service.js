@@ -171,6 +171,7 @@ export async function assignApplication(auth, teamId, input = {}) {
   if (!appId) throw badRequest('appId 不能为空', 'BAD_REQUEST')
   const app = await first('select app_id, team_id from applications where app_id = ?', [appId])
   if (!app) throw notFound('应用不存在', 'NOT_FOUND')
+  if (app.team_id && app.team_id !== teamId) throw forbidden('应用已归属其他团队，禁止跨团队接管', 'FORBIDDEN')
   await run('update applications set team_id = ? where app_id = ?', [teamId, appId])
   await writeTeamAudit({ teamId, actorUserId: auth.userId, actorEmail: auth.email, action: 'app_move', targetType: 'application', targetId: appId, detail: { from: app.team_id || null, to: teamId } })
   return { ok: true, appId, teamId }

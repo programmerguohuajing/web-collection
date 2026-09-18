@@ -39,8 +39,10 @@ export function maskPII(text) {
   out = out.replace(/([?&](?:token|password|secret|key|authorization|sign|sig|api_key|apikey)=)[^&\s"]*/gi, '$1[MASKED]')
   // 常见 Token/密钥：长随机串（32+ 位 hex/base64 风格）
   out = out.replace(/\b(?:ey[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}|[A-Za-z0-9_-]{40,})\b/g, '[MASKED_TOKEN]')
-  // 暴露 userId / user_phone 字段
-  out = out.replace(/("?user_id"?\s*[:=]\s*"?)[^",}]+/gi, '$1[MASKED_USER]')
-  out = out.replace(/("?user_phone"?\s*[:=]\s*"?)[^",}]+/gi, '$1[MASKED_USER]')
+  // IPv4 / 常见身份标识与认证头/cookie。
+  out = out.replace(/\b(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b/g, '[MASKED_IP]')
+  out = out.replace(/("?(?:user_id|userId|user_phone|userPhone)"?\s*[:=]\s*"?)[^",}\s]+/gi, '$1[MASKED_USER]')
+  out = out.replace(/("?(?:session_id|sessionId|device_id|deviceId)"?\s*[:=]\s*"?)[^",}\s]+/gi, '$1[MASKED_ID]')
+  out = out.replace(/((?:authorization|cookie|set-cookie|x-api-key)\s*[:=]\s*)[^\r\n,}]+/gi, '$1[MASKED_SECRET]')
   return out
 }

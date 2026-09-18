@@ -28,13 +28,13 @@ export function setupEnvironmentMonitor({ context, enabled = true }) {
     }, 200)
   }
 
-  if (enabled) {
+  if (enabled && typeof addEventListener === 'function') {
     addEventListener('resize', onResize, { passive: true })
   }
 
   return () => {
     clearTimeout(resizeTimer)
-    removeEventListener('resize', onResize)
+    if (typeof removeEventListener === 'function') removeEventListener('resize', onResize)
   }
 }
 
@@ -57,10 +57,13 @@ function collectEnvironment() {
   const env = {}
 
   // ---- 屏幕信息 ----
-  env.screenWidth = screen.width
-  env.screenHeight = screen.height
+  const screenInfo = typeof screen !== 'undefined' ? screen : window.screen
+  if (screenInfo) {
+    env.screenWidth = screenInfo.width
+    env.screenHeight = screenInfo.height
+    env.colorDepth = screenInfo.colorDepth
+  }
   env.devicePixelRatio = window.devicePixelRatio || 1
-  env.colorDepth = screen.colorDepth
 
   // ---- 视口信息（实时动态更新） ----
   env.viewportWidth = window.innerWidth

@@ -364,6 +364,7 @@ export async function ensureSchema() {
   // A2 · 自定义看板分享：Postgres 支持 IF NOT EXISTS，瞬时安全；唯一索引对 NULL 放行（未分享行 token=NULL 允许多行）。
   await run(`alter table dashboard_definitions add column if not exists shared boolean not null default false`)
   await run(`alter table dashboard_definitions add column if not exists share_token text`)
+  await run(`alter table dashboard_definitions add column if not exists team_id varchar(32)`)
   await run(`create unique index if not exists idx_dashboard_definitions_share_token on dashboard_definitions(share_token)`)
   await run(`create table if not exists analytics_insights (
     id bigserial primary key,
@@ -373,6 +374,7 @@ export async function ensureSchema() {
     created_at bigint not null,
     updated_at bigint not null
   )`)
+  await run(`alter table analytics_insights add column if not exists team_id varchar(32)`)
   await run(`create index if not exists idx_events_ts on events(ts)`)
   await run(`create index if not exists idx_events_trace on events(trace_id, ts)`)
   await run(`create index if not exists idx_events_session on events(session_id, ts)`)

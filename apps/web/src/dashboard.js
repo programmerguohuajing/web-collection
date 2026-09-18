@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { useFilterStore } from './stores/filters.js'
 
 const apiBase = import.meta.env?.VITE_API_BASE || ''
@@ -265,7 +266,6 @@ export async function resolveIssue(fingerprint) {
   // ADR-005：闭环时选填"解决办法"，非空才进知识库（提升 AI 诊断价值，不强制录入）
   let resolutionNotes
   try {
-    const { ElMessageBox } = await import('element-plus')
     const { value } = await ElMessageBox.prompt(`为该 issue 补充解决办法（选填，将用于 AI 知识库）`, '解决 Issue', {
       confirmButtonText: '解决',
       cancelButtonText: '取消',

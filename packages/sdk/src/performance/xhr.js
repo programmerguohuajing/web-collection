@@ -12,6 +12,7 @@
 import { injectBaggage, canTrace } from '../trace/propagation.js'
 
 export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming, tracer }) {
+  if (typeof XMLHttpRequest === 'undefined') return () => {}
   const xhrOpen = XMLHttpRequest.prototype.open
   const xhrSend = XMLHttpRequest.prototype.send
 

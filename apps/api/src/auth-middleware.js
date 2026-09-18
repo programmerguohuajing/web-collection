@@ -56,7 +56,7 @@ export async function resolveAuth(req) {
     const payload = verifyJwt(bearer, jwtSecretValue())
     if (payload?.sub && payload.sid) {
       const session = await getActiveSession(payload.sid)
-      if (session) {
+      if (session && session.user_id === payload.sub) {
         const user = await first('select id, email, status from users where id = ? and status = ?', [payload.sub, 'active'])
         if (user) return buildContext(req, { userId: user.id, email: user.email, sessionId: session.id, via: 'session' })
       }
@@ -104,7 +104,11 @@ function safeEqual(a, b) {
 }
 
 function jwtSecretValue() {
-  return process.env.ACCOUNTS_JWT_SECRET || 'web-collection-default-jwt-secret-key-2026-fallback'
+  const secret = String(process.env.ACCOUNTS_JWT_SECRET || '').trim()
+  if (secret) return secret
+  const err = new Error('ACCOUNTS_JWT_SECRET 未配置，账号体系无法校验访问令牌')
+  err.code = 'ACCOUNTS_JWT_SECRET_MISSING'
+  throw err
 }
 
 // re-export 供 index.js 组装 capabilities 使用

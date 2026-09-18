@@ -36,9 +36,15 @@ export async function validateRefreshToken(refreshToken) {
   return row
 }
 
-/** 撤销单个会话（登出） */
+/** 撤销单个会话（登出：会话 id 来自当前已校验令牌） */
 export async function revokeSession(id) {
   await run('update sessions set revoked_at = ? where id = ? and revoked_at is null', [Date.now(), String(id).slice(0, 32)])
+}
+
+/** 用户主动踢下线时按 user_id 约束，防止跨用户撤销会话。 */
+export async function revokeSessionForUser(id, userId) {
+  await run('update sessions set revoked_at = ? where id = ? and user_id = ? and revoked_at is null',
+    [Date.now(), String(id).slice(0, 32), String(userId).slice(0, 32)])
 }
 
 /** 撤销某用户全部会话（改密 / 踢下线全部） */

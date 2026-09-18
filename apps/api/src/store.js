@@ -142,12 +142,12 @@ export async function getSummary(filters = {}) {
  * @param {string} id - issue 指纹
  * @returns {Promise<object|null>} 更新后的 issue 对象
  */
-export async function resolveIssue(id, resolutionNotes) {
+export async function resolveIssue(id, resolutionNotes, filters = {}) {
   await initPromise
-  const issue = await getIssueRow(id)
+  const issue = await getIssueRow(id, filters)
   if (!issue) return null
-  await resolveIssueRow(id, Date.now(), resolutionNotes)
-  return mapIssue(await getIssueRow(id))
+  await resolveIssueRow(id, Date.now(), resolutionNotes, filters)
+  return mapIssue(await getIssueRow(id, filters))
 }
 
 /**
@@ -211,9 +211,9 @@ export async function listReplaysPage(filters = {}) {
  * @param {string} sessionId - 会话 ID
  * @returns {Promise<{events: Array, truncated: boolean, originalSpanMs: number, spanMs: number}>}
  */
-export async function getReplay(sessionId) {
+export async function getReplay(sessionId, filters = {}) {
   await initPromise
-  const rows = await listReplayEventRows(safeName(sessionId), 100000)
+  const rows = await listReplayEventRows(safeName(sessionId), 100000, filters)
   return truncateReplaySpan(reassembleReplayEvents(rows, 100000))
 }
 

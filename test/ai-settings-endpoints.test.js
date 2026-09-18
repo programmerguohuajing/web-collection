@@ -11,6 +11,7 @@ const MASTER_KEY = 'unit-test-master-key'
 function d1Stub() {
   const state = { configJson: null, updatedAt: null }
   const env = {
+    ADMIN_API_KEY: 'unit-test-admin-key',
     DB: {
       prepare(sql) {
         const statement = {
@@ -40,7 +41,7 @@ function d1Stub() {
 }
 
 function req(path, { method = 'GET', body, origin, headers = {} } = {}) {
-  const h = { ...headers }
+  const h = { 'x-api-key': 'unit-test-admin-key', ...headers }
   if (origin) h.origin = origin
   return new Request(`${AI_ORIGIN}${path}`, {
     method,
@@ -55,7 +56,8 @@ async function readBody(res) {
 }
 
 test('GET /api/ai/settings：无配置时返回默认值且 effectiveSource=default', async () => {
-  const res = await aiWorker.fetch(req('/api/ai/settings'), { DB: d1Stub().DB })
+  const firstEnv = d1Stub()
+  const res = await aiWorker.fetch(req('/api/ai/settings'), firstEnv)
   assert.equal(res.status, 200)
   const data = await readBody(res)
   assert.equal(data.modelOrder, 'local,domestic,overseas')
@@ -155,7 +157,7 @@ test('settings 端点跨源拒绝：Origin 不同源 → 403，x-ai-key 也无�
 
 test('读库异常时 GET 不中断（返回默认配置）', async () => {
   const brokenDb = { prepare() { throw new Error('D1 down') } }
-  const res = await aiWorker.fetch(req('/api/ai/settings'), { DB: brokenDb })
+  const res = await aiWorker.fetch(req('/api/ai/settings'), { DB: brokenDb, ADMIN_API_KEY: 'unit-test-admin-key' })
   assert.equal(res.status, 200)
   const data = await readBody(res)
   assert.equal(data.timeoutMs, 30000)

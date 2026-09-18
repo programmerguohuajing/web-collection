@@ -576,13 +576,13 @@ test('FE 一致性：路由 / 导航 / 页面文件 / 后端接口 四方对齐'
   assert.ok(rootChildren, 'retention 必须挂在根路径 children 下，才能拼成 /retention')
 })
 
-test('FE 一致性：layout 导航图标 Grid 已在 import 列表中（避免运行时 undefined 图标）', () => {
+test('FE 一致性：留存导航使用的 Tickets 图标已导入（避免运行时 undefined 图标）', () => {
   const layout = read('apps/web/src/layout/index.vue')
   const importBlock = layout.match(/import\s*\{([\s\S]*?)\}\s*from\s*'@element-plus\/icons-vue'/)
   assert.ok(importBlock, 'layout 需从 @element-plus/icons-vue 导入图标')
   const names = importBlock[1].split(',').map(s => s.trim()).filter(Boolean)
-  assert.ok(names.includes('Grid'), 'Grid 必须已导入（留存导航使用）')
-  assert.ok(/icon:\s*Grid/.test(layout), '留存导航项应使用 Grid 图标')
+  assert.ok(names.includes('Tickets'), 'Tickets 必须已导入（留存导航使用）')
+  assert.ok(/title:\s*'留存分析'[\s\S]{0,120}icon:\s*Tickets/.test(layout), '留存导航项应使用 Tickets 图标')
 })
 
 test('FE 正确性：dashboard.js 的 pageLoading / error 是 ref，页面不得当作函数调用', () => {

@@ -20,6 +20,7 @@ import { sedimentFeedback } from '../../../packages/ai/feedback.js'
 import { all, run } from './db.js'
 import { vectorStore } from './vector-store.js'
 import { settingsRouter } from './ai-settings-service.js'
+import { assertAppAccess } from './tenant-scope.js'
 import { runScan, createFindingsRepo } from '../../../packages/ai/findings.js'
 import { loadPushChannels, deliverFinding } from '../../../packages/ai/notify.js'
 
@@ -65,6 +66,29 @@ export function createAiRouter(opts = {}) {
   }
 
   const wrap = fn => async (req, res, next) => { try { res.json(await fn(req)) } catch (err) { next(err) } }
+  const scopedAppId = async (req, raw, { optionalForSystem = true } = {}) => {
+    const appId = String(raw || '').trim().slice(0, 64)
+    if (req.auth?.via === 'session') {
+      if (!appId) { const err = new Error('请选择当前团队中的应用'); err.statusCode = 400; throw err }
+      await assertAppAccess(req.auth, appId)
+    } else if (appId) {
+      await assertAppAccess(req.auth, appId)
+    } else if (!optionalForSystem) {
+      const err = new Error('appId 必填'); err.statusCode = 400; throw err
+    }
+    return appId || undefined
+  }
+  const requireAiAdmin = req => {
+    const auth = req.auth
+    const allowed = auth?.via === 'api_key' || (auth?.via === 'session' && ['owner', 'admin'].includes(auth.role) && auth.level === 'L4')
+    if (!allowed) { const err = new Error('需要管理员权限'); err.statusCode = auth ? 403 : 401; throw err }
+  }
+  const assertKnowledgeScope = async (req, appScope, visibility = 'internal') => {
+    if (req.auth?.via !== 'session') return
+    if (visibility === 'public' && (!appScope || appScope === 'global')) return
+    if (!appScope || appScope === 'global') { const err = new Error('内部知识必须绑定当前团队应用'); err.statusCode = 403; throw err }
+    await assertAppAccess(req.auth, appScope)
+  }
 
   router.get('/health', (req, res) => res.json({ ok: true, runtime: 'node-ai-service' }))
 
@@ -91,7 +115,8 @@ export function createAiRouter(opts = {}) {
   })
 
   router.post('/diagnose', wrap(async req => {
-    const { type, traceId, issueId, errorText, appId, preferOverseas } = req.body || {}
+    const { type, traceId, issueId, errorText, appId: rawAppId, preferOverseas } = req.body || {}
+    const appId = await scopedAppId(req, rawAppId)
     const d = await buildDiagnoser()
     if (type === 'trace' || traceId) return d.trace({ traceId, appId, preferOverseas })
     if (type === 'error' || issueId || errorText) return d.error({ issueId, errorText, appId, preferOverseas })
@@ -99,15 +124,18 @@ export function createAiRouter(opts = {}) {
   }))
 
   router.post('/diagnose/trace', wrap(async req => {
-    const d = await buildDiagnoser(); return d.trace(req.body || {})
+    const appId = await scopedAppId(req, req.body?.appId)
+    const d = await buildDiagnoser(); return d.trace({ ...(req.body || {}), appId })
   }))
 
   router.post('/diagnose/error', wrap(async req => {
-    const d = await buildDiagnoser(); return d.error(req.body || {})
+    const appId = await scopedAppId(req, req.body?.appId)
+    const d = await buildDiagnoser(); return d.error({ ...(req.body || {}), appId })
   }))
 
   router.post('/feedback', wrap(async req => {
-    const { diagnosisId, rating, correction, appId } = req.body || {}
+    const { diagnosisId, rating, correction, appId: rawAppId } = req.body || {}
+    const appId = await scopedAppId(req, rawAppId)
     if (!diagnosisId || !['up', 'down'].includes(rating)) { const err = new Error('diagnosisId 与 rating(up|down) 必填'); err.statusCode = 400; throw err }
     const id = hash(diagnosisId)
     await run('insert into ai_feedback (id,diagnosis_id,rating,correction,created_at) values (?,?,?,?,?)',
@@ -123,6 +151,7 @@ export function createAiRouter(opts = {}) {
   }))
 
   router.post('/kb/ingest', wrap(async req => {
+    requireAiAdmin(req)
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     const types = Array.isArray(req.body?.types) && req.body.types.length ? req.body.types : null
@@ -137,11 +166,15 @@ export function createAiRouter(opts = {}) {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     const publicOnly = req.query.publicOnly === '1' || req.query.publicOnly === 'true'
-    return { results: await kb.search(String(req.query.q || ''), { appId: String(req.query.appId || ''), topK: 8, publicOnly }) }
+    const appId = publicOnly ? String(req.query.appId || '').slice(0, 64) : await scopedAppId(req, req.query.appId)
+    if (appId && req.auth?.via === 'session') await assertAppAccess(req.auth, appId)
+    return { results: await kb.search(String(req.query.q || ''), { appId, topK: 8, publicOnly }) }
   }))
 
   // 知识中枢：Article 模型（治理台写 / 帮助中心只读）
   router.get('/kb/articles', wrap(async req => {
+    const publicOnly = req.query.publicOnly === '1' || req.query.publicOnly === 'true'
+    const appScope = publicOnly ? String(req.query.appScope || '').slice(0, 64) : await scopedAppId(req, req.query.appScope)
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     return kb.listArticles({
@@ -150,21 +183,22 @@ export function createAiRouter(opts = {}) {
       type: String(req.query.type || ''),
       visibility: String(req.query.visibility || ''),
       status: String(req.query.status || ''),
-      appScope: String(req.query.appScope || ''),
-      publicOnly: req.query.publicOnly === '1' || req.query.publicOnly === 'true',
+      appScope: appScope || '',
+      publicOnly,
       searchTerm: String(req.query.q || '')
     })
   }))
 
   router.post('/kb/article', wrap(async req => {
     const { title, body } = req.body || {}
+    const appScope = req.auth?.via === 'session' ? await scopedAppId(req, req.body?.appScope) : (req.body?.appScope || 'global')
     if (!title || !body) { const err = new Error('title 与 body 必填'); err.statusCode = 400; throw err }
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     return kb.createArticle({
       title, type: String(req.body.type || 'runbook'), body,
       visibility: String(req.body.visibility || 'internal'), status: String(req.body.status || 'published'),
-      tags: req.body.tags || [], linkedErrors: req.body.linkedErrors || [], appScope: req.body.appScope || 'global',
+      tags: req.body.tags || [], linkedErrors: req.body.linkedErrors || [], appScope,
       owner: req.body.owner || '', source: req.body.source || null
     })
   }))
@@ -174,18 +208,26 @@ export function createAiRouter(opts = {}) {
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     const a = await kb.getArticle(String(req.params.id))
     if (!a) { const err = new Error('知识不存在'); err.statusCode = 404; throw err }
+    await assertKnowledgeScope(req, a.app_scope || a.appScope, a.visibility)
     return a
   }))
 
   router.put('/kb/article/:id', wrap(async req => {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    const current = await kb.getArticle(String(req.params.id))
+    if (!current) { const err = new Error('知识不存在'); err.statusCode = 404; throw err }
+    await assertKnowledgeScope(req, current.app_scope || current.appScope, current.visibility)
+    if (req.auth?.via === 'session' && req.body?.appScope) await scopedAppId(req, req.body.appScope)
     return kb.editArticle(String(req.params.id), req.body || {})
   }))
 
   router.delete('/kb/article/:id', wrap(async req => {
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    const current = await kb.getArticle(String(req.params.id))
+    if (!current) { const err = new Error('知识不存在'); err.statusCode = 404; throw err }
+    await assertKnowledgeScope(req, current.app_scope || current.appScope, current.visibility)
     return kb.deleteArticle(String(req.params.id))
   }))
 
@@ -193,10 +235,14 @@ export function createAiRouter(opts = {}) {
     const { helpful, note, deposit } = req.body || {}
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
+    const current = await kb.getArticle(String(req.params.id))
+    if (!current) { const err = new Error('知识不存在'); err.statusCode = 404; throw err }
+    await assertKnowledgeScope(req, current.app_scope || current.appScope, current.visibility)
     return kb.recordFeedback(String(req.params.id), { helpful: helpful !== false, note: String(note || ''), deposit: !!deposit })
   }))
 
   router.delete('/kb/source', wrap(async req => {
+    requireAiAdmin(req)
     const type = String(req.query.type || '')
     const id = String(req.query.id || '')
     if (!type || !id) { const err = new Error('type 与 id 必填'); err.statusCode = 400; throw err }
@@ -207,17 +253,19 @@ export function createAiRouter(opts = {}) {
   }))
 
   router.get('/kb/meta', wrap(async req => {
+    const appId = await scopedAppId(req, req.query.appId)
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     return kb.listMeta({
       page: String(req.query.page || 1),
       pageSize: String(req.query.pageSize || 50),
       type: String(req.query.type || ''),
-      appId: String(req.query.appId || '')
+      appId: appId || ''
     })
   }))
 
-  router.get('/kb/stats', wrap(async () => {
+  router.get('/kb/stats', wrap(async req => {
+    requireAiAdmin(req)
     const vectorReady = await vectorStore.ready()
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     return kb.stats()
@@ -226,6 +274,7 @@ export function createAiRouter(opts = {}) {
   router.get('/kb/chunk/:id', wrap(async req => {
     const row = await db.prepare('select * from ai_kb_chunks where id=?').bind(String(req.params.id)).first()
     if (!row) { const err = new Error('chunk 不存在'); err.statusCode = 404; throw err }
+    if (req.auth?.via === 'session') await scopedAppId(req, row.app_id)
     let metadata = null
     try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null } catch { metadata = null }
     return { ...row, metadata }
@@ -240,13 +289,15 @@ export function createAiRouter(opts = {}) {
     const kb = createKb({ db, vectorStore: vectorReady ? vectorStore : null, embedder: await getEmbedder() })
     const row = await kb.getFirstChunkBySource(type, id)
     if (!row) { const err = new Error('chunk 不存在'); err.statusCode = 404; throw err }
+    if (req.auth?.via === 'session') await scopedAppId(req, row.app_id)
     let metadata = null
     try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null } catch { metadata = null }
     return { ...row, metadata }
   }))
 
   router.post('/kb/runbook', wrap(async req => {
-    const { title, text, url, appId } = req.body || {}
+    const { title, text, url, appId: rawAppId } = req.body || {}
+    const appId = await scopedAppId(req, rawAppId)
     // 手动摄取仅开放 runbook / doc 两类；issue 由重建索引沉淀、feedback 由诊断修正闭环产生
     const sourceType = ['runbook', 'doc'].includes(String(req.body?.sourceType)) ? String(req.body.sourceType) : 'runbook'
     const vectorReady = await vectorStore.ready()
@@ -263,9 +314,10 @@ export function createAiRouter(opts = {}) {
   // ==================== 洞察流：扫描 + 列表 + 状态 + 推送（与 Cloudflare D1 ai-worker 行为对齐，D8 双后端一致） ====================
   // 复用 packages/ai/findings.js 同一套 runScan / createFindingsRepo（db 经 createPgAdapter 统一接口，双端无感）。
   router.post('/scan', wrap(async req => {
-    const { appId, sinceHours, scopes } = req.body || {}
+    const { appId: rawAppId, sinceHours, scopes } = req.body || {}
+    const appId = await scopedAppId(req, rawAppId)
     return runScan(db, {
-      appId: appId || undefined,
+      appId,
       sinceHours: Number(sinceHours) || 24,
       scopes: Array.isArray(scopes) && scopes.length ? scopes : undefined
     })
@@ -273,8 +325,9 @@ export function createAiRouter(opts = {}) {
 
   router.get('/findings', wrap(async req => {
     const repo = createFindingsRepo(db)
+    const appId = await scopedAppId(req, req.query.appId)
     const filter = {
-      appId: req.query.appId || undefined,
+      appId,
       scope: req.query.scope || undefined,
       status: req.query.status || undefined,
       sinceTs: Number(req.query.sinceTs) || undefined,
@@ -290,12 +343,17 @@ export function createAiRouter(opts = {}) {
   router.post('/findings/:id/status', wrap(async req => {
     const status = req.body?.status
     if (!['open', 'ack', 'resolved', 'ignored'].includes(status)) throw Object.assign(new Error('非法 status'), { status: 400 })
-    return createFindingsRepo(db).updateStatus(req.params.id, status)
+    const repo = createFindingsRepo(db)
+    const finding = await repo.get(req.params.id)
+    if (!finding) throw Object.assign(new Error('finding 不存在'), { status: 404 })
+    if (req.auth?.via === 'session') await scopedAppId(req, finding.appId || finding.app_id)
+    return repo.updateStatus(req.params.id, status)
   }))
 
   router.post('/findings/:id/notify', wrap(async req => {
     const finding = await createFindingsRepo(db).get(req.params.id)
     if (!finding) throw Object.assign(new Error('finding 不存在'), { status: 404 })
+    if (req.auth?.via === 'session') await scopedAppId(req, finding.appId || finding.app_id)
     const channels = await loadPushChannels(db)
     const results = await deliverFinding(finding, { channels })
     return { ok: results.every(r => r.ok), results }

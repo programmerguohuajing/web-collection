@@ -9,6 +9,7 @@
  * @param {Function} [opts.onRoute] - 路由变化时的回调（用于回放分段切割）
  */
 export function setupRouteMonitor({ push, onRoute }) {
+  if (typeof location === 'undefined' || typeof history === 'undefined' || typeof addEventListener !== 'function') return () => {}
   let last = location.href
   const restores = [wrapHistory('pushState'), wrapHistory('replaceState')]
   const onHashChange = event => route(event.oldURL, event.newURL, 'hashchange')
