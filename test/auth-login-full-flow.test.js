@@ -23,6 +23,8 @@ import { all, first, run } from '../apps/api/src/db.js'
 import { initDatabase } from '../apps/api/src/store.js'
 import {
   isAccountsEnabled,
+  isAccountsEnforced,
+  assertAccountsConfiguration,
   register,
   login,
   refresh,
@@ -34,10 +36,12 @@ import {
 import {
   createSession,
   validateRefreshToken,
-  revokeSession
+  revokeSession,
+  revokeSessionForUser
 } from '../apps/api/src/services/session-service.js'
 import { createInvitation } from '../apps/api/src/services/team-service.js'
-import { verifyJwt } from '../packages/auth-crypto.js'
+import { hashPassword, signJwt, verifyJwt, verifyPassword } from '../packages/auth-crypto.js'
+import { resolveAuth } from '../apps/api/src/auth-middleware.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
@@ -67,6 +71,8 @@ test('0. 环境初始化与测试数据清理', async () => {
 
 test('1. 开关与门禁控制 (isAccountsEnabled)', () => {
   const oldEnv = process.env.ACCOUNTS_ENABLED
+  const oldEnforce = process.env.ACCOUNTS_ENFORCE
+  const oldSecret = process.env.ACCOUNTS_JWT_SECRET
   try {
     delete process.env.ACCOUNTS_ENABLED
     assert.equal(isAccountsEnabled(), false)
@@ -76,8 +82,18 @@ test('1. 开关与门禁控制 (isAccountsEnabled)', () => {
 
     process.env.ACCOUNTS_ENABLED = '1'
     assert.equal(isAccountsEnabled(), true)
+
+    delete process.env.ACCOUNTS_ENFORCE
+    assert.equal(isAccountsEnforced(), true)
+    process.env.ACCOUNTS_ENFORCE = '0'
+    assert.equal(isAccountsEnforced(), false)
+
+    delete process.env.ACCOUNTS_JWT_SECRET
+    assert.throws(() => assertAccountsConfiguration(), err => err?.code === 'ACCOUNTS_JWT_SECRET_MISSING')
   } finally {
     process.env.ACCOUNTS_ENABLED = oldEnv
+    process.env.ACCOUNTS_ENFORCE = oldEnforce
+    process.env.ACCOUNTS_JWT_SECRET = oldSecret
   }
 })
 
@@ -253,6 +269,15 @@ test('4. 登录全流程 (Login, JWT & Audit Log)', async () => {
   )
   assert.ok(adminLogin.accessToken)
   assert.equal(adminLogin.user.email, 'admin@example.com')
+
+  // 已存在的管理员允许修改密码，后续启动初始化不得重置回 123456。
+  const originalAdmin = await first("select password_hash from users where email = 'admin@example.com'")
+  const changedHash = hashPassword('AdminChanged123')
+  await run("update users set password_hash = ? where email = 'admin@example.com'", [changedHash])
+  await ensureBuiltinAdmin()
+  const preservedAdmin = await first("select password_hash from users where email = 'admin@example.com'")
+  assert.equal(verifyPassword('AdminChanged123', preservedAdmin.password_hash), true)
+  await run("update users set password_hash = ? where email = 'admin@example.com'", [originalAdmin.password_hash])
 })
 
 test('5. 登录失败频次限制测试 (Rate Limiting)', async () => {
@@ -305,6 +330,23 @@ test('6. 会话校验与 Access Token 刷新续期 (Refresh Flow)', async () => 
     },
     (err) => err?.statusCode === 401 && /会话已失效/.test(err.message)
   )
+})
+
+test('6.1 JWT sub 必须与服务端 Session user_id 一致，且会话撤销必须校验所有者', async () => {
+  process.env.ACCOUNTS_ENABLED = '1'
+  process.env.ACCOUNTS_JWT_SECRET = 'test_jwt_secret_key_for_full_flow_123456789'
+
+  const owner = await first("select id from users where email = 'test_fullflow_owner@example.com'")
+  const other = await first("select id from users where email = 'test_fullflow_ratelimit@example.com'")
+  const session = await createSession(owner.id, { ip: '127.0.0.1' })
+  const forged = signJwt({ sub: other.id, sid: session.id }, process.env.ACCOUNTS_JWT_SECRET, 7200)
+  const req = { get: name => String(name).toLowerCase() === 'authorization' ? `Bearer ${forged}` : '' }
+  assert.equal(await resolveAuth(req), null)
+
+  await revokeSessionForUser(session.id, other.id)
+  assert.ok(await validateRefreshToken(session.refreshToken), '其他用户不得撤销该会话')
+  await revokeSessionForUser(session.id, owner.id)
+  assert.equal(await validateRefreshToken(session.refreshToken), null)
 })
 
 test('7. 用户 Profile 与团队上下文 (/api/me / getMe)', async () => {

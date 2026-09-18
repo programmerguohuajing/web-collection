@@ -8,6 +8,7 @@ const MASTER_KEY = 'unit-test-master-key'
 function d1Stub(configJson = null) {
   const state = { configJson }
   return {
+    ADMIN_API_KEY: 'unit-test-admin-key',
     DB: {
       prepare(sql) {
         const statement = {
@@ -31,7 +32,7 @@ function d1Stub(configJson = null) {
 }
 
 function post(path, body) {
-  return new Request(`${ORIGIN}${path}`, { method: 'POST', body: JSON.stringify(body) })
+  return new Request(`${ORIGIN}${path}`, { method: 'POST', headers: { 'x-api-key': 'unit-test-admin-key' }, body: JSON.stringify(body) })
 }
 
 const originalFetch = globalThis.fetch
@@ -145,25 +146,26 @@ test('POST /settings/models：apiKey 为空时回落库中已存密钥；失败�
   const putEnv = d1Stub()
   putEnv.AI_SECRET_MASTER_KEY = MASTER_KEY
   await aiWorker.fetch(new Request(`${ORIGIN}/api/ai/settings`, {
-    method: 'PUT', body: JSON.stringify({ providers: { domestic: { apiKey: 'sk-stored-key' } } })
+    method: 'PUT', headers: { 'x-api-key': 'unit-test-admin-key' }, body: JSON.stringify({ providers: { domestic: { baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-stored-key' } } })
   }), putEnv)
 
-  let auth = ''
+  const seenAuth = new Map()
   globalThis.fetch = async (url, init = {}) => {
+    seenAuth.set(String(url), init.headers?.authorization || '')
     if (String(url).includes('fail-host')) return jsonResponse({ error: 'nope' }, 401)
-    auth = init.headers?.authorization || ''
     return jsonResponse({ data: [] })
   }
   const r1 = await aiWorker.fetch(post('/api/ai/settings/models', { provider: 'domestic', baseUrl: 'https://api.deepseek.com/v1' }), putEnv)
   const d1 = await r1.json()
   assert.equal(d1.ok, true)
-  assert.equal(auth, 'Bearer sk-stored-key')
+  assert.equal(seenAuth.get('https://api.deepseek.com/v1/models'), 'Bearer sk-stored-key')
 
   const r2 = await aiWorker.fetch(post('/api/ai/settings/models', { provider: 'domestic', baseUrl: 'https://fail-host.example/v1' }), putEnv)
   assert.equal(r2.status, 200)
   const d2 = await r2.json()
   assert.equal(d2.ok, false)
   assert.match(d2.error, /401/)
+  assert.equal(seenAuth.get('https://fail-host.example/v1/models'), '', 'Base URL 换域名时不得向新主机发送已保存 API key')
 })
 
 test('POST /settings/models：provider 非法 → 400；workers-ai 明确不支持', async t => {

@@ -106,6 +106,7 @@ function eventWhere(filters = {}) {
   const parts = []
   const params = []
   addRange(parts, params, 'ts', filters.startTime, filters.endTime)
+  if (filters.teamId) { parts.push('app_id in (select app_id from applications where team_id = ?)'); params.push(filters.teamId) }
   addEq(parts, params, 'app_id', filters.appId)
   addEq(parts, params, 'release_name', filters.release)
   addIn(parts, params, 'type', filters.type)

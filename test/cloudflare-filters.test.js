@@ -27,6 +27,13 @@ assert.deepEqual(replays.values, ['web', '1.2.3', '%/checkout%', 10, 20])
 const issueScope = issueFilters(new URL('https://example.com/api/issues?appId=web&release=1.2.3&startTime=10&endTime=20'))
 assert.equal(issueScope.where, 'where app_id=? and release_name=? and last_seen>=? and last_seen<=?')
 assert.deepEqual(issueScope.values, ['web', '1.2.3', 10, 20])
+const tenantScopedUrl = new URL('https://example.com/api/events?appId=web')
+tenantScopedUrl.__teamId = 't_team_a'
+const tenantScoped = filters(tenantScopedUrl)
+assert.match(tenantScoped.where, /app_id in \(select app_id from applications where team_id=\?\)/)
+assert.equal(tenantScoped.values[0], 't_team_a')
+assert.ok(tenantScoped.values.includes('web'))
+
 
 assert.equal(alertMessage({ type: 'perf', appId: 'web', value: 4200, path: '/home' }, 'lcp', 4000), '[Web Collection] web LCP 4200ms，超过阈值 4000ms，页面 /home')
 assert.equal(alertMessage({ type: 'error', appId: 'web', name: 'TypeError', message: 'boom', path: '/home', release: '1.0.0', traceId: 'trace-1' }, 'error'), '[Web Collection] web TypeError: boom，页面 /home，版本 1.0.0，Trace trace-1')
@@ -278,10 +285,10 @@ const distributedResponse = await worker.fetch(new Request('https://example.com/
   DB: {
     prepare(sql) {
       // 只取最近 5,000 条再恢复正序：阻断业务长期复用 trace_id 导致的无界 D1 行读。
-      assert.match(sql, /where trace_id=\? order by (start_)?ts desc limit \?\) order by (start_)?ts/)
+      const isEvents = sql.includes('from events')
       return {
-        bind(...values) { distributedTraceId = values[0]; assert.deepEqual(values, ['trace-1', 5000]); return this },
-        async all() { return { results: [{ id: 'event-1', trace_id: 'trace-1', span_id: 'span-1', type: 'perf', metric: 'fetch', ts: 1, value: 12, props_json: '{}' }] } }
+        bind(...values) { if (isEvents) { distributedTraceId = values[0]; assert.equal(values[0], 'trace-1'); assert.equal(values.at(-1), 5000) } else { assert.deepEqual(values, ['trace-1', 5000]) } return this },
+        async all() { if (isEvents) { assert.match(sql, /where trace_id=\? and ts>=\? order by ts asc limit \?/); return { results: [{ id: 'event-1', trace_id: 'trace-1', span_id: 'span-1', type: 'perf', metric: 'fetch', ts: 1, value: 12, props_json: '{}' }] } } return { results: [] } }
       }
     }
   }
@@ -352,8 +359,14 @@ const deleteApplicationResponse = await worker.fetch(new Request('https://exampl
   }
 })
 assert.equal(deleteApplicationResponse.status, 200)
-// 级联清理：releases → experiment_exposures → experiments → applications（A3 实验分析上线后扩展）
+// 删除应用时必须同步清理所有按 app_id 存储的数据，避免 D1 残留孤儿数据。
 assert.deepEqual(applicationDeletes, [
+  ['delete from events where app_id=?', ['test-app']],
+  ['delete from issues where app_id=?', ['test-app']],
+  ['delete from replays where app_id=?', ['test-app']],
+  ['delete from sourcemaps where app_id=?', ['test-app']],
+  ['delete from alert_history where app_id=?', ['test-app']],
+  ['delete from funnel_definitions where app_id=?', ['test-app']],
   ['delete from releases where app_id=?', ['test-app']],
   ['delete from experiment_exposures where app_id=?', ['test-app']],
   ['delete from experiments where app_id=?', ['test-app']],

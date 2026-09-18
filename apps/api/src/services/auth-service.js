@@ -36,6 +36,11 @@ function jwtSecret() {
   throw err
 }
 
+/** 启动时校验账号体系关键配置，避免生产运行时才暴露弱配置。 */
+export function assertAccountsConfiguration() {
+  if (isAccountsEnabled()) jwtSecret()
+}
+
 /** 初始化内置超管账号 (admin / 123456) */
 export async function ensureBuiltinAdmin() {
   try {
@@ -62,6 +67,9 @@ export async function ensureBuiltinAdmin() {
       await run(`insert into team_members (team_id, user_id, role, access_level, status, joined_at, created_at, updated_at)
         values (?, ?, 'owner', 'L4', 'active', ?, ?, ?)`, [teamId, userId, now, now, now])
     }
+    // 多租户字段上线前创建的定义类资源归入默认团队，避免升级后历史数据“消失”。
+    await run('update dashboard_definitions set team_id = ? where team_id is null', [teamId])
+    await run('update analytics_insights set team_id = ? where team_id is null', [teamId])
   } catch (err) {
     /* 忽略建库初期的打断 */
   }
@@ -157,11 +165,12 @@ export async function login(input = {}, { ip, userAgent } = {}) {
     recordLoginFailure(rateKey)
     throw unauthorized('邮箱或口令不正确', 'UNAUTHORIZED')
   }
+  const secret = jwtSecret()
   clearLoginFailures(rateKey)
   const now = Date.now()
   await run('update users set last_login_at = ?, updated_at = ? where id = ?', [now, now, user.id])
   const session = await createSession(user.id, { ip, userAgent })
-  const accessToken = signJwt({ sub: user.id, sid: session.id }, jwtSecret(), ACCESS_TTL_SEC)
+  const accessToken = signJwt({ sub: user.id, sid: session.id }, secret, ACCESS_TTL_SEC)
   // Finding-1：login 审计补用户默认团队 teamId，避免孤儿记录在任何团队审计中不可见（无团队保持 null）
   const membership = await first("select team_id from team_members where user_id = ? and status = 'active' order by created_at limit 1", [user.id])
   await writeTeamAudit({ teamId: membership?.team_id || null, actorUserId: user.id, actorEmail: user.email, action: 'login', targetType: 'user', targetId: user.id, ip, userAgent })

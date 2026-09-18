@@ -72,7 +72,9 @@ test('cron 数据库查询预算有界且告警重试不在多个 cron 重复执
   const worker = readFileSync(path.join(ROOT, 'cloudflare/worker.js'), 'utf8')
   assert.match(worker, /missing\.filter\(d => d < today\)\.slice\(0, 5\)/)
   assert.match(worker, /alert_deliveries[\s\S]*?order by updated_at limit 5/)
-  const scheduled = worker.slice(worker.indexOf('async scheduled('), worker.indexOf('\n  }\n}', worker.indexOf('async scheduled(')))
+  const scheduledMatch = worker.match(/async scheduled\([^)]*\)\s*\{[\s\S]*?\r?\n  \}\r?\n\}/)
+  const scheduled = scheduledMatch?.[0] || ''
+  assert.ok(scheduled, '应能提取 scheduled handler')
   assert.equal((scheduled.match(/retryPendingAlertDeliveries\(env\)/g) || []).length, 1)
   assert.match(scheduled, /controller\.cron === '\* \* \* \* \*'[\s\S]*retryPendingAlertDeliveries\(env\)/)
 })

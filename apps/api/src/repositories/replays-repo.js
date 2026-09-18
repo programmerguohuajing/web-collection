@@ -64,48 +64,52 @@ export async function countReplaySessions(filters = {}) {
  * @param {string|number} idOrSessionId - 数字 ID 时先解析出其 session_id；否则直接按 session_id 匹配
  * @returns {Promise<Array>} 包含 events_json 的行数组（created_at, id 升序）
  */
-export async function listReplayEventRows(idOrSessionId, limit = 500) {
+export async function listReplayEventRows(idOrSessionId, limit = 500, filters = {}) {
   const rowLimit = safeLimit(limit, 500, 1, 100000)
+  const teamClause = filters.teamId ? ' and app_id in (select app_id from applications where team_id = ?)' : ''
+  const teamParams = filters.teamId ? [filters.teamId] : []
   if (/^\d+$/.test(String(idOrSessionId))) {
-    // 回放列表的 replayId 是当前分段的自增 id。点击后必须先解析该分段的
-    // base_session_id，再把同一会话的首段快照和后续分段一起取回；否则点到
-    // 后续分段时只有增量事件，rrweb 无法建立页面画面，表现为“有时长但空白”。
     const hit = await all(
-      'select session_id, base_session_id from replay_events where id = ? limit 1',
-      [idOrSessionId]
+      `select session_id, base_session_id from replay_events where id = ?${teamClause} limit 1`,
+      [idOrSessionId, ...teamParams]
     )
     const row = hit[0]
     if (!row) return []
     if (row.base_session_id) {
       const grouped = await all(
-        `select session_id, events_json
-         from replay_events
-         where base_session_id = ?
-         order by created_at asc, id asc
-         limit ?`,
-        [row.base_session_id, rowLimit]
+        `select session_id, events_json from replay_events
+         where base_session_id = ?${teamClause}
+         order by created_at asc, id asc limit ?`,
+        [row.base_session_id, ...teamParams, rowLimit]
       )
       if (grouped.length) return grouped
     }
     return all(
-      `select session_id, events_json
-       from replay_events
-       where session_id = ?
-       order by created_at asc, id asc
-       limit ?`,
-      [row.session_id, rowLimit]
+      `select session_id, events_json from replay_events
+       where session_id = ?${teamClause}
+       order by created_at asc, id asc limit ?`,
+      [row.session_id, ...teamParams, rowLimit]
     )
   }
-  // 优先精确匹配；若精确匹配无结果，再用 ILIKE 前缀匹配（兼容分段扩展 sessionId）。
-  let rows = await all('select session_id, events_json from replay_events where session_id = ? order by created_at asc, id asc limit ?', [idOrSessionId, rowLimit])
+  let rows = await all(
+    `select session_id, events_json from replay_events where session_id = ?${teamClause} order by created_at asc, id asc limit ?`,
+    [idOrSessionId, ...teamParams, rowLimit]
+  )
   if (rows.length) return rows
-  rows = await all('select session_id, events_json from replay_events where session_id ilike ? order by created_at asc, id asc limit ?', [`${idOrSessionId}%`, rowLimit])
+  rows = await all(
+    `select session_id, events_json from replay_events where session_id ilike ?${teamClause} order by created_at asc, id asc limit ?`,
+    [`${idOrSessionId}%`, ...teamParams, rowLimit]
+  )
   if (rows.length) return rows
-  // 总览/分析页可能传入全局事件会话 UUID（events.session_id），而回放按 base_session_id 桥接，
-  // 此时需在 base_session_id 上精确/前缀匹配，否则跳转回放永远命中不到数据。
-  rows = await all('select session_id, events_json from replay_events where base_session_id = ? order by created_at asc, id asc limit ?', [idOrSessionId, rowLimit])
+  rows = await all(
+    `select session_id, events_json from replay_events where base_session_id = ?${teamClause} order by created_at asc, id asc limit ?`,
+    [idOrSessionId, ...teamParams, rowLimit]
+  )
   if (!rows.length) {
-    rows = await all('select session_id, events_json from replay_events where base_session_id ilike ? order by created_at asc, id asc limit ?', [`${idOrSessionId}%`, rowLimit])
+    rows = await all(
+      `select session_id, events_json from replay_events where base_session_id ilike ?${teamClause} order by created_at asc, id asc limit ?`,
+      [`${idOrSessionId}%`, ...teamParams, rowLimit]
+    )
   }
   return rows
 }
@@ -121,6 +125,7 @@ export async function insertReplayEventRow({ appId, sessionId, userId, userName,
 function replayWhere(filters = {}) {
   const parts = []
   const params = []
+  if (filters.teamId) { parts.push('app_id in (select app_id from applications where team_id = ?)'); params.push(filters.teamId) }
   addEq(parts, params, 'app_id', filters.appId)
   addRange(parts, params, 'created_at', filters.startTime, filters.endTime)
   addEq(parts, params, 'release', filters.release)

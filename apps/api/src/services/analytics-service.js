@@ -138,10 +138,9 @@ export async function getTraceTopology(traceId, filters = {}) {
   if (!traceId?.trim()) return { nodes: [], edges: [] }
   const { where, params } = whereFor(filters, ['trace_id=?'])
   params.unshift(traceId)
-  const [rows, backendSpans] = await Promise.all([
-    all(`select * from events ${where} order by ts asc limit 5000`, params),
-    all('select * from spans where trace_id=? order by start_ts asc limit 5000', [traceId])
-  ])
+  const rows = await all(`select * from events ${where} order by ts asc limit 5000`, params)
+  // spans 表当前没有 app_id/team_id；多租户会话下禁止仅凭 traceId 合并，避免碰撞串租户。
+  const backendSpans = filters.teamId ? [] : await all('select * from spans where trace_id=? order by start_ts asc limit 5000', [traceId])
   const events = rows.map(mapEvent)
 
   // 根节点：取 trace 中的页面 path
@@ -414,42 +413,51 @@ export async function queryPaths(input = {}) {
   return { definition, ...computePaths(rows, definition) }
 }
 
-export async function listInsights() {
-  return (await all('select * from analytics_insights order by updated_at desc limit ?', [1000])).map(publicInsight)
+export async function listInsights(teamId = '') {
+  const where = teamId ? 'where team_id=?' : ''
+  const params = teamId ? [teamId, 1000] : [1000]
+  return (await all(`select * from analytics_insights ${where} order by updated_at desc limit ?`, params)).map(publicInsight)
 }
 
-export async function saveInsight(input = {}, id = null) {
+export async function saveInsight(input = {}, id = null, teamId = '') {
   const name = cleanText(input.name, 128)
   const kind = input.kind === 'path' ? 'path' : input.kind === 'eventTrend' ? 'eventTrend' : ''
   if (!name || !kind) throw badRequest('分析名称和类型不能为空', "BAD_REQUEST")
   const definition = kind === 'path' ? normalizePathQuery(input.definition) : normalizeInsightQuery(input.definition)
   const now = Date.now()
   if (id) {
-    const rows = await all('update analytics_insights set name=?,kind=?,definition_json=?::jsonb,updated_at=? where id=? returning id', [name, kind, JSON.stringify(definition), now, id])
+    const rows = teamId
+      ? await all('update analytics_insights set name=?,kind=?,definition_json=?::jsonb,updated_at=? where id=? and team_id=? returning id', [name, kind, JSON.stringify(definition), now, id, teamId])
+      : await all('update analytics_insights set name=?,kind=?,definition_json=?::jsonb,updated_at=? where id=? returning id', [name, kind, JSON.stringify(definition), now, id])
     if (!rows.length) throw notFound('分析不存在', 'NOT_FOUND')
     return { id: Number(id) }
   }
-  const rows = await all('insert into analytics_insights(name,kind,definition_json,created_at,updated_at) values(?,?,?::jsonb,?,?) returning id', [name, kind, JSON.stringify(definition), now, now])
+  const rows = await all('insert into analytics_insights(name,kind,definition_json,team_id,created_at,updated_at) values(?,?,?::jsonb,?,?,?) returning id', [name, kind, JSON.stringify(definition), teamId || null, now, now])
   return { id: Number(rows[0].id) }
 }
 
-export async function deleteInsight(id) {
-  const dashboards = await all('select id,widgets_json from dashboard_definitions order by updated_at desc limit ?', [1000])
+export async function deleteInsight(id, teamId = '') {
+  const dashboards = teamId
+    ? await all('select id,widgets_json from dashboard_definitions where team_id=? order by updated_at desc limit ?', [teamId, 1000])
+    : await all('select id,widgets_json from dashboard_definitions order by updated_at desc limit ?', [1000])
   for (const dashboard of dashboards) {
     const widgets = normalizeDashboardWidgets(dashboard.widgets_json).filter(item => !(typeof item === 'object' && item.type === 'insight' && item.id === Number(id)))
     if (widgets.length !== normalizeDashboardWidgets(dashboard.widgets_json).length) {
       await run('update dashboard_definitions set widgets_json=?::jsonb,updated_at=? where id=?', [JSON.stringify(widgets), Date.now(), dashboard.id])
     }
   }
-  await run('delete from analytics_insights where id=?', [id])
+  if (teamId) await run('delete from analytics_insights where id=? and team_id=?', [id, teamId])
+  else await run('delete from analytics_insights where id=?', [id])
   return { ok: true }
 }
 
 export async function listFunnels(filters = {}) {
   const page = pageOf(filters)
+  const where = filters.teamId ? 'where app_id in (select app_id from applications where team_id=?)' : ''
+  const params = filters.teamId ? [filters.teamId] : []
   const [items, totalRows] = await Promise.all([
-    all('select * from funnel_definitions order by updated_at desc limit ? offset ?', [page.pageSize, (page.page - 1) * page.pageSize]),
-    all('select count(*)::integer count from funnel_definitions')
+    all(`select * from funnel_definitions ${where} order by updated_at desc limit ? offset ?`, [...params, page.pageSize, (page.page - 1) * page.pageSize]),
+    all(`select count(*)::integer count from funnel_definitions ${where}`, params)
   ])
   return { ...page, total: Number(totalRows[0]?.count || 0), items }
 }
@@ -475,13 +483,16 @@ export async function saveFunnel(input) {
   return { id: Number(rows[0].id) }
 }
 
-export async function deleteFunnel(id) {
-  await run('delete from funnel_definitions where id=?', [id])
+export async function deleteFunnel(id, filters = {}) {
+  if (filters.teamId) await run('delete from funnel_definitions where id=? and app_id in (select app_id from applications where team_id=?)', [id, filters.teamId])
+  else await run('delete from funnel_definitions where id=?', [id])
   return { ok: true }
 }
 
 export async function runFunnel(id, filters = {}) {
-  const defs = await all('select * from funnel_definitions where id=?', [id])
+  const defs = filters.teamId
+    ? await all('select * from funnel_definitions where id=? and app_id in (select app_id from applications where team_id=?)', [id, filters.teamId])
+    : await all('select * from funnel_definitions where id=?', [id])
   const def = defs[0]
   if (!def) throw notFound('漏斗不存在', 'NOT_FOUND')
   const steps = normalizeFunnelSteps(def.steps_json)
@@ -535,35 +546,38 @@ export function computeFunnel(rows, steps, replayRows = [], options = {}) {
   }
 }
 
-export async function listDashboards() { return all('select * from dashboard_definitions order by updated_at desc limit ?', [1000]) }
-export async function deleteDashboard(id) { await run('delete from dashboard_definitions where id=?', [id]); return { ok: true } }
-export async function saveDashboard(input) {
+export async function listDashboards(teamId = '') { return teamId ? all('select * from dashboard_definitions where team_id=? order by updated_at desc limit ?', [teamId, 1000]) : all('select * from dashboard_definitions order by updated_at desc limit ?', [1000]) }
+export async function deleteDashboard(id, teamId = '') { if (teamId) await run('delete from dashboard_definitions where id=? and team_id=?', [id, teamId]); else await run('delete from dashboard_definitions where id=?', [id]); return { ok: true } }
+export async function saveDashboard(input, teamId = '') {
   const name = String(input.name || '').trim().slice(0, 128)
   if (!name) throw badRequest('仪表盘名称不能为空', "BAD_REQUEST")
   const widgets = normalizeDashboardWidgets(input.widgets)
   const now = Date.now()
   if (input.id) {
-    await run('update dashboard_definitions set name=?, widgets_json=?::jsonb, updated_at=? where id=?', [name, JSON.stringify(widgets), now, input.id])
+    if (teamId) await run('update dashboard_definitions set name=?, widgets_json=?::jsonb, updated_at=? where id=? and team_id=?', [name, JSON.stringify(widgets), now, input.id, teamId])
+    else await run('update dashboard_definitions set name=?, widgets_json=?::jsonb, updated_at=? where id=?', [name, JSON.stringify(widgets), now, input.id])
     return { id: Number(input.id) }
   }
-  const rows = await all('insert into dashboard_definitions (name, widgets_json, created_at, updated_at) values (?, ?::jsonb, ?, ?) returning id', [name, JSON.stringify(widgets), now, now])
+  const rows = await all('insert into dashboard_definitions (name, widgets_json, team_id, created_at, updated_at) values (?, ?::jsonb, ?, ?, ?) returning id', [name, JSON.stringify(widgets), teamId || null, now, now])
   return { id: Number(rows[0].id) }
 }
 
 // A2 · 自定义看板分享：生成唯一 token（crypto.randomUUID）并标记 shared=true，幂等（重生成令旧链接失效）。
 // Node 侧 widgets_json 为 jsonb，查询直接返回对象，无需 parse。
-export async function shareDashboard(id) {
+export async function shareDashboard(id, teamId = '') {
   const token = crypto.randomUUID()
-  await run('update dashboard_definitions set shared=true, share_token=$1, updated_at=$2 where id=$3', [token, Date.now(), id])
-  const row = await all('select id, name, widgets_json from dashboard_definitions where id=$1', [id])
+  if (teamId) await run('update dashboard_definitions set shared=true, share_token=$1, updated_at=$2 where id=$3 and team_id=$4', [token, Date.now(), id, teamId])
+  else await run('update dashboard_definitions set shared=true, share_token=$1, updated_at=$2 where id=$3', [token, Date.now(), id])
+  const row = teamId ? await all('select id, name, widgets_json from dashboard_definitions where id=$1 and team_id=$2', [id, teamId]) : await all('select id, name, widgets_json from dashboard_definitions where id=$1', [id])
   if (!row.length) throw badRequest('仪表盘不存在', 'NOT_FOUND')
   const r = row[0]
   return { id: Number(r.id), shared: true, shareToken: token, name: r.name, widgets_json: r.widgets_json }
 }
 
 // A2 · 自定义看板分享：取消分享，清除 token 使旧链接立即失效。
-export async function unshareDashboard(id) {
-  await run('update dashboard_definitions set shared=false, share_token=null, updated_at=$1 where id=$2', [Date.now(), id])
+export async function unshareDashboard(id, teamId = '') {
+  if (teamId) await run('update dashboard_definitions set shared=false, share_token=null, updated_at=$1 where id=$2 and team_id=$3', [Date.now(), id, teamId])
+  else await run('update dashboard_definitions set shared=false, share_token=null, updated_at=$1 where id=$2', [Date.now(), id])
   return { ok: true }
 }
 
@@ -647,6 +661,7 @@ export function normalizeInsightQuery(input = {}) {
     eventType: ['behavior', 'track'].includes(input.eventType) ? input.eventType : '',
     appId: cleanText(input.appId, 64),
     release: cleanText(input.release, 64),
+    teamId: cleanText(input.teamId, 32),
     startTime,
     endTime,
     measure: ['events', 'users', 'sessions'].includes(input.measure) ? input.measure : 'events',
@@ -663,6 +678,7 @@ export function normalizePathQuery(input = {}) {
   return {
     appId: cleanText(input.appId, 64),
     release: cleanText(input.release, 64),
+    teamId: cleanText(input.teamId, 32),
     startTime,
     endTime,
     startPath: cleanText(input.startPath, 512),
@@ -758,6 +774,7 @@ function analyticsWhere(definition) {
   const parts = ["type in ('behavior','track')", 'name=?']
   const params = [definition.eventName]
   if (definition.eventType) { parts.push('type=?'); params.push(definition.eventType) }
+  if (definition.teamId) { parts.push('app_id in (select app_id from applications where team_id = ?)'); params.push(definition.teamId) }
   for (const [column, value] of [['app_id', definition.appId], ['release_name', definition.release]]) if (value) { parts.push(`${column}=?`); params.push(value) }
   if (definition.startTime) { parts.push('ts>=?'); params.push(definition.startTime) }
   if (definition.endTime) { parts.push('ts<=?'); params.push(definition.endTime) }
@@ -872,6 +889,7 @@ function safePage(value, fallback, max) {
 export function whereFor(filters = {}, fixed = []) {
   const parts = [...fixed]
   const params = []
+  if (filters.teamId) { parts.push('app_id in (select app_id from applications where team_id = ?)'); params.push(filters.teamId) }
   for (const [field, value] of [['app_id', filters.appId], ['release_name', filters.release], ['type', filters.type], ['name', filters.name], ['user_id', filters.userId], ['session_id', filters.sessionId]]) if (value) { parts.push(`${field}=?`); params.push(value) }
   if (filters.traceId) { parts.push('trace_id ilike ?'); params.push(`%${filters.traceId}%`) }
   if (filters.path) { parts.push('(path ilike ? or url ilike ?)'); params.push(...Array(2).fill(`%${filters.path}%`)) }
@@ -968,10 +986,9 @@ export async function getDistributedTrace(traceId, filters = {}) {
   const { where, params } = whereFor(filters, ['trace_id=?'])
   params.unshift(traceId)
   // 并行查询前端 events 和后端 spans
-  const [events, backendSpans] = await Promise.all([
-    all(`select * from events ${where} order by ts asc limit ?`, [...params, MAX_TRACE_ROWS + 1]),
-    all('select * from spans where trace_id=? order by start_ts asc limit ?', [traceId, MAX_TRACE_ROWS + 1])
-  ])
+  const events = await all(`select * from events ${where} order by ts asc limit ?`, [...params, MAX_TRACE_ROWS + 1])
+  // spans 尚无租户字段；Team 会话下不做仅 traceId 的跨表合并。
+  const backendSpans = filters.teamId ? [] : await all('select * from spans where trace_id=? order by start_ts asc limit ?', [traceId, MAX_TRACE_ROWS + 1])
   const truncated = events.length > MAX_TRACE_ROWS || backendSpans.length > MAX_TRACE_ROWS
   if (events.length > MAX_TRACE_ROWS) events.length = MAX_TRACE_ROWS
   if (backendSpans.length > MAX_TRACE_ROWS) backendSpans.length = MAX_TRACE_ROWS

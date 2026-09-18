@@ -22,11 +22,12 @@ import { collectConfigStats, listCollectConfigHistory, previewCollectConfig, rol
 import { getEngagementDetail, listEngagement } from './services/engagement-service.js'
 import { listRetention } from './services/retention-service.js'
 import { listDataAccessAudit, listMembers, resolveAccessLevel, saveMember, saveMemberLevel } from './services/access-service.js'
-import { changePassword, ensureBuiltinAdmin, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
-import { listSessions, revokeSession } from './services/session-service.js'
+import { assertAccountsConfiguration, changePassword, ensureBuiltinAdmin, getMe, isOpenRegisterEnabled, login, logout, refresh, register, ACCESS_TTL_SEC, REFRESH_COOKIE } from './services/auth-service.js'
+import { listSessions, revokeSessionForUser } from './services/session-service.js'
 import { getDiagnostics, getIngestionHealth, getSdkMonitoring, getSdkSize, reportSdkMonitoring, reportSdkSize } from './services/sdk-health-service.js'
 import { acceptInvitationService, assignApplication, changeMemberLevel, changeMemberRole, createInvitation, createTeam, deleteTeam, getTeam, listInvitations, listTeamAudit, listTeamMembers, migrateMembersToDefaultTeam, removeMember, revokeInvitation, updateTeam } from './services/team-service.js'
 import { identityMiddleware, isAccountsEnabled } from './auth-middleware.js'
+import { assertAppAccess, scopeFilters } from './tenant-scope.js'
 import { resolveCollectConfig } from '../../../packages/collect-config.js'
 import { applyAccessLevel } from '../../../packages/access-level.js'
 import { createMaskingMiddleware, MASK_SKIP_PREFIXES } from './privacy.js'
@@ -73,8 +74,8 @@ app.disable('x-powered-by')
 app.use(express.json({ limit: '20mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8') } }))
 app.use(corsMiddleware)
 
-// D2 身份中间件：在掩码/等级裁剪之前解析 req.auth（accounts=false 时透传，存量零破坏）。
-// 严格模式（ACCOUNTS_ENFORCE=1）下受控管理接口未登录返回 401（PRD FR-10，前端登录页就绪后开启）。
+// D2 身份中间件：在掩码/等级裁剪之前解析 req.auth（accounts=false 时透传）。
+// 账号体系开启时受控管理接口默认强制鉴权；仅显式 ACCOUNTS_ENFORCE=0/false 才进入兼容模式。
 app.use(identityMiddleware)
 
 // 查询侧隐私脱敏（mask-at-query，见 ADR-007）：默认对所有 /api 查询响应递归掩码
@@ -152,48 +153,49 @@ app.get('/api/collect.gif', async (req, res, next) => {
 // 事件与报表查询接口。
 app.get('/api/events', async (req, res, next) => {
   try {
-    res.json(await listEventsPage(filters(req.query)))
+    res.json(await listEventsPage(scopeFilters(filters(req.query), req.auth)))
   } catch (err) {
     next(err)
   }
 })
 app.get('/api/summary', async (req, res, next) => {
   try {
-    res.json(await getSummary(filters(req.query)))
+    res.json(await getSummary(scopeFilters(filters(req.query), req.auth)))
   } catch (err) {
     next(err)
   }
 })
 app.get('/api/overview/trend', async (req, res, next) => {
   try {
-    res.json(await getOverviewTrend(filters(req.query)))
+    res.json(await getOverviewTrend(scopeFilters(filters(req.query), req.auth)))
   } catch (err) {
     next(err)
   }
 })
 app.get('/api/issues', async (req, res, next) => {
   try {
-    res.json(await listIssuesPage(filters(req.query)))
+    res.json(await listIssuesPage(scopeFilters(filters(req.query), req.auth)))
   } catch (err) {
     next(err)
   }
 })
 app.get('/api/replays', async (req, res, next) => {
   try {
-    res.json(await listReplaysPage(filters(req.query)))
+    res.json(await listReplaysPage(scopeFilters(filters(req.query), req.auth)))
   } catch (err) {
     next(err)
   }
 })
 app.get('/api/replays/:sessionId', async (req, res, next) => {
   try {
-    res.json(await getReplay(req.params.sessionId))
+    res.json(await getReplay(req.params.sessionId, scopeFilters({}, req.auth)))
   } catch (err) {
     next(err)
   }
 })
 app.post('/api/sourcemaps', async (req, res, next) => {
   try {
+    await assertAppAccess(req.auth, req.body?.appId || 'default')
     res.json(await saveSourceMap(req.body || {}))
   } catch (err) {
     next(err)
@@ -201,7 +203,7 @@ app.post('/api/sourcemaps', async (req, res, next) => {
 })
 app.post('/api/issues/:id/resolve', async (req, res, next) => {
   try {
-    res.json(await resolveIssue(req.params.id, req.body?.resolutionNotes))
+    res.json(await resolveIssue(req.params.id, req.body?.resolutionNotes, scopeFilters({}, req.auth)))
   } catch (err) {
     next(err)
   }
@@ -218,29 +220,29 @@ app.get('/api/applications', async (req, res, next) => {
   } catch (err) { next(err) }
 })
 app.post('/api/applications', async (req, res, next) => {
-  try { res.json(await saveApplication(req.body || {})) } catch (err) {
+  try { res.json(await saveApplication({ ...(req.body || {}), teamId: req.auth?.via === 'session' ? req.auth.teamId : undefined })) } catch (err) {
     const status = Number(err?.statusCode) || 500
     if (status >= 400 && status < 500) return res.status(status).json({ error: err.message })
     next(err)
   }
 })
 app.get('/api/applications/:appId/releases', async (req, res, next) => {
-  try { res.json(await listReleases(req.params.appId, req.query)) } catch (err) { next(err) }
+  try { await assertAppAccess(req.auth, req.params.appId); res.json(await listReleases(req.params.appId, req.query)) } catch (err) { next(err) }
 })
 app.put('/api/applications/:appId/releases/:release', async (req, res, next) => {
-  try { res.json(await saveRelease(req.params.appId, { ...req.body, release: req.params.release })) } catch (err) { next(err) }
+  try { await assertAppAccess(req.auth, req.params.appId); res.json(await saveRelease(req.params.appId, { ...req.body, release: req.params.release })) } catch (err) { next(err) }
 })
 app.delete('/api/applications/:appId/releases/:release', async (req, res, next) => {
-  try { res.json(await deleteRelease(req.params.appId, req.params.release)) } catch (err) { next(err) }
+  try { await assertAppAccess(req.auth, req.params.appId); res.json(await deleteRelease(req.params.appId, req.params.release)) } catch (err) { next(err) }
 })
 app.get('/api/applications/:appId', async (req, res, next) => {
-  try { res.json(await listApplications({ appId: req.params.appId, page: 1, pageSize: 1 })) } catch (err) { next(err) }
+  try { await assertAppAccess(req.auth, req.params.appId); res.json(await listApplications({ appId: req.params.appId, page: 1, pageSize: 1 })) } catch (err) { next(err) }
 })
 app.put('/api/applications/:appId', async (req, res, next) => {
-  try { res.json(await saveApplication({ ...req.body, appId: req.params.appId })) } catch (err) { next(err) }
+  try { await assertAppAccess(req.auth, req.params.appId); res.json(await saveApplication({ ...req.body, appId: req.params.appId })) } catch (err) { next(err) }
 })
 app.delete('/api/applications/:appId', async (req, res, next) => {
-  try { res.json(await deleteApplication(req.params.appId)) } catch (err) { next(err) }
+  try { await assertAppAccess(req.auth, req.params.appId); res.json(await deleteApplication(req.params.appId)) } catch (err) { next(err) }
 })
 app.get('/api/settings', async (req, res, next) => {
   try { res.json(await getSettings()) } catch (err) { next(err) }
@@ -313,13 +315,13 @@ app.post('/api/internal/alerts/deliver', async (req, res, next) => {
   } catch (err) { next(err) }
 })
 app.post('/api/applications/:appId/collect-key', async (req, res, next) => {
-  try { res.json(await rotateCollectKey(req.params.appId)) } catch (err) { next(err) }
+  try { await assertAppAccess(req.auth, req.params.appId); res.json(await rotateCollectKey(req.params.appId)) } catch (err) { next(err) }
 })
-app.get('/api/logs', async (req, res, next) => { try { res.json(await listLogs(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/traces', async (req, res, next) => { try { res.json(await listTraces(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await getTrace(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/traces/:traceId/distributed', async (req, res, next) => { try { res.json(await getDistributedTrace(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/traces/:traceId/topology', async (req, res, next) => { try { res.json(await getTraceTopology(req.params.traceId, filters(req.query))) } catch (err) { next(err) } })
+app.get('/api/logs', async (req, res, next) => { try { res.json(await listLogs(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/traces', async (req, res, next) => { try { res.json(await listTraces(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/traces/:traceId', async (req, res, next) => { try { res.json(await getTrace(req.params.traceId, scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/traces/:traceId/distributed', async (req, res, next) => { try { res.json(await getDistributedTrace(req.params.traceId, scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/traces/:traceId/topology', async (req, res, next) => { try { res.json(await getTraceTopology(req.params.traceId, scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
 // 链路追踪 span 接收端点
 // 兼容两种契约（v1/v2 双读）：
 //   - v1：直接是 Span 数组（或单个 Span 对象），历史 SDK / 手动调用
@@ -355,24 +357,24 @@ app.post('/api/spans', async (req, res, next) => {
     res.json(await recordSpans(spans))
   } catch (err) { next(err) }
 })
-app.get('/api/analytics/sessions', async (req, res, next) => { try { res.json(await getSessions(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId, filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/click-paths', async (req, res, next) => { try { res.json(await getClickPaths(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/heatmap', async (req, res, next) => { try { res.json(await getHeatmap(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/releases/compare', async (req, res, next) => { try { const { appId } = req.query; res.json(await getReleaseDetailComparison(appId, req.query.from, req.query.to)) } catch (err) { next(err) } })
-app.get('/api/analytics/event-names', async (req, res, next) => { try { res.json(await listFunnelEventNames(filters(req.query))) } catch (err) { next(err) } })
-app.get('/api/analytics/event-properties', async (req, res, next) => { try { res.json(await listEventProperties({ ...filters(req.query), eventName: req.query.eventName })) } catch (err) { next(err) } })
-app.post('/api/analytics/insights/query', async (req, res, next) => { try { res.json(await queryEventInsight(req.body || {})) } catch (err) { next(err) } })
-app.post('/api/analytics/paths/query', async (req, res, next) => { try { res.json(await queryPaths(req.body || {})) } catch (err) { next(err) } })
-app.get('/api/analytics/insights', async (req, res, next) => { try { res.json(await listInsights()) } catch (err) { next(err) } })
-app.post('/api/analytics/insights', async (req, res, next) => { try { res.json(await saveInsight(req.body || {})) } catch (err) { next(err) } })
-app.put('/api/analytics/insights/:id', async (req, res, next) => { try { res.json(await saveInsight(req.body || {}, Number(req.params.id))) } catch (err) { next(err) } })
-app.delete('/api/analytics/insights/:id', async (req, res, next) => { try { res.json(await deleteInsight(Number(req.params.id))) } catch (err) { next(err) } })
+app.get('/api/analytics/sessions', async (req, res, next) => { try { res.json(await getSessions(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/sessions/:sessionId', async (req, res, next) => { try { res.json(await getSessionEvents(req.params.sessionId, scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/paths', async (req, res, next) => { try { res.json(await getPaths(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/click-paths', async (req, res, next) => { try { res.json(await getClickPaths(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/heatmap', async (req, res, next) => { try { res.json(await getHeatmap(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/live', async (req, res, next) => { try { res.json(await getLive(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/releases', async (req, res, next) => { try { res.json(await getReleaseComparison(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/releases/compare', async (req, res, next) => { try { const { appId } = req.query; await assertAppAccess(req.auth, appId); res.json(await getReleaseDetailComparison(appId, req.query.from, req.query.to)) } catch (err) { next(err) } })
+app.get('/api/analytics/event-names', async (req, res, next) => { try { res.json(await listFunnelEventNames(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/event-properties', async (req, res, next) => { try { res.json(await listEventProperties({ ...scopeFilters(filters(req.query), req.auth), eventName: req.query.eventName })) } catch (err) { next(err) } })
+app.post('/api/analytics/insights/query', async (req, res, next) => { try { res.json(await queryEventInsight(scopeFilters(req.body || {}, req.auth))) } catch (err) { next(err) } })
+app.post('/api/analytics/paths/query', async (req, res, next) => { try { res.json(await queryPaths(scopeFilters(req.body || {}, req.auth))) } catch (err) { next(err) } })
+app.get('/api/analytics/insights', async (req, res, next) => { try { res.json(await listInsights(scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
+app.post('/api/analytics/insights', async (req, res, next) => { try { res.json(await saveInsight(req.body || {}, null, scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
+app.put('/api/analytics/insights/:id', async (req, res, next) => { try { res.json(await saveInsight(req.body || {}, Number(req.params.id), scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
+app.delete('/api/analytics/insights/:id', async (req, res, next) => { try { res.json(await deleteInsight(Number(req.params.id), scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
 // Next Horizon E2：API 健康视图——复用 fetch/xhr 性能事件聚合端点健康度（列表 / 单端点时序下钻）
-app.get('/api/analytics/api-health', async (req, res, next) => { try { res.json(await getApiHealth(filters(req.query), req.query.endpoint)) } catch (err) { next(err) } })
+app.get('/api/analytics/api-health', async (req, res, next) => { try { res.json(await getApiHealth(scopeFilters(filters(req.query), req.auth), req.query.endpoint)) } catch (err) { next(err) } })
 // ==================== B2 · SLO / 错误预算 / 可用性看板 ====================
 // 能力位门禁：slo=false（默认 false 兜底 / Worker 未翻）返回 503，前端据此显式「当前部署不支持 SLO」。
 app.post('/api/slo', async (req, res, next) => { guardSlo(res, next, async () => { res.json(await createSlo(req.body || {}, req.auth)) }) })
@@ -569,14 +571,14 @@ app.get('/api/diagnostics', async (req, res, next) => {
   try { res.json(await getDiagnostics({ appId: req.query.appId })) } catch (err) { next(err) }
 })
 
-app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels(filters(req.query))) } catch (err) { next(err) } })
-app.post('/api/funnels', async (req, res, next) => { try { res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
-app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await deleteFunnel(req.params.id)) } catch (err) { next(err) } })
+app.get('/api/funnels', async (req, res, next) => { try { res.json(await listFunnels(scopeFilters(filters(req.query), req.auth))) } catch (err) { next(err) } })
+app.post('/api/funnels', async (req, res, next) => { try { if (req.auth?.via === 'session') await assertAppAccess(req.auth, req.body?.appId); res.json(await saveFunnel(req.body || {})) } catch (err) { next(err) } })
+app.delete('/api/funnels/:id', async (req, res, next) => { try { res.json(await deleteFunnel(req.params.id, scopeFilters({}, req.auth))) } catch (err) { next(err) } })
 
 // ==================== PRD 集合：洞察/治理层 ====================
 // PRD 01 用户链路
 app.get('/api/journey/sessions', async (req, res, next) => {
-  try { res.json(await searchJourneySessions({ ...filters(req.query), type: req.query.type, value: req.query.value })) } catch (err) { next(err) }
+  try { res.json(await searchJourneySessions({ ...scopeFilters(filters(req.query), req.auth), type: req.query.type, value: req.query.value })) } catch (err) { next(err) }
 })
 app.get('/api/journey/timeline', async (req, res, next) => {
   try {
@@ -632,20 +634,20 @@ app.get('/api/collect-config/stats', async (req, res, next) => {
 })
 // PRD 05 漏斗报告（PRD 形状，内部复用 runFunnel 计算引擎）
 app.get('/api/funnels/:id/report', async (req, res, next) => {
-  try { res.json(buildFunnelReport(await runFunnel(req.params.id, filters(req.query)))) } catch (err) { next(err) }
+  try { res.json(buildFunnelReport(await runFunnel(req.params.id, scopeFilters(filters(req.query), req.auth)))) } catch (err) { next(err) }
 })
 // PRD 06 页面参与度
 app.get('/api/analytics/engagement', async (req, res, next) => {
-  try { res.json(await listEngagement({ ...filters(req.query), q: req.query.q })) } catch (err) { next(err) }
+  try { res.json(await listEngagement({ ...scopeFilters(filters(req.query), req.auth), q: req.query.q })) } catch (err) { next(err) }
 })
 // Next Horizon A1 留存 / 同期群分析
 app.get('/api/analytics/retention', async (req, res, next) => {
-  try { res.json(await listRetention({ ...filters(req.query), offsets: req.query.offsets })) } catch (err) { next(err) }
+  try { res.json(await listRetention({ ...scopeFilters(filters(req.query), req.auth), offsets: req.query.offsets })) } catch (err) { next(err) }
 })
 app.get('/api/analytics/engagement/detail', async (req, res, next) => {
   try {
     res.json(await getEngagementDetail({
-      path: req.query.path, appId: req.query.appId || filters(req.query).appId,
+      path: req.query.path, appId: req.query.appId || scopeFilters(filters(req.query), req.auth).appId,
       startTime: finiteTimestamp(req.query.start), endTime: finiteTimestamp(req.query.end),
       compareStart: finiteTimestamp(req.query.compareStart), compareEnd: finiteTimestamp(req.query.compareEnd)
     }))
@@ -735,7 +737,7 @@ app.get('/api/me/sessions', async (req, res, next) => { guardAccounts(res, next,
   res.json(await listSessions(req.auth?.userId))
 }) })
 app.delete('/api/me/sessions/:sessionId', async (req, res, next) => { guardAccounts(res, next, async () => {
-  await revokeSession(req.params.sessionId)
+  await revokeSessionForUser(req.params.sessionId, req.auth?.userId)
   res.json({ ok: true })
 }) })
 app.post('/api/teams', async (req, res, next) => { guardAccounts(res, next, async () => {
@@ -796,12 +798,12 @@ app.put('/api/members/:id/level', async (req, res, next) => {
   try { res.json(await saveMemberLevel(req.params.id, req.body || {})) } catch (err) { next(err) }
 })
 app.get('/api/audit/data-access', async (req, res, next) => { try { res.json(await listDataAccessAudit()) } catch (err) { next(err) } })
-app.get('/api/dashboards', async (req, res, next) => { try { res.json(await listDashboards()) } catch (err) { next(err) } })
-app.post('/api/dashboards', async (req, res, next) => { try { res.json(await saveDashboard(req.body || {})) } catch (err) { next(err) } })
-app.delete('/api/dashboards/:id', async (req, res, next) => { try { res.json(await deleteDashboard(req.params.id)) } catch (err) { next(err) } })
+app.get('/api/dashboards', async (req, res, next) => { try { res.json(await listDashboards(scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
+app.post('/api/dashboards', async (req, res, next) => { try { res.json(await saveDashboard(req.body || {}, scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
+app.delete('/api/dashboards/:id', async (req, res, next) => { try { res.json(await deleteDashboard(req.params.id, scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
 // A2 · 自定义看板分享：分享（走现有鉴权通道，与 /api/dashboards 同口径）。
-app.post('/api/dashboards/:id/share', async (req, res, next) => { try { res.json(await shareDashboard(Number(req.params.id))) } catch (err) { next(err) } })
-app.delete('/api/dashboards/:id/share', async (req, res, next) => { try { await unshareDashboard(Number(req.params.id)); res.json({ ok: true }) } catch (err) { next(err) } })
+app.post('/api/dashboards/:id/share', async (req, res, next) => { try { res.json(await shareDashboard(Number(req.params.id), scopeFilters({}, req.auth).teamId)) } catch (err) { next(err) } })
+app.delete('/api/dashboards/:id/share', async (req, res, next) => { try { await unshareDashboard(Number(req.params.id), scopeFilters({}, req.auth).teamId); res.json({ ok: true }) } catch (err) { next(err) } })
 // A2 · 自定义看板分享：公开只读端点（免鉴权）。命中不到返回 404，不暴露是否存在，防枚举。
 app.get('/api/dashboards/shared/:token', async (req, res, next) => { try { const d = await getSharedDashboard(req.params.token); if (!d) return res.status(404).json({ error: 'not found' }); res.json(d) } catch (err) { next(err) } })
 app.post('/api/maintenance/cleanup', async (req, res, next) => {
@@ -809,7 +811,7 @@ app.post('/api/maintenance/cleanup', async (req, res, next) => {
 })
 app.get('/api/export/:kind.csv', async (req, res, next) => {
   try {
-    const query = filters(req.query)
+    const query = scopeFilters(filters(req.query), req.auth)
     const rows = await exportRows(req.params.kind, query)
     res.type('text/csv; charset=utf-8').set('content-disposition', `attachment; filename="web-collection-${req.params.kind}.csv"`).send('\ufeff' + toCsv(rows))
   } catch (err) { next(err) }
@@ -903,6 +905,7 @@ app.use((err, req, res, next) => {
 })
 
 await initDatabase()
+assertAccountsConfiguration()
 await ensureBuiltinAdmin()
 startSloScheduler()
 startSyntheticScheduler()
@@ -932,7 +935,7 @@ function corsMiddleware(req, res, next) {
   res.set({
     'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
     'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type,x-app-key,x-ai-key,traceparent,if-none-match,if-match,if-modified-since,if-unmodified-since'
+    'access-control-allow-headers': 'content-type,authorization,x-team-id,x-app-key,x-ai-key,traceparent,if-none-match,if-match,if-modified-since,if-unmodified-since'
   })
   if (req.method === 'OPTIONS') return res.status(204).end()
   next()

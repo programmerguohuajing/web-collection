@@ -7,8 +7,9 @@ import { api } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
-// 配置 marked：关闭 sanitize（内部工具，AI 生成内容可信），开启 GFM
+// AI/遥测/知识库内容均视为不可信输入：Markdown 解析后必须再做 HTML 白名单净化。
 marked.setOptions({
   gfm: true,
   breaks: true
@@ -142,7 +143,13 @@ function rediagnose() {
 const renderedReport = computed(() => {
   const text = result.value?.summary || ''
   if (!text.trim()) return ''
-  try { return marked.parse(text) } catch { return text.replace(/</g, '&lt;').replace(/>/g, '&gt;') }
+  try {
+    return DOMPurify.sanitize(marked.parse(text), {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
+      FORBID_ATTR: ['style', 'srcdoc']
+    })
+  } catch { return text.replace(/</g, '&lt;').replace(/>/g, '&gt;') }
 })
 
 /** 溯源跳转：优先 chunk id，兜底 source 维度 */

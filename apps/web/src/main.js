@@ -1,12 +1,9 @@
 /**
  * @file Web 仪表盘入口
- * 创建 Vue 应用，注册 Element Plus 插件并挂载到 #app。
+ * 创建 Vue 应用；Element Plus 组件由 Vite 按模板实际使用情况自动按需引入。
  */
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import 'element-plus/dist/index.css'
 import App from './App.vue'
 import { router } from './router/index.js'
 import './style.css'
@@ -31,4 +28,4 @@ window.addEventListener('unhandledrejection', (event) => {
   if (handleChunkLoadFailure(reason)) event.preventDefault?.()
 })
 
-createApp(App).use(createPinia()).use(ElementPlus, { locale: zhCn }).use(router).mount('#app')
+createApp(App).use(createPinia()).use(router).mount('#app')

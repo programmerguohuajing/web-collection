@@ -26,6 +26,8 @@ import { ingestResolvedIssues } from '../packages/ai/ingest.js'
 import { createRateLimiter } from '../packages/ai/rate-limit.js'
 import { sedimentFeedback } from '../packages/ai/feedback.js'
 import { normalizeAiSettings, aiSettingsToEnv, maskKey } from '../packages/ai/runtime-config.js'
+import { sameProviderOrigin, validateProviderBaseUrl } from '../packages/ai/provider-security.js'
+import { verifyJwt } from '../packages/auth-crypto.js'
 import { encryptSecrets, decryptSecrets } from '../packages/alerting.js'
 
 export default {
@@ -39,11 +41,19 @@ export default {
         // settings 三端点是管理面：仅同源可访问，x-ai-key 开放 API key 无权读写配置
         const settingsAdmin = path === '/api/ai/settings' || path === '/api/ai/settings/test' || path === '/api/ai/settings/models'
         if (settingsAdmin) {
+          const admin = await resolveAiSettingsAdmin(request, env)
+          if (!admin) return cors(json({ error: 'AI 设置仅限管理员访问' }, 403), request)
           const origin = request.headers.get('origin')
           let crossOrigin = false
           if (origin) { try { crossOrigin = new URL(origin).origin !== url.origin } catch { crossOrigin = true } }
           if (crossOrigin) return cors(json({ error: 'forbidden' }, 403), request)
         } else {
+          if (env.ACCOUNTS_ENABLED === '1' || env.ACCOUNTS_ENABLED === 'true') {
+            const principal = await resolveAiPrincipal(request, env)
+            if (!principal) return cors(json({ error: '未登录或会话已失效' }, 401), request)
+            const denied = await enforceAiTenant(request, env, url, path, principal)
+            if (denied) return cors(denied, request)
+          }
           // §8.3 兜底方案落地：KB 路由不再恒要求 x-ai-key。
           // 同源（控制台）请求一律放行；仅当配置了 AI_API_KEY 且为跨源开放调用时才校验。
           // 这样知识库页面不依赖部署期配置主/ai 双 worker 同值 AI_API_KEY。
@@ -80,6 +90,74 @@ function sameOrigin(request, url) {
   const origin = request.headers.get('origin')
   if (!origin) return false
   try { return new URL(origin).origin === url.origin } catch { return false }
+}
+
+async function resolveAiPrincipal(request, env) {
+  const apiKey = request.headers.get('x-api-key') || ''
+  if (env.ADMIN_API_KEY && apiKey === env.ADMIN_API_KEY) return { via: 'api_key', userId: 'system', role: 'owner', level: 'L4', teamId: null }
+  const auth = request.headers.get('authorization') || ''
+  const match = /^Bearer\s+(.+)$/i.exec(auth.trim())
+  const secret = String(env.ACCOUNTS_JWT_SECRET || '').trim()
+  if (!match || !secret) return null
+  const payload = verifyJwt(match[1], secret)
+  if (!payload?.sub || !payload.sid) return null
+  const session = await env.DB.prepare('select user_id,revoked_at,expires_at from sessions where id=?').bind(String(payload.sid).slice(0, 32)).first()
+  if (!session || session.user_id !== payload.sub || session.revoked_at || Number(session.expires_at) < Date.now()) return null
+  const requestedTeamId = String(request.headers.get('x-team-id') || '').slice(0, 32)
+  let sql = "select team_id,role,access_level from team_members where user_id=? and status='active'"
+  const args = [payload.sub]
+  if (requestedTeamId) { sql += ' and team_id=?'; args.push(requestedTeamId) }
+  sql += ' order by created_at limit 1'
+  const member = await env.DB.prepare(sql).bind(...args).first()
+  if (!member) return null
+  return { via: 'session', userId: payload.sub, teamId: member.team_id, role: member.role, level: member.access_level }
+}
+
+async function resolveAiSettingsAdmin(request, env) {
+  const principal = await resolveAiPrincipal(request, env)
+  if (!principal) return null
+  if (principal.via === 'api_key') return principal
+  return ['owner', 'admin'].includes(principal.role) && principal.level === 'L4' ? principal : null
+}
+
+async function enforceAiTenant(request, env, url, path, principal) {
+  if (principal.via !== 'session') return null
+  const verifyApp = async appId => {
+    const id = String(appId || '').trim().slice(0, 64)
+    if (!id) return json({ error: '请选择当前团队中的应用' }, 400)
+    const app = await env.DB.prepare('select team_id from applications where app_id=?').bind(id).first()
+    if (!app || app.team_id !== principal.teamId) return json({ error: '无权访问该应用（跨团队）' }, 403)
+    return null
+  }
+  let body = null
+  const bodyJson = async () => body ??= await request.clone().json().catch(() => ({}))
+  const queryApp = url.searchParams.get('appId') || url.searchParams.get('appScope') || ''
+  const bodyApp = async () => { const b = await bodyJson(); return b.appId || b.appScope || '' }
+
+  if (path === '/api/ai/kb/search' && (url.searchParams.get('publicOnly') === '1' || url.searchParams.get('publicOnly') === 'true')) return null
+  if (path === '/api/ai/kb/articles' && (url.searchParams.get('publicOnly') === '1' || url.searchParams.get('publicOnly') === 'true')) return null
+
+  if (path.startsWith('/api/ai/kb/chunk/') && request.method === 'GET') {
+    const id = decodeURIComponent(path.split('/').at(-1))
+    const row = await env.DB.prepare('select app_id from ai_kb_chunks where id=?').bind(id).first()
+    return row ? verifyApp(row.app_id) : json({ error: 'chunk 不存在' }, 404)
+  }
+  const articleId = path.match(/^\/api\/ai\/kb\/article\/([^/]+)(?:\/feedback)?$/)?.[1]
+  if (articleId) {
+    const row = await env.DB.prepare('select app_scope,visibility from ai_kb_articles where id=?').bind(decodeURIComponent(articleId)).first()
+    if (!row) return json({ error: '知识不存在' }, 404)
+    if (row.visibility === 'public' && (!row.app_scope || row.app_scope === 'global')) return null
+    return verifyApp(row.app_scope)
+  }
+  const findingId = path.match(/^\/api\/ai\/findings\/([^/]+)\/(?:status|notify)$/)?.[1]
+  if (findingId) {
+    const row = await env.DB.prepare('select app_id from ai_findings where id=?').bind(decodeURIComponent(findingId)).first()
+    return row ? verifyApp(row.app_id) : json({ error: 'finding 不存在' }, 404)
+  }
+
+  const appRequired = path.startsWith('/api/ai/diagnose') || path === '/api/ai/feedback' || path === '/api/ai/kb/search' || path === '/api/ai/kb/meta' || path === '/api/ai/kb/runbook' || path === '/api/ai/kb/articles' || path === '/api/ai/kb/article' || path === '/api/ai/scan' || path === '/api/ai/findings' || path === '/api/ai/ask' || path === '/api/ai/conversations'
+  if (appRequired) return verifyApp(queryApp || await bodyApp())
+  return null
 }
 
 // 限流器模块级单例：Workers 全局作用域存活期间复用令牌桶。
@@ -444,8 +522,8 @@ async function saveAiSettings(env, input) {
   // baseUrl 格式校验（normalize 会截断长度，这里校验协议头）
   for (const name of ['local', 'domestic', 'overseas']) {
     const url = input.providers?.[name]?.baseUrl
-    if (typeof url === 'string' && url.trim() && !/^https?:\/\//i.test(url.trim())) {
-      invalid(`${name}.baseUrl 必须 http(s):// 开头`)
+    if (typeof url === 'string' && url.trim()) {
+      try { validateProviderBaseUrl(url, { allowPrivate: name === 'local' }) } catch (error) { invalid(`${name}.baseUrl: ${error.message}`) }
     }
   }
 
@@ -457,9 +535,14 @@ async function saveAiSettings(env, input) {
   let hasNewKey = false
   for (const name of ['local', 'domestic', 'overseas']) {
     const incoming = input.providers?.[name]?.apiKey
-    if (typeof incoming === 'string' && incoming.trim() && !incoming.startsWith('••••')) {
+    const incomingUrl = input.providers?.[name]?.baseUrl?.trim() || ''
+    const previousUrl = source?.providers?.[name]?.baseUrl || ''
+    const hasExplicitKey = typeof incoming === 'string' && incoming.trim() && !incoming.startsWith('••••')
+    if (hasExplicitKey) {
       mergedKeys[name] = incoming.trim()
       hasNewKey = true
+    } else if (incomingUrl && (!previousUrl || !sameProviderOrigin(incomingUrl, previousUrl))) {
+      delete mergedKeys[name]
     }
   }
   if (hasNewKey && !masterKey) {
@@ -503,14 +586,19 @@ async function testAiSettings(env, input) {
     throw Object.assign(new Error('请求过于频繁，稍后再试'), { status: 429 })
   }
   const normalized = normalizeAiSettings(input)
-  const { keys } = await readAiSettingsRaw(env)
-  // 合成待测 env：表单值 > 库中已存 key > worker env
+  const { source, keys } = await readAiSettingsRaw(env)
+  // 合成待测 env：显式 key 优先；Base URL 换域名时禁止复用旧 key。
   const merged = {
     ...normalized,
-    providers: Object.fromEntries(['local', 'domestic', 'overseas'].map(name => [
-      name,
-      { ...normalized.providers[name], apiKey: input.providers?.[name]?.apiKey?.trim() || keys[name] || '' }
-    ]))
+    providers: Object.fromEntries(['local', 'domestic', 'overseas'].map(name => {
+      const rawKey = input.providers?.[name]?.apiKey?.trim() || ''
+      const incomingKey = rawKey && !rawKey.startsWith('••••') ? rawKey : ''
+      const incomingUrl = input.providers?.[name]?.baseUrl?.trim() || ''
+      if (incomingUrl) validateProviderBaseUrl(incomingUrl, { allowPrivate: name === 'local' })
+      const savedUrl = source?.providers?.[name]?.baseUrl || ''
+      const canReuse = !incomingUrl || (savedUrl && sameProviderOrigin(incomingUrl, savedUrl))
+      return [name, { ...normalized.providers[name], apiKey: incomingKey || (canReuse ? keys[name] || '' : '') }]
+    }))
   }
   const effectiveEnv = { ...env, ...aiSettingsToEnv(merged), AI: env.AI }
   const gateway = createModelGateway(effectiveEnv)
@@ -561,15 +649,17 @@ async function listProviderModels(env, input) {
     throw Object.assign(new Error('provider 必须是 local/domestic/overseas（workers-ai 不支持列表）'), { status: 400 })
   }
   const prefix = name === 'local' ? 'LOCAL_MODEL' : name.toUpperCase()
-  const baseURL = (typeof input.baseUrl === 'string' && input.baseUrl.trim())
-    || env[`${prefix}_BASE_URL`] || ''
+  const requestedBaseURL = typeof input.baseUrl === 'string' ? input.baseUrl.trim() : ''
+  const baseURL = requestedBaseURL || env[`${prefix}_BASE_URL`] || ''
   if (!baseURL) return { ok: false, error: 'baseUrl 未配置' }
+  try { validateProviderBaseUrl(baseURL, { allowPrivate: name === 'local' }) } catch (error) { return { ok: false, error: error.message } }
 
   const apiFormat = MODEL_LIST_FORMATS.includes(input.apiFormat) ? input.apiFormat : 'openai-chat'
-  const { keys } = await readAiSettingsRaw(env)
-  let apiKey = typeof input.apiKey === 'string' && input.apiKey.trim() && !input.apiKey.startsWith('••••')
-    ? input.apiKey.trim()
-    : (keys[name] || env[`${prefix}_API_KEY`] || '')
+  const { source, keys } = await readAiSettingsRaw(env)
+  const explicitKey = typeof input.apiKey === 'string' && input.apiKey.trim() && !input.apiKey.startsWith('••••') ? input.apiKey.trim() : ''
+  const trustedBaseURL = source?.providers?.[name]?.baseUrl || env[`${prefix}_BASE_URL`] || ''
+  const canReuseStoredKey = !requestedBaseURL || (trustedBaseURL && sameProviderOrigin(requestedBaseURL, trustedBaseURL))
+  let apiKey = explicitKey || (canReuseStoredKey ? (keys[name] || env[`${prefix}_API_KEY`] || '') : '')
 
   const base = baseURL.replace(/\/$/, '')
   const headers = {}
