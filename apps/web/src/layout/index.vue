@@ -249,7 +249,8 @@ onMounted(async () => {
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>
           <DashboardHeader v-if="accountsEnabled && isLoggedIn" />
-          <span v-else class="user-avatar" aria-label="当前用户">运</span>
+          <span v-else-if="accountsEnabled" class="user-avatar" aria-label="当前用户">运</span>
+
         </div>
       </header>
 
