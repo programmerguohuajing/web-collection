@@ -1,6 +1,6 @@
 {
   "name": "@web-collection/sdk-react-native",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Web Collection React Native SDK：移动端宿主适配层 + 移动端指标采集（冷启动 / 帧率卡顿 / 崩溃 / 前后台会话 / 网络），上报链路 100% 复用 @web-collection/sdk 平台内核。",
   "type": "module",
   "license": "MIT",
