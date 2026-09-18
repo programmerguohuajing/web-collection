@@ -42,11 +42,11 @@ defineProps({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 16px 12px;
+  padding: 24px 16px;
   text-align: center;
 }
 .empty-icon {
-  margin-bottom: 4px;
+  margin-bottom: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -54,9 +54,9 @@ defineProps({
 .empty-description {
   color: var(--c-text-muted, #6b7585);
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 .empty-action {
-  margin-top: 10px;
+  margin-top: 14px;
 }
 </style>
