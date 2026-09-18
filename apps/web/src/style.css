@@ -628,7 +628,8 @@ button, input, textarea, select { font-family: inherit; }
    当 el-table 配置 empty-text 时，自动在文字上方生成矢量无数据图标与优化的间距
    ------------------------------------------------------------------------- */
 .el-table__empty-block {
-  min-height: 150px;
+  min-height: 180px;
+  padding: 20px 0;
 }
 .el-table__empty-text {
   display: flex;
@@ -637,14 +638,14 @@ button, input, textarea, select { font-family: inherit; }
   justify-content: center;
   color: var(--c-text-muted, #6b7585);
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 .el-table__empty-text::before {
   content: "";
   display: block;
-  width: 60px;
-  height: 60px;
-  margin-bottom: 4px;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 20px;
   background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='40' cy='40' r='32' fill='%23EEF2FF'/%3E%3Cpath d='M24 28C24 25.7909 25.7909 24 28 24H36.3431C37.404 24 38.4214 24.4214 39.1716 25.1716L41.8284 27.8284C42.5786 28.5786 43.596 29 44.6569 29H52C54.2091 29 56 30.7909 56 33V52C56 54.2091 54.2091 56 52 56H28C25.7909 56 24 54.2091 24 52V28Z' fill='%23E0E7FF' stroke='%23818CF8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Crect x='28' y='34' width='24' height='18' rx='3' fill='white' stroke='%236366F1' stroke-width='2'/%3E%3Cline x1='33' y1='39' x2='47' y2='39' stroke='%23A5B4FC' stroke-width='2' stroke-linecap='round'/%3E%3Cline x1='33' y1='44' x2='43' y2='44' stroke='%23C7D2FE' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='52' cy='48' r='7' fill='%23F3F4F6' stroke='%239CA3AF' stroke-width='1.5' stroke-dasharray='2 2'/%3E%3Ccircle cx='20' cy='22' r='2' fill='%23818CF8' opacity='0.6'/%3E%3Ccircle cx='62' cy='26' r='1.5' fill='%23A5B4FC' opacity='0.8'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: center;
