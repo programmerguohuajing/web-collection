@@ -208,6 +208,8 @@ export function createReactNativeEysWithCore(options = {}, runtime = {}, core = 
     getCapabilities: () => safe(() => client.getCapabilities(), {}, 'client.getCapabilities', diagnostics)(),
     identify: px((id, t) => client.identify(id, t), 'identify'),
     getAnonymousId: () => safe(() => client.getAnonymousId(), '', 'client.getAnonymousId', diagnostics)(),
+    recordReplay: px((n, p) => (typeof client.recordReplay === 'function' ? client.recordReplay(n, p) : client.track(n, p)), 'recordReplay'),
+    options: cfg,
     // ---- RN 扩展 ----
     markAppReady: () => coldStart.markAppReady(),
     reportNativeCrash: (payload) => crash.reportNativeCrash(payload),
@@ -215,6 +217,7 @@ export function createReactNativeEysWithCore(options = {}, runtime = {}, core = 
     stop,
     destroy
   }
+
 
   return rnClient
 }

@@ -120,7 +120,9 @@ export function createPlatformEys(options = {}, adapter) {
     error,
     metric,
     behavior,
+    recordReplay: (name, props = {}) => push({ type: 'replay', name, props }),
     setConsent,
+
     setEnabled,
     setContext,
     addBreadcrumb,

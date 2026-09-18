@@ -86,12 +86,42 @@ const wrappedFetch = eys.wrapFetch(myFetch)  // 复用内核 perf/fetch 口径
 - **仅 JS 崩溃**。原生崩溃（`reportNativeCrash`）为占位通道，**默认关闭**（`crash.native: false`），仅在宿主桥接就绪后显式开启。
 - RN 适配器绝不向宿主抛异常：所有公开 API 与采集回调均失效安全（未捕获异常会令宿主 App 红屏）。
 
+## 🎬 会话回放双模式（复用 Flutter 播放器架构）
+
+针对移动端原生 View 无 DOM 树的特点，SDK 提供了与 Flutter 完全对齐的双模式会话回放方案，生成的数据格式可**在管理端 Web 播放器中直接播放**：
+
+| 方案 | 收集机制 | 性能开销 | 配置开关 | 推荐场景 |
+| :--- | :--- | :--- | :--- | :--- |
+| **方案二：手势轨迹 (`pointer_event`)** | 拦截 Touch 事件坐标与触控点 | 超轻量（零 CPU 开销，数 KB 流量） | `enablePointerReplay` (**默认 `true`**) | **推荐作为默认方案** |
+| **方案一：画面快照 (`canvas_snapshot`)** | 截取 View 画面 Base64 图片分片 | 中度（基于 View 快照，按间隔采集） | `enableSnapshotReplay` (**默认 `false`**) | 精确还原画面现场 |
+
+### 接入示例 (React Native App 根节点)
+
+```jsx
+import { EysProvider, EysPointerTouchListener, EysSnapshotBoundary } from '@web-collection/sdk-react-native/react'
+
+export default function App() {
+  return (
+    <EysProvider options={{ appId: 'your-app-id' }}>
+      {/* 方案二（默认推荐）：手势轨迹监听容器 */}
+      <EysPointerTouchListener>
+        {/* 方案一（可选开启）：画面快照容器 */}
+        <EysSnapshotBoundary>
+          <YourMainScreen />
+        </EysSnapshotBoundary>
+      </EysPointerTouchListener>
+    </EysProvider>
+  )
+}
+```
+
 ## React Hook
 
 ```js
-import { EysProvider, useTrack } from '@web-collection/sdk-react-native/react'
+import { EysProvider, useTrack, EysPointerTouchListener } from '@web-collection/sdk-react-native/react'
 // 见 README.md 英文示例
 ```
+
 
 ## 构建与测试
 
