@@ -270,7 +270,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
     <el-table :data="channels" border v-loading="channelsLoading" empty-text="暂无通知渠道">
       <template #empty><el-empty description="暂无渠道" :image-size="60" /></template>
       <el-table-column label="名称" min-width="160"><template #default="{ row }"><OverflowTip :text="row.name" /></template></el-table-column>
-      <el-table-column label="类型" width="110"><template #default="{ row }">{{ channelTypeLabel(row.type) }}</template></el-table-column>
+      <el-table-column label="类型" min-width="130"><template #default="{ row }"><OverflowTip :text="channelTypeLabel(row.type)" /></template></el-table-column>
       <el-table-column label="服务地址" min-width="130"><template #default="{ row }"><el-tag :type="row.configured ? 'success' : 'danger'" size="small">{{ channelEndpointStatus(row) }}</el-tag></template></el-table-column>
       <el-table-column label="接收人" min-width="180"><template #default="{ row }"><OverflowTip :text="row.config?.recipients || '-'" /></template></el-table-column>
       <el-table-column label="应用范围" width="160"><template #default="{ row }"><OverflowTip :text="channelScope(row)" /></template></el-table-column>
