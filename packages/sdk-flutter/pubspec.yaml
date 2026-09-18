@@ -1,6 +1,6 @@
 name: web_collection_sdk
 description: Official Flutter/Dart SDK for Web Collection APM & Telemetry platform. Provides automatic crash reporting, route tracking, HTTP performance monitoring, and custom event tracking.
-version: 0.8.0
+version: 0.8.1
 homepage: https://github.com/programmerguohuajing/web-collection
 
 environment:

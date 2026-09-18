@@ -11,6 +11,18 @@ AIGC:
 
 # Changelog
 
+## [0.8.1] - 2026-09-18
+
+### 亮点
+- **多租户安全加固**：为 Node API、Cloudflare Worker、AI/RAG、Dashboard、Insight、Funnel 等数据面补齐 Team/App 级访问边界，阻断跨团队读取、写入与应用归属接管。
+- **认证与 AI 管理面安全**：移除 JWT 固定 fallback secret，绑定 JWT subject 与服务端 session；AI Settings 增加管理员鉴权、Provider URL SSRF 防护和 API Key 防外泄策略。
+- **Web 安全与构建优化**：AI Markdown 增加 DOMPurify 净化；Element Plus 改为自动按需引入并拆分 Vue/lodash/replay/markdown vendor，消除 brand.js、VueUse PURE annotation 与大 chunk 构建告警。
+
+### 修复
+- **D1**：删除应用时同步清理关联 events/issues/replays/sourcemaps/alerts/funnels/releases/experiments 数据，并新增 Dashboard Team 隔离迁移。
+- **SDK**：补齐非浏览器环境下 location/history/screen/XMLHttpRequest/event listener 守卫。
+- **Flutter/CI**：补齐 pub.dev 发布配置与自动化工作流。
+
 本项目所有版本发布均由 `vX.Y.Z` tag 触发，GitHub Release / npm 包 / SDK tgz 由 CI 工作流（`.github/workflows/release-npm.yml`）在该 tag 推送时一体产出，版本号以 tag 与 `packages/sdk/package.json` 为准。
 
 ## [0.8.0] - 2026-09-17

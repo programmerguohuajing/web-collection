@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- Patch release aligned with Web Collection v0.8.1.
+- Includes release automation and packaging metadata fixes for pub.dev/GitHub Release.
+- No breaking Flutter SDK API changes.
+
 All notable changes to `web_collection_sdk` (Flutter SDK) will be documented in this file.
 
 ## 0.8.0
