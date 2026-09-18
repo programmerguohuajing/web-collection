@@ -44,14 +44,28 @@ jobs:
           fi
 
       - name: Setup Pub Credentials
-        if: steps.pubcheck.outputs.skip != 'true' && secrets.PUB_DEV_TOKEN != ''
+        if: steps.pubcheck.outputs.skip != 'true'
+        env:
+          PUB_DEV_TOKEN: ${{ secrets.PUB_DEV_TOKEN }}
         shell: bash
         run: |
-          mkdir -p ~/.config/dart
-          echo '${{ secrets.PUB_DEV_TOKEN }}' > ~/.config/dart/pub-credentials.json
+          if [ -n "$PUB_DEV_TOKEN" ]; then
+            mkdir -p ~/.config/dart
+            echo "$PUB_DEV_TOKEN" > ~/.config/dart/pub-credentials.json
+          else
+            echo "::warning::PUB_DEV_TOKEN is empty"
+          fi
 
       - name: Publish to pub.dev
-        if: steps.pubcheck.outputs.skip != 'true' && secrets.PUB_DEV_TOKEN != ''
+        if: steps.pubcheck.outputs.skip != 'true'
+        env:
+          PUB_DEV_TOKEN: ${{ secrets.PUB_DEV_TOKEN }}
         working-directory: packages/sdk-flutter
         shell: bash
-        run: flutter pub publish --force
+        run: |
+          if [ -n "$PUB_DEV_TOKEN" ]; then
+            flutter pub publish --force
+          else
+            echo "::warning::PUB_DEV_TOKEN is empty, skipping publish"
+          fi
+
