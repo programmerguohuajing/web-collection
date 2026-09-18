@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
-import { api, error, insightUnread, loading, loadInsightUnread, markInsightsAsRead, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading, slowRequest } from '../dashboard.js'
+import { api, error, insightUnread, loading, loadInsightUnread, markInsightsAsRead, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading } from '../dashboard.js'
 import { RANGE_PRESETS, rangeFromPreset, useFilterStore } from '../stores/filters.js'
 import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
@@ -256,7 +256,6 @@ onMounted(async () => {
 
       <main class="app-main content" tabindex="-1">
         <div class="content-inner">
-          <el-alert v-if="slowRequest" class="section slow-request-alert" type="warning" title="接口响应较慢，仍在加载中，请稍候…" :closable="false" show-icon />
           <el-alert v-if="error" class="section" type="error" :title="error" show-icon />
           <div class="router-view-frame"><router-view /><PageLoading :active="pageLoading" /></div>
         </div>
