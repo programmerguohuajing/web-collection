@@ -1817,11 +1817,11 @@ const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000         // 邀请 7 天过期（FR
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000        // 刷新令牌/会话 7 天
 const REFRESH_COOKIE = 'eys_rt'                       // 与 Node REFRESH_COOKIE 同名同路径
 
-/** 运行时开关（默认开启；需显式设置 ACCOUNTS_ENABLED=0 或 false 才是关闭） */
+/** 运行时开关（默认关闭，匿名访问；需显式设置 ACCOUNTS_ENABLED=1 或 true 才是开启） */
 function accountsEnabled(env) {
-  if (env.ACCOUNTS_ENABLED === '0' || env.ACCOUNTS_ENABLED === 'false') return false
-  return true
+  return env.ACCOUNTS_ENABLED === '1' || env.ACCOUNTS_ENABLED === 'true'
 }
+
 /** 严格鉴权开关：true 时未登录访问受控管理接口返回 401 */
 function accountsEnforced(env) { return env.ACCOUNTS_ENFORCE === '1' || env.ACCOUNTS_ENFORCE === 'true' }
 /** 开放注册开关（默认关闭，邀请制 + 首个 Owner 引导，PRD D1） */
