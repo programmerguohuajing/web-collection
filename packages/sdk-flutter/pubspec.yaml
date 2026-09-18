@@ -5,10 +5,15 @@ homepage: https://github.com/programmerguohuajing/web-collection
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.0.0'
 
 dependencies:
+  flutter:
+    sdk: flutter
   http: '^1.1.0'
 
 dev_dependencies:
-  test: '^1.24.0'
+  flutter_test:
+    sdk: flutter
   lints: '^2.1.0'
+
