@@ -69,7 +69,7 @@ test('1. 开关与门禁控制 (isAccountsEnabled)', () => {
   const oldEnv = process.env.ACCOUNTS_ENABLED
   try {
     delete process.env.ACCOUNTS_ENABLED
-    assert.equal(isAccountsEnabled(), true)
+    assert.equal(isAccountsEnabled(), false)
 
     process.env.ACCOUNTS_ENABLED = '0'
     assert.equal(isAccountsEnabled(), false)
@@ -80,6 +80,7 @@ test('1. 开关与门禁控制 (isAccountsEnabled)', () => {
     process.env.ACCOUNTS_ENABLED = oldEnv
   }
 })
+
 
 test('2. 注册全流程与输入校验 (Register, Validation & Bootstrap Owner)', async () => {
   process.env.ACCOUNTS_ENABLED = '1'

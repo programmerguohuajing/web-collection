@@ -12,17 +12,15 @@ export const ACCESS_TTL_SEC = 2 * 60 * 60          // 访问令牌 ≤2h（PRD F
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const REFRESH_COOKIE = 'eys_rt'
 
-/** 账号体系运行时开关（默认开启；需显式设置 ACCOUNTS_ENABLED=0 或 false 才是关闭） */
+/** 账号体系运行时开关（默认关闭，匿名访问；需显式设置 ACCOUNTS_ENABLED=1 或 true 才是开启） */
 export function isAccountsEnabled() {
-  if (process.env.ACCOUNTS_ENABLED === '0' || process.env.ACCOUNTS_ENABLED === 'false') {
-    return false
-  }
-  return true
+  return process.env.ACCOUNTS_ENABLED === '1' || process.env.ACCOUNTS_ENABLED === 'true'
 }
 
-/** 严格鉴权开关：true 时未登录访问受控管理接口返回 401（默认 false，前端登录页就绪后再开） */
+
+/** 严格鉴权开关：账号体系开启时默认强制鉴权；仅显式 0/false 才进入兼容模式。 */
 export function isAccountsEnforced() {
-  return process.env.ACCOUNTS_ENFORCE === '1' || process.env.ACCOUNTS_ENFORCE === 'true'
+  return process.env.ACCOUNTS_ENFORCE !== '0' && process.env.ACCOUNTS_ENFORCE !== 'false'
 }
 
 /** 开放注册开关（默认关闭，邀请制 + 首个 Owner 引导，PRD D1） */
@@ -31,7 +29,11 @@ export function isOpenRegisterEnabled() {
 }
 
 function jwtSecret() {
-  return process.env.ACCOUNTS_JWT_SECRET || 'web-collection-default-jwt-secret-key-2026-fallback'
+  const secret = String(process.env.ACCOUNTS_JWT_SECRET || '').trim()
+  if (secret) return secret
+  const err = new Error('ACCOUNTS_JWT_SECRET 未配置，账号体系无法签发访问令牌')
+  err.code = 'ACCOUNTS_JWT_SECRET_MISSING'
+  throw err
 }
 
 /** 初始化内置超管账号 (admin / 123456) */
@@ -39,15 +41,13 @@ export async function ensureBuiltinAdmin() {
   try {
     const adminEmail = 'admin@example.com'
     const now = Date.now()
-    const passHash = hashPassword('123456')
     const existing = await first('select id from users where email = ?', [adminEmail])
     let userId = existing?.id
     if (!existing) {
       userId = 'u_admin'
+      const passHash = hashPassword('123456')
       await run(`insert into users (id, email, name, password_hash, status, created_at, updated_at)
         values (?, ?, ?, ?, 'active', ?, ?)`, [userId, adminEmail, 'admin', passHash, now, now])
-    } else {
-      await run(`update users set password_hash = ?, updated_at = ? where id = ?`, [passHash, now, userId])
     }
 
     let hasTeam = await first('select id from teams where slug = ?', ['default'])
@@ -69,15 +69,27 @@ export async function ensureBuiltinAdmin() {
 
 /** 登录失败限流：5 次 / 15 分钟 / 邮箱+IP（FR-16），进程内实现（多实例部署建议外置） */
 const loginAttempts = new Map()
+const LOGIN_WINDOW_MS = 15 * 60 * 1000
+const LOGIN_MAX_FAILURES = 5
 function checkLoginRate(key) {
-  const now = Date.now()
-  const windowMs = 15 * 60 * 1000
   const entry = loginAttempts.get(key)
-  if (!entry || now - entry.start > windowMs) { loginAttempts.set(key, { start: now, count: 1 }); return true }
-  entry.count += 1
-  return entry.count <= 5
+  if (!entry) return true
+  if (Date.now() - entry.start > LOGIN_WINDOW_MS) {
+    loginAttempts.delete(key)
+    return true
+  }
+  return entry.count < LOGIN_MAX_FAILURES
 }
-function recordLoginFailure(key) { checkLoginRate(key) }
+function recordLoginFailure(key) {
+  const now = Date.now()
+  const entry = loginAttempts.get(key)
+  if (!entry || now - entry.start > LOGIN_WINDOW_MS) {
+    loginAttempts.set(key, { start: now, count: 1 })
+    return
+  }
+  entry.count += 1
+}
+function clearLoginFailures(key) { loginAttempts.delete(key) }
 
 function normalizeEmail(email) {
   const value = String(email || '').trim().toLowerCase()
@@ -145,6 +157,7 @@ export async function login(input = {}, { ip, userAgent } = {}) {
     recordLoginFailure(rateKey)
     throw unauthorized('邮箱或口令不正确', 'UNAUTHORIZED')
   }
+  clearLoginFailures(rateKey)
   const now = Date.now()
   await run('update users set last_login_at = ?, updated_at = ? where id = ?', [now, now, user.id])
   const session = await createSession(user.id, { ip, userAgent })
