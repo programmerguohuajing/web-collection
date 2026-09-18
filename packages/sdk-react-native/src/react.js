@@ -10,6 +10,8 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, createElement } from 'react'
 import { createReactNativeEys } from './index.js'
 
+import { recordPointerEvent, recordSnapshotEvent } from './replay.js'
+
 const EysContext = createContext(null)
 EysContext.displayName = 'WebCollectionEysContext'
 
@@ -70,4 +72,76 @@ export function useTrack() {
   }, [client])
 }
 
+/**
+ * 方案二（默认提供）：触控与手势轨迹监听容器 Component
+ * 包裹在根 App / View 外层，自动收集向下传递的 Touch 事件坐标与触摸状态。
+ */
+export function EysPointerTouchListener({ children, style, ...restProps }) {
+  const client = useContext(EysContext)
+
+  const handleTouch = useCallback((kind, event) => {
+    try {
+      if (!client || client.options?.replay?.enablePointerReplay === false) return
+      const touches = event?.nativeEvent?.touches || event?.nativeEvent?.changedTouches
+      const touch = Array.isArray(touches) && touches.length ? touches[0] : event?.nativeEvent
+      if (!touch) return
+      const x = touch.pageX ?? touch.locationX ?? 0
+      const y = touch.pageY ?? touch.locationY ?? 0
+      const pointerId = touch.identifier ?? 1
+      recordPointerEvent(client, { kind, x, y, pointerId })
+    } catch {
+      /* 静默降级 */
+    }
+  }, [client])
+
+  return createElement('View', {
+    style: style || { flex: 1 },
+    onTouchStart: (e) => handleTouch('down', e),
+    onTouchMove: (e) => handleTouch('move', e),
+    onTouchEnd: (e) => handleTouch('up', e),
+    onTouchCancel: (e) => handleTouch('up', e),
+    ...restProps
+  }, children)
+}
+
+/**
+ * 方案一（用户可选）：画面快照录制容器 Component
+ * 定时通过 captureRef 拦截画面图片分片，上传为 canvas_snapshot 事件。
+ */
+export function EysSnapshotBoundary({ children, style, captureRef, snapshotIntervalMs, ...restProps }) {
+  const client = useContext(EysContext)
+
+  useEffect(() => {
+    if (!client || client.options?.replay?.enableSnapshotReplay !== true) return
+    const interval = snapshotIntervalMs || client.options?.replay?.snapshotIntervalMs || 2000
+
+    const timer = setInterval(async () => {
+      try {
+        let imageData = ''
+        let width = 375
+        let height = 667
+        if (typeof captureRef === 'function') {
+          const res = await captureRef()
+          if (res) {
+            imageData = typeof res === 'string' ? res : res.imageData || ''
+            width = res.width || width
+            height = res.height || height
+          }
+        }
+        if (imageData) {
+          recordSnapshotEvent(client, { imageData, width, height })
+        }
+      } catch {
+        /* 静默降级 */
+      }
+    }, interval)
+
+    return () => clearInterval(timer)
+  }, [client, captureRef, snapshotIntervalMs])
+
+  return createElement('View', { style: style || { flex: 1 }, ...restProps }, children)
+}
+
+export { recordPointerEvent, recordSnapshotEvent }
 export default EysProvider
+

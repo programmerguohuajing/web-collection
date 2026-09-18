@@ -56,7 +56,12 @@ export function normalizeOptions(options = {}, diagnostics = null) {
   cfg.frameStats = { ...DEFAULTS.frameStats, ...(isPlainObject(source.frameStats) ? source.frameStats : {}) }
   cfg.network = { ...DEFAULTS.network, ...(isPlainObject(source.network) ? source.network : {}) }
   cfg.crash = { ...DEFAULTS.crash, ...(isPlainObject(source.crash) ? source.crash : {}) }
+  cfg.replay = { ...DEFAULTS.replay, ...(isPlainObject(source.replay) ? source.replay : {}) }
+  cfg.replay.enablePointerReplay = cfg.replay.enablePointerReplay !== false
+  cfg.replay.enableSnapshotReplay = cfg.replay.enableSnapshotReplay === true
+  cfg.replay.snapshotIntervalMs = numberOr(cfg.replay.snapshotIntervalMs, 'replay.snapshotIntervalMs', DEFAULTS.replay.snapshotIntervalMs, CLAMP.snapshotIntervalMs, diagnostics)
   cfg.deviceInfo = isPlainObject(source.deviceInfo) ? source.deviceInfo : null
+
 
   // ---- 字符串 ----
   cfg.endpoint = stringOr(source.endpoint, DEFAULTS.endpoint)

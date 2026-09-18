@@ -8,6 +8,8 @@
 import { createPlatformEys, createReactNativeAdapter } from '@web-collection/sdk/platform'
 import { createReactNativeEysWithCore } from './factory.js'
 
+import { recordPointerEvent, recordSnapshotEvent } from './replay.js'
+
 /** 内核平台模块句柄（注入 factory 的 core 参数）。 */
 const moduleCore = { createPlatformEys, createReactNativeAdapter }
 
@@ -28,7 +30,8 @@ export function createReactNativeEys(options, runtime) {
 /** 别名（与 Web 端 createEys 命名风格一致）。 */
 export const createEysRN = createReactNativeEys
 
-/** 暴露可注入内核的装配函数（测试友好）。 */
-export { createReactNativeEysWithCore }
+/** 暴露可注入内核的装配函数（测试友好）与会话回放辅助原语。 */
+export { createReactNativeEysWithCore, recordPointerEvent, recordSnapshotEvent }
 
 export default createReactNativeEys
+

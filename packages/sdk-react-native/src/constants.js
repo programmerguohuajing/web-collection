@@ -144,6 +144,12 @@ export const DEFAULTS = {
   },
   network: { enabled: true, autoWrapGlobalFetch: false },
   crash: { js: true, rejection: true, native: false },
+  replay: {
+    enablePointerReplay: true,
+    enableSnapshotReplay: false,
+    snapshotIntervalMs: 2000,
+    snapshotQuality: 0.5
+  },
   deviceInfo: null
 }
 
@@ -163,5 +169,7 @@ export const CLAMP = {
   reportIntervalMs: { min: 1000, max: 600000 },
   sampleWindowMs: { min: 100, max: 60000 },
   fpsTarget: { min: 1, max: 240 },
-  longTaskThresholdMs: { min: 1, max: 10000 }
+  longTaskThresholdMs: { min: 1, max: 10000 },
+  snapshotIntervalMs: { min: 500, max: 60000 }
 }
+
