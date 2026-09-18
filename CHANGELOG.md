@@ -13,9 +13,24 @@ AIGC:
 
 本项目所有版本发布均由 `vX.Y.Z` tag 触发，GitHub Release / npm 包 / SDK tgz 由 CI 工作流（`.github/workflows/release-npm.yml`）在该 tag 推送时一体产出，版本号以 tag 与 `packages/sdk/package.json` 为准。
 
-格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [Semantic Versioning](https://semver.org/)。
+## [0.8.0] - 2026-09-17
+
+### ⭐ 亮点
+- **Flutter 原生 SDK 全量集成与双模式会话回放**：推出官方 `packages/sdk-flutter` SDK，全面支持崩溃拦截、路由追踪、HTTP 监控与自定义事件；并首创为移动端无 DOM 画布实现手势轨迹（默认轻量）与 Widget 画面快照（可选 100% 视觉还原）双模式会话回放。
+- **React Native 会话回放双模式适配**：在 `packages/sdk-react-native` 中成功适配与 Flutter 完全相同的手势轨迹 (`EysPointerTouchListener`) 与 画面快照 (`EysSnapshotBoundary`) 双模式，零侵入无缝对接 Web 管理端播放器直接播放。
+- **Web 管理端播放器多端原生渲染**：管理端 `ReplayPanel.vue` 完成多端事件流自动识别（`detectReplayKind`）与 Touch/Snapshot 动态渲染引擎重构。
+
+### ✨ 新功能 (Features)
+- **flutter**：全新发布 `@web-collection/sdk-flutter` 0.8.0 纯 Native Flutter SDK，含触控手势与 Canvas 画面快照双模式录制（`72f011a`、`94136e1`）
+- **react-native**：在 `@web-collection/sdk-react-native` 中引入手势轨迹与画面快照双模式，并导出 `EysPointerTouchListener` / `EysSnapshotBoundary` 组件（`d565826`）
+- **web**：管理端会话回放播放器适配多端触控轨迹轨迹动效与快照分片切换（`5c3c536`）
+- **release**：建立统一发布链路，将 `v0.8.0` 对应的主包、Flutter SDK、RN 包及 Electron 包一体化发版（`8a1b02c`、`08bcfd7`）
+
+### 🐛 缺陷修复 (Fixes)
+- **ci**：自动化 Release 工作流补齐 Flutter SDK tar.gz 归档包与 Release 资产挂载（`08bcfd7`）
 
 ## [0.7.0] - 2026-09-17
+
 
 ### ⭐ 亮点
 - **侧边栏图标 UI 全量重构**：统一侧边栏全部 36 个菜单项为 100% 纯线框描边（Outline）图标，并完成自动化查重解耦，确保全量图标完全唯一且零实心色块残留。
