@@ -1,0 +1,57 @@
+name: Release Flutter SDK to pub.dev
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-pub-dev:
+    name: Publish Flutter SDK to pub.dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Check version and pub.dev status
+        id: pubcheck
+        working-directory: packages/sdk-flutter
+        shell: bash
+        run: |
+          version="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          echo "sdk_version=$version" >> "$GITHUB_OUTPUT"
+          echo "Checking version $version on pub.dev..."
+          code="$(curl -s -o /dev/null -w '%{http_code}' "https://pub.dev/api/packages/web_collection_sdk" || true)"
+          if [ "$code" = "200" ]; then
+            if curl -s "https://pub.dev/api/packages/web_collection_sdk" | grep -q "\"version\":\"$version\""; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "::warning::Version $version already published on pub.dev — skipping."
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Pub Credentials
+        if: steps.pubcheck.outputs.skip != 'true' && secrets.PUB_DEV_TOKEN != ''
+        shell: bash
+        run: |
+          mkdir -p ~/.config/dart
+          echo '${{ secrets.PUB_DEV_TOKEN }}' > ~/.config/dart/pub-credentials.json
+
+      - name: Publish to pub.dev
+        if: steps.pubcheck.outputs.skip != 'true' && secrets.PUB_DEV_TOKEN != ''
+        working-directory: packages/sdk-flutter
+        shell: bash
+        run: flutter pub publish --force
