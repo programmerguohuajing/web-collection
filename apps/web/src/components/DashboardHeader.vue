@@ -83,10 +83,6 @@ onMounted(() => {
 
   <!-- accounts=true：账号用户菜单 -->
   <div v-else class="header-account-container">
-    <el-button size="small" type="primary" plain class="tour-btn" @click="$emit('openTour')">
-      <el-icon><Guide /></el-icon> 新手引导
-    </el-button>
-
     <el-dropdown trigger="click" class="account-menu" @command="onCommand">
       <span class="account-trigger">
         <span class="account-avatar">{{ initial }}</span>

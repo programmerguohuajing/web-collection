@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
+  Aim, Bell, ChatDotRound, Collection, Compass, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, markInsightsAsRead, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading } from '../dashboard.js'
 import { RANGE_PRESETS, rangeFromPreset, useFilterStore } from '../stores/filters.js'
@@ -233,6 +233,14 @@ onMounted(async () => {
         </div>
         <div class="topbar-spacer" />
         <div class="context-selectors" aria-label="全局筛选">
+          <el-button
+            class="onboarding-tour-btn"
+            title="查看新手接入与后台引导"
+            @click="onboardingModalRef?.open(true)"
+          >
+            <el-icon><Compass /></el-icon>
+            <span>新手引导</span>
+          </el-button>
           <el-select v-model="store.appId" clearable placeholder="全部应用" class="app-selector" @change="applyGlobal">
             <el-option v-for="item in applications" :key="item.app_id" :label="item.name || item.app_id" :value="item.app_id" />
             <el-option label="全部应用" value="" />
@@ -261,7 +269,6 @@ onMounted(async () => {
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>
           <DashboardHeader v-if="accountsEnabled && isLoggedIn" @open-tour="onboardingModalRef?.open(true)" />
           <span v-else-if="accountsEnabled" class="user-avatar" aria-label="当前用户">运</span>
-          <el-button v-else text circle title="新手引导" @click="onboardingModalRef?.open(true)"><el-icon><Guide /></el-icon></el-button>
         </div>
       </header>
 
@@ -277,3 +284,37 @@ onMounted(async () => {
     <OnboardingTourModal ref="onboardingModalRef" />
   </div>
 </template>
+
+<style scoped>
+.onboarding-tour-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(14, 165, 233, 0.18));
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #6366f1;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 0 12px;
+  height: 32px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.onboarding-tour-btn:hover {
+  background: linear-gradient(135deg, #6366f1, #0ea5e9);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+  transform: translateY(-1px);
+}
+
+.onboarding-tour-btn :deep(.el-icon) {
+  font-size: 16px;
+  color: #6366f1;
+  transition: color 0.25s ease;
+}
+
+.onboarding-tour-btn:hover :deep(.el-icon) {
+  color: #ffffff;
+}
+</style>
