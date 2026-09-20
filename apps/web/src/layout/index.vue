@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Aim, Bell, ChatDotRound, Collection, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
@@ -10,6 +10,7 @@ import { useDiagnosisStore } from '../stores/diagnosis.js'
 import PageLoading from '../components/PageLoading.vue'
 import AiDiagnosisDrawer from '../components/AiDiagnosisDrawer.vue'
 import DashboardHeader from '../components/DashboardHeader.vue'
+import OnboardingTourModal from '../components/OnboardingTourModal.vue'
 import { useAuth } from '../composables/useAuth'
 import { useBrand } from '../composables/useBrand'
 
@@ -23,6 +24,7 @@ const applications = ref([])
 const menuOpen = ref(false)
 const aiDrawerOpen = ref(false)
 const aiDrawerRef = ref(null)
+const onboardingModalRef = ref(null)
 
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
@@ -165,6 +167,15 @@ onMounted(async () => {
   if (isLoggedIn.value) {
     try { await loadMe() } catch { /* 令牌失效不影响监控页 */ }
   }
+
+  // 首次进入管理后台自动触发引导式访问
+  if (!localStorage.getItem('web_eys_onboarding_completed')) {
+    onboardingModalRef.value?.open(true)
+  }
+
+  const handleOpenTour = () => onboardingModalRef.value?.open(true)
+  window.addEventListener('open-onboarding-tour', handleOpenTour)
+  onUnmounted(() => window.removeEventListener('open-onboarding-tour', handleOpenTour))
 })
 </script>
 
@@ -248,9 +259,9 @@ onMounted(async () => {
           </el-badge>
           <el-button class="refresh-button" :loading="loading" @click="refreshAll">刷新</el-button>
           <span v-if="store.environment" class="environment-pill" :title="`当前采集环境：${store.environment}`"><i />{{ store.environment }}</span>
-          <DashboardHeader v-if="accountsEnabled && isLoggedIn" />
+          <DashboardHeader v-if="accountsEnabled && isLoggedIn" @open-tour="onboardingModalRef?.open(true)" />
           <span v-else-if="accountsEnabled" class="user-avatar" aria-label="当前用户">运</span>
-
+          <el-button v-else text circle title="新手引导" @click="onboardingModalRef?.open(true)"><el-icon><Guide /></el-icon></el-button>
         </div>
       </header>
 
@@ -263,5 +274,6 @@ onMounted(async () => {
     </section>
 
     <AiDiagnosisDrawer v-model="aiDrawerOpen" />
+    <OnboardingTourModal ref="onboardingModalRef" />
   </div>
 </template>

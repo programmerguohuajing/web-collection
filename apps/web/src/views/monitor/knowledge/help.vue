@@ -2,12 +2,15 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Search, Reading, Warning, Star, Document, CircleCheck, CircleClose, Close, Collection
+  Search, Reading, Warning, Star, Document, CircleCheck, CircleClose, Close, Collection, Guide
 } from '@element-plus/icons-vue'
 import { api } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 
 const filterStore = useFilterStore()
+function triggerTour() {
+  window.dispatchEvent(new CustomEvent('open-onboarding-tour'))
+}
 
 const TYPE_META = {
   issue:   { label: 'issue',   color: '#0ea5e9' },
@@ -179,6 +182,17 @@ onMounted(load)
       </div>
     </div>
 
+    <div v-if="!helpArticle" class="onboarding-banner">
+      <div class="ob-left">
+        <el-icon class="ob-icon"><Guide /></el-icon>
+        <div>
+          <b>首次进入管理后台？查看新手接入指引</b>
+          <p>涵盖如何创建 AppID、获取采集密钥 (AppKey) 以及全端 SDK 代码初始化步骤。</p>
+        </div>
+      </div>
+      <el-button type="primary" plain size="small" @click="triggerTour">重新播放新手引导</el-button>
+    </div>
+
     <div v-if="!helpArticle" class="help-hero">
       <div>
         <h3>遇到问题？先搜搜看</h3>
@@ -319,4 +333,19 @@ onMounted(load)
   .help-grid { grid-template-columns: 1fr; }
   .hero-search { flex: 1 1 100%; }
 }
+
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+}
+.ob-left { display: flex; align-items: center; gap: 12px; }
+.ob-icon { font-size: 24px; color: var(--el-color-primary); }
+.ob-left b { display: block; font-size: 14px; color: var(--el-text-color-primary); margin-bottom: 2px; }
+.ob-left p { margin: 0; font-size: 12px; color: var(--el-text-color-secondary); }
 </style>
