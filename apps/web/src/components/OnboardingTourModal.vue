@@ -131,10 +131,29 @@ defineExpose({
     class="onboarding-dialog"
     destroy-on-close
   >
-    <!-- 步骤指示器 -->
-    <el-steps :active="activeStep" finish-status="success" align-center class="tour-steps">
-      <el-step v-for="(s, idx) in steps" :key="idx" :title="s.title" :icon="s.icon" />
-    </el-steps>
+    <!-- 优化后的现代步骤指示器 -->
+    <div class="custom-step-bar">
+      <div
+        v-for="(s, idx) in steps"
+        :key="idx"
+        class="custom-step-item"
+        :class="{
+          'is-active': activeStep === idx,
+          'is-completed': activeStep > idx,
+          'is-upcoming': activeStep < idx
+        }"
+        @click="activeStep = idx"
+      >
+        <div class="step-node">
+          <div class="step-badge">
+            <el-icon v-if="activeStep > idx"><Check /></el-icon>
+            <el-icon v-else><component :is="s.icon" /></el-icon>
+          </div>
+          <span class="step-title">{{ s.title }}</span>
+        </div>
+        <div v-if="idx < steps.length - 1" class="step-line" :class="{ 'is-active': activeStep > idx }" />
+      </div>
+    </div>
 
     <!-- 主体步骤内容容器 -->
     <div class="tour-body">
@@ -314,8 +333,108 @@ defineExpose({
   padding: 16px 24px 24px;
 }
 
-.tour-steps {
+/* 优化步骤条外观 */
+.custom-step-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 20px;
   margin-bottom: 24px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  position: relative;
+}
+
+.custom-step-item {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+
+.custom-step-item:last-child {
+  flex: none;
+}
+
+.step-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 2;
+  transition: all 0.3s ease;
+  min-width: 76px;
+}
+
+.step-badge {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background: var(--el-fill-color-blank);
+  border: 2px solid var(--el-border-color);
+  color: var(--el-text-color-secondary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.step-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-secondary);
+  transition: color 0.3s ease, font-weight 0.3s ease;
+  white-space: nowrap;
+}
+
+/* 连接线 */
+.step-line {
+  flex: 1;
+  height: 3px;
+  background: var(--el-border-color-lighter);
+  transition: background-color 0.4s ease;
+  margin: 0 8px;
+  margin-bottom: 24px;
+  border-radius: 2px;
+}
+
+.step-line.is-active {
+  background: linear-gradient(90deg, #6366f1, #0ea5e9);
+}
+
+/* 激活状态 (Active) */
+.custom-step-item.is-active .step-badge {
+  background: linear-gradient(135deg, #6366f1, #0ea5e9);
+  border-color: transparent;
+  color: #ffffff;
+  transform: scale(1.15);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.custom-step-item.is-active .step-title {
+  color: #6366f1;
+  font-weight: 700;
+}
+
+/* 已完成状态 (Completed) */
+.custom-step-item.is-completed .step-badge {
+  background: var(--el-color-success-light-9, #ecfdf5);
+  border-color: var(--el-color-success, #10b981);
+  color: var(--el-color-success, #10b981);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+}
+
+.custom-step-item.is-completed .step-title {
+  color: var(--el-color-success, #10b981);
+  font-weight: 600;
+}
+
+/* 悬停微效 */
+.custom-step-item:hover .step-badge {
+  transform: translateY(-2px) scale(1.08);
 }
 
 .tour-body {
