@@ -15,6 +15,7 @@ import { useAuth } from '../../composables/useAuth'
 import { canManageBrand } from '../../composables/useBrand'
 import { getBrand, saveBrand, resetBrand } from '../../api/brand.js'
 import OverflowTip from '../../components/OverflowTip.vue'
+import BrandLogo from '../../components/BrandLogo.vue'
 
 const { whiteLabelEnabled, me } = useAuth()
 
@@ -295,8 +296,7 @@ onMounted(load)
           <!-- 微缩侧栏 -->
           <div class="mini-sidebar">
             <div class="mini-brand">
-              <img v-if="form.logoUrl" :src="form.logoUrl" class="mini-logo" alt="logo" />
-              <span v-else class="mini-logo mini-logo-text">{{ previewShort }}</span>
+              <BrandLogo :custom-url="form.logoUrl" size="28px" />
               <div class="mini-brand-text">
                 <strong>{{ form.name || 'Web Collection' }}</strong>
                 <small>{{ form.loginSubtitle || '前端遥测平台' }}</small>
@@ -315,8 +315,7 @@ onMounted(load)
           <!-- 登录页小样 -->
           <div class="preview-block login-sample" :style="previewVars">
             <div class="login-sample-brand">
-              <img v-if="form.logoUrl" :src="form.logoUrl" class="mini-logo" alt="logo" />
-              <span v-else class="mini-logo mini-logo-text">{{ previewShort }}</span>
+              <BrandLogo :custom-url="form.logoUrl" size="28px" />
               <div>
                 <h3>{{ previewTitle }}</h3>
                 <p>{{ form.loginSubtitle || '前端遥测平台' }} · 账号登录</p>

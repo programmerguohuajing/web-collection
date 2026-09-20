@@ -11,6 +11,7 @@ import PageLoading from '../components/PageLoading.vue'
 import AiDiagnosisDrawer from '../components/AiDiagnosisDrawer.vue'
 import DashboardHeader from '../components/DashboardHeader.vue'
 import OnboardingTourModal from '../components/OnboardingTourModal.vue'
+import BrandLogo from '../components/BrandLogo.vue'
 import { useAuth } from '../composables/useAuth'
 import { useBrand } from '../composables/useBrand'
 
@@ -193,7 +194,7 @@ onMounted(async () => {
     <div v-if="menuOpen" class="mobile-menu-overlay" @click.self="closeMenu">
       <aside class="mobile-sidebar">
         <div class="sidebar-brand">
-          <span class="brand-logo">{{ brandShortName }}</span>
+          <BrandLogo size="32px" class="brand-logo" />
           <span><strong>{{ brandName }}</strong><small>{{ brandSubtitle }}</small></span>
         </div>
         <nav class="sidebar-nav" aria-label="主导航">
@@ -209,7 +210,7 @@ onMounted(async () => {
 
     <aside class="desktop-only sidebar-container">
       <div class="sidebar-brand">
-        <span class="brand-logo">{{ brandShortName }}</span>
+        <BrandLogo size="32px" class="brand-logo" />
         <span><strong>{{ brandName }}</strong><small>{{ brandSubtitle }}</small></span>
       </div>
       <el-scrollbar class="sidebar-scroll">

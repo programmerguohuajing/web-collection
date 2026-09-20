@@ -14,6 +14,7 @@ import { QuestionFilled } from '@element-plus/icons-vue'
 import { User, Lock, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../../composables/useAuth'
 import { useBrand } from '../../composables/useBrand'
+import BrandLogo from '../../components/BrandLogo.vue'
 
 const { isLoggedIn, accountsEnabled, login, register, loadCapabilities, loadMe } = useAuth()
 // 品牌字段此前在模板使用但从未导入（SFC script setup 无全局注入），页头一直渲染空白
@@ -103,7 +104,7 @@ function toggle(target: 'login' | 'register'): void {
   <div class="auth-shell">
     <div class="auth-card">
       <div class="auth-brand">
-        <span class="brand-logo">{{ brandShortName }}</span>
+        <BrandLogo size="44px" class="brand-logo" />
         <div>
           <h1>{{ brandName }}<el-tooltip v-if="inviteToken" content="你收到一个团队邀请，注册后将加入对应团队" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></h1>
           <p>{{ brandSubtitle }} · 账号登录</p>
@@ -173,7 +174,7 @@ function toggle(target: 'login' | 'register'): void {
 .auth-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; background: var(--el-bg-color-page, #f5f7fa); }
 .auth-card { width: 100%; max-width: 380px; background: var(--el-bg-color, #fff); border-radius: 12px; padding: 28px 28px 22px; box-shadow: 0 8px 30px rgba(0,0,0,.08); }
 .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-.brand-logo { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg,#4f7cff,#3b5bdb); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; }
+.brand-logo { flex-shrink: 0; }
 .auth-brand h1 { margin: 0; font-size: 18px; }
 .auth-brand p { margin: 2px 0 0; font-size: 12px; color: var(--el-text-color-secondary); }
 .auth-invite { margin-bottom: 14px; }
