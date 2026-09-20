@@ -131,27 +131,24 @@ defineExpose({
     class="onboarding-dialog"
     destroy-on-close
   >
-    <!-- 优化后的现代步骤指示器 -->
-    <div class="custom-step-bar">
+    <!-- 统一 Element Plus 风格分段步骤导航 -->
+    <div class="stepper-bar">
       <div
         v-for="(s, idx) in steps"
         :key="idx"
-        class="custom-step-item"
+        class="stepper-pill"
         :class="{
           'is-active': activeStep === idx,
-          'is-completed': activeStep > idx,
-          'is-upcoming': activeStep < idx
+          'is-completed': activeStep > idx
         }"
         @click="activeStep = idx"
       >
-        <div class="step-node">
-          <div class="step-badge">
-            <el-icon v-if="activeStep > idx"><Check /></el-icon>
-            <el-icon v-else><component :is="s.icon" /></el-icon>
-          </div>
-          <span class="step-title">{{ s.title }}</span>
-        </div>
-        <div v-if="idx < steps.length - 1" class="step-line" :class="{ 'is-active': activeStep > idx }" />
+        <span class="pill-index">
+          <el-icon v-if="activeStep > idx"><Check /></el-icon>
+          <template v-else>{{ idx + 1 }}</template>
+        </span>
+        <span class="pill-title">{{ s.title }}</span>
+        <el-icon v-if="idx < steps.length - 1" class="pill-arrow"><Right /></el-icon>
       </div>
     </div>
 
@@ -201,7 +198,7 @@ defineExpose({
       <!-- Step 1: 如何创建 AppID -->
       <div v-else-if="activeStep === 1" class="step-card">
         <div class="step-header">
-          <div class="step-badge">步骤 1/4</div>
+          <el-tag size="small" type="primary" effect="light" round>步骤 1/4</el-tag>
           <h3>创建应用与 AppID</h3>
         </div>
         <p class="step-desc">
@@ -228,7 +225,7 @@ defineExpose({
       <!-- Step 2: 获取采集密钥 AppKey -->
       <div v-else-if="activeStep === 2" class="step-card">
         <div class="step-header">
-          <div class="step-badge">步骤 2/4</div>
+          <el-tag size="small" type="primary" effect="light" round>步骤 2/4</el-tag>
           <h3>获取采集密钥 (AppKey / Secret)</h3>
         </div>
         <p class="step-desc">
@@ -260,7 +257,7 @@ defineExpose({
       <!-- Step 3: 集成 SDK 代码 -->
       <div v-else-if="activeStep === 3" class="step-card">
         <div class="step-header">
-          <div class="step-badge">步骤 3/4</div>
+          <el-tag size="small" type="primary" effect="light" round>步骤 3/4</el-tag>
           <h3>SDK 初始化与代码接入</h3>
         </div>
         <p class="step-desc">
@@ -281,7 +278,7 @@ defineExpose({
       <!-- Step 4: 数据上报验证与体验 -->
       <div v-else-if="activeStep === 4" class="step-card">
         <div class="step-header">
-          <div class="step-badge">步骤 4/4</div>
+          <el-tag size="small" type="primary" effect="light" round>步骤 4/4</el-tag>
           <h3>验证数据上报与数据看板</h3>
         </div>
         <p class="step-desc">
@@ -333,108 +330,91 @@ defineExpose({
   padding: 16px 24px 24px;
 }
 
-/* 优化步骤条外观 */
-.custom-step-bar {
+/* 统一 Element Plus 风格分段步骤导航 */
+.stepper-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px 20px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-  position: relative;
+  padding: 10px 14px;
+  background: var(--el-fill-color-light, #f8fafc);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  margin-bottom: 20px;
 }
 
-.custom-step-item {
+.stepper-pill {
   display: flex;
-  flex: 1;
-  align-items: center;
-  position: relative;
-  cursor: pointer;
-  user-select: none;
-}
-
-.custom-step-item:last-child {
-  flex: none;
-}
-
-.step-node {
-  display: flex;
-  flex-direction: column;
   align-items: center;
   gap: 8px;
-  z-index: 2;
-  transition: all 0.3s ease;
-  min-width: 76px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
 }
 
-.step-badge {
-  width: 38px;
-  height: 38px;
+.pill-index {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  display: flex;
+  background: var(--el-fill-color-darker, #e2e8f0);
+  color: var(--el-text-color-secondary);
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  background: var(--el-fill-color-blank);
-  border: 2px solid var(--el-border-color);
-  color: var(--el-text-color-secondary);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s ease;
 }
 
-.step-title {
-  font-size: 13px;
+.pill-title {
   font-weight: 500;
-  color: var(--el-text-color-secondary);
-  transition: color 0.3s ease, font-weight 0.3s ease;
   white-space: nowrap;
 }
 
-/* 连接线 */
-.step-line {
-  flex: 1;
-  height: 3px;
-  background: var(--el-border-color-lighter);
-  transition: background-color 0.4s ease;
-  margin: 0 8px;
-  margin-bottom: 24px;
-  border-radius: 2px;
-}
-
-.step-line.is-active {
-  background: linear-gradient(90deg, #6366f1, #0ea5e9);
+.pill-arrow {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  margin-left: 2px;
 }
 
 /* 激活状态 (Active) */
-.custom-step-item.is-active .step-badge {
-  background: linear-gradient(135deg, #6366f1, #0ea5e9);
-  border-color: transparent;
+.stepper-pill.is-active {
+  background: var(--el-color-primary);
   color: #ffffff;
-  transform: scale(1.15);
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.25);
 }
 
-.custom-step-item.is-active .step-title {
-  color: #6366f1;
-  font-weight: 700;
+.stepper-pill.is-active .pill-index {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
 }
 
-/* 已完成状态 (Completed) */
-.custom-step-item.is-completed .step-badge {
-  background: var(--el-color-success-light-9, #ecfdf5);
-  border-color: var(--el-color-success, #10b981);
-  color: var(--el-color-success, #10b981);
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
-}
-
-.custom-step-item.is-completed .step-title {
-  color: var(--el-color-success, #10b981);
+.stepper-pill.is-active .pill-title {
   font-weight: 600;
 }
 
+/* 已完成状态 (Completed) */
+.stepper-pill.is-completed {
+  color: var(--el-color-success);
+}
+
+.stepper-pill.is-completed .pill-index {
+  background: var(--el-color-success-light-9, #ecfdf5);
+  color: var(--el-color-success, #10b981);
+  border: 1px solid var(--el-color-success-light-5);
+}
+
+.stepper-pill.is-completed .pill-title {
+  font-weight: 500;
+}
+
 /* 悬停微效 */
-.custom-step-item:hover .step-badge {
-  transform: translateY(-2px) scale(1.08);
+.stepper-pill:not(.is-active):hover {
+  background: var(--el-fill-color);
+  color: var(--el-color-primary);
 }
 
 .tour-body {

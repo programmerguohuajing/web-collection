@@ -234,11 +234,14 @@ onMounted(async () => {
         <div class="topbar-spacer" />
         <div class="context-selectors" aria-label="全局筛选">
           <el-button
-            class="onboarding-tour-btn"
+            type="primary"
+            plain
+            size="small"
+            class="header-tour-btn"
             title="查看新手接入与后台引导"
             @click="onboardingModalRef?.open(true)"
           >
-            <el-icon><Compass /></el-icon>
+            <el-icon><Guide /></el-icon>
             <span>新手引导</span>
           </el-button>
           <el-select v-model="store.appId" clearable placeholder="全部应用" class="app-selector" @change="applyGlobal">
@@ -286,35 +289,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.onboarding-tour-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(14, 165, 233, 0.18));
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  color: #6366f1;
-  font-weight: 600;
-  border-radius: 6px;
-  padding: 0 12px;
-  height: 32px;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.onboarding-tour-btn:hover {
-  background: linear-gradient(135deg, #6366f1, #0ea5e9);
-  color: #ffffff;
-  border-color: transparent;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
-  transform: translateY(-1px);
-}
-
-.onboarding-tour-btn :deep(.el-icon) {
-  font-size: 16px;
-  color: #6366f1;
-  transition: color 0.25s ease;
-}
-
-.onboarding-tour-btn:hover :deep(.el-icon) {
-  color: #ffffff;
+.header-tour-btn {
+  font-weight: 500;
 }
 </style>
