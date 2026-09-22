@@ -652,3 +652,48 @@ button, input, textarea, select { font-family: inherit; }
   background-size: contain;
 }
 
+/* -------------------------------------------------------------------------
+   全局二次确认消息弹窗 (ElMessageBox & ElOverlay) 布局与视觉增强
+   解决编程式调用的 ElMessageBox 缺失 CSS 或在视口居中/变形的问题
+   ------------------------------------------------------------------------- */
+.el-overlay.el-overlay-message-box {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background-color: rgba(15, 23, 42, 0.45) !important;
+  backdrop-filter: blur(4px) !important;
+}
+.el-message-box {
+  border-radius: 14px !important;
+  padding: 20px 24px !important;
+  border: 1px solid var(--c-border) !important;
+  background: var(--c-surface, #fff) !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05) !important;
+  max-width: min(480px, calc(100vw - 32px)) !important;
+  width: 100% !important;
+}
+.el-message-box__header {
+  padding: 0 0 12px 0 !important;
+}
+.el-message-box__title {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  color: var(--c-text) !important;
+}
+.el-message-box__content {
+  padding: 8px 0 18px 0 !important;
+  color: var(--c-text-muted) !important;
+  font-size: 13.5px !important;
+  line-height: 1.6 !important;
+}
+.el-message-box__btns {
+  padding: 4px 0 0 0 !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+}
+.el-message-box__btns .el-button + .el-button {
+  margin-left: 0 !important;
+}
+
+

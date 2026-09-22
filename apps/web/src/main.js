@@ -6,6 +6,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import { router } from './router/index.js'
+import 'element-plus/dist/index.css'
 import './style.css'
 
 // P0-1：捕获懒加载 chunk 加载失败（旧 HTML 引用已下线的旧 chunk），
