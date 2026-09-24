@@ -932,11 +932,18 @@ function checkPublicToken(req, res) {
 
 // 统一补充跨域头，并在 OPTIONS 预检时直接返回。
 function corsMiddleware(req, res, next) {
+  const origin = req.get('origin')
+  const reqHeaders = req.get('access-control-request-headers')
   res.set({
-    'access-control-allow-origin': process.env.CORS_ORIGIN || '*',
-    'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
-    'access-control-allow-headers': 'content-type,authorization,x-team-id,x-app-key,x-ai-key,traceparent,if-none-match,if-match,if-modified-since,if-unmodified-since'
+    'access-control-allow-origin': origin || process.env.CORS_ORIGIN || '*',
+    'access-control-allow-methods': 'GET,POST,PUT,DELETE,PATCH,OPTIONS',
+    'access-control-allow-headers': reqHeaders || 'content-type,authorization,x-team-id,x-app-key,x-collect-key,x-ai-key,x-sdk-version,x-sdk-name,x-eys-raw-access,traceparent,tracestate,baggage,if-none-match,if-match,if-modified-since,if-unmodified-since',
+    'access-control-expose-headers': 'server-timing,traceresponse,x-request-id'
   })
+  if (origin) {
+    res.set('access-control-allow-credentials', 'true')
+    res.append('vary', 'Origin')
+  }
   if (req.method === 'OPTIONS') return res.status(204).end()
   next()
 }

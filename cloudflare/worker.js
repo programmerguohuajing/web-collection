@@ -481,7 +481,12 @@ export default {
 }
 
 async function collect(request, env, ctx) {
-  const payload = await request.json()
+  let payload
+  try {
+    payload = await request.json()
+  } catch (err) {
+    return json({ error: 'invalid json payload: ' + (err?.message || err) }, 400)
+  }
   const inputs = payload.type === 'replay' ? [payload] : Array.isArray(payload.events) ? payload.events : Array.isArray(payload) ? payload : [payload]
   const appId = clip(inputs[0]?.appId || 'default', 64)
   if (inputs.some(item => clip(item?.appId || 'default', 64) !== appId)) return new Response('mixed app ids', { status: 400 })
@@ -1632,7 +1637,15 @@ async function apiHealth(env,url){
   }).sort((a,b)=>b.count-a.count).slice(0,200)
   return json({endpoints,total:endpoints.length})
 }
-async function replayList(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),size=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=replayFilters(url);const rows=await env.DB.prepare(`select session_id replayId,session_id,max(user_id) userId,max(user_name) userName,max(user_phone) userPhone,min(created_at) firstSeen,max(created_at) lastSeen,max(url) url,max(release_name) release,max(end_reason) endReason,max(user_agent) userAgent,count(*) eventCount from replays ${where} group by app_id,session_id order by lastSeen desc limit ? offset ?`).bind(...values,size,(page-1)*size).all();const total=await env.DB.prepare(`select count(*) count from (select 1 from replays ${where} group by app_id,session_id)`).bind(...values).first();return json({items:rows.results,total:Number(total.count),page,pageSize:size})}
+async function replayList(env,url){
+  const page=Math.max(1,Number(url.searchParams.get('page')||1))
+  const size=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)))
+  const {where,values}=replayFilters(url)
+  const replayKey="coalesce(nullif(base_session_id,''),session_id)"
+  const rows=await env.DB.prepare(`select ${replayKey} replayId,${replayKey} sessionId,max(user_id) userId,max(user_name) userName,max(user_phone) userPhone,min(created_at) firstSeen,max(created_at) lastSeen,max(url) url,max(release_name) release,max(end_reason) endReason,max(user_agent) userAgent,count(*) eventCount,count(distinct session_id) segmentCount from replays ${where} group by app_id,${replayKey} order by lastSeen desc limit ? offset ?`).bind(...values,size,(page-1)*size).all()
+  const total=await env.DB.prepare(`select count(*) count from (select 1 from replays ${where} group by app_id,${replayKey})`).bind(...values).first()
+  return json({items:rows.results,total:Number(total.count),page,pageSize:size})
+}
 async function alertList(env,url){
   const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.max(1,Math.min(100,Number(url.searchParams.get('pageSize')||10)))
   const rows=await env.DB.prepare(`select a.*,
@@ -1654,17 +1667,27 @@ async function alertPatch(env,id,input){
 // api_key/system 与匿名（accounts=false）看全部，对齐 Node governance.listApplications 语义。
 async function applicationList(env,url,auth){const teamScoped=auth?.via==='session'&&auth.teamId,teamWhere=teamScoped?'where (a.team_id is null or a.team_id=?)':'',teamVals=teamScoped?[auth.teamId]:[];const select=`select a.app_id,a.name,a.platform,a.owner,a.enabled,a.sample_rate,a.replay_sample_rate,a.rules_json,a.team_id,a.created_at,a.updated_at,(a.collect_key_hash is not null) collect_key_enabled,coalesce(rc.release_count,0) release_count from applications a left join (select app_id,count(*) release_count from releases group by app_id) rc on rc.app_id=a.app_id ${teamWhere} order by a.updated_at desc`;if(!url.searchParams.has('page')&&!url.searchParams.has('pageSize'))return json((await env.DB.prepare(select).bind(...teamVals).all()).results.map(mapApplication));const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare(`${select} limit ? offset ?`).bind(...teamVals,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from applications a ${teamWhere}`).bind(...teamVals).first()]);return json({items:rows.results.map(mapApplication),total:Number(total.count),page,pageSize})}
 async function releaseList(env,appId,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),[rows,total]=await Promise.all([env.DB.prepare('select * from releases where app_id=? order by created_at desc limit ? offset ?').bind(appId,pageSize,(page-1)*pageSize).all(),env.DB.prepare('select count(*) count from releases where app_id=?').bind(appId).first()]);return json({items:rows.results,total:Number(total.count),page,pageSize})}
+function isNativeReplayEventW(event){
+  const platform=String(event?.props?.platform||'').toLowerCase()
+  return event?.name==='canvas_snapshot'||event?.name==='pointer_event'||event?.props?.snapshot_type==='image_png'||platform==='flutter'||platform==='react-native'||platform==='react_native'
+}
+function replayEventTsW(event){
+  const value=Number(event?.timestamp??event?.ts)
+  return Number.isFinite(value)?value:0
+}
 async function replayEvents(env,id,url){
   if(!id?.trim())return json({events:[]});
-  const startTime = performance.now();
   const teamClause=url?.__teamId?' and app_id in (select app_id from applications where team_id=?)':'';
   const teamVals=url?.__teamId?[url.__teamId]:[];
   const hit=await env.DB.prepare(`select session_id,base_session_id from replays where session_id=?${teamClause} limit 1`).bind(id,...teamVals).first();
   const baseId=hit?.base_session_id||id;
   const firstSnap = await env.DB.prepare(`select id,created_at,session_id,events_json from replays where (base_session_id=? or (base_session_id is null and session_id=?))${teamClause} order by created_at asc,id asc limit 1`).bind(baseId, baseId, ...teamVals).first();
-  let recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where (base_session_id=? or (base_session_id is null and session_id=?))${teamClause} order by created_at desc,id desc limit 25`).bind(baseId, baseId, ...teamVals).all()).results;
-  if (!recentRows.length) recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where session_id=?${teamClause} order by created_at desc,id desc limit 25`).bind(id,...teamVals).all()).results;
-  if (!recentRows.length) recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where base_session_id like ?${teamClause} order by created_at desc,id desc limit 25`).bind(baseId+'_%',...teamVals).all()).results;
+  // 最近 160 个存储分片足以覆盖正常 30 分钟窗口，同时避免旧超长会话把 D1 行读取放大到无界。
+  // 不再使用 wall-clock 25ms 截止：D1 查询耗时会计入该时间，曾导致循环尚未解码任何一行就直接返回空事件。
+  const detailRowLimit=160;
+  let recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where (base_session_id=? or (base_session_id is null and session_id=?))${teamClause} order by created_at desc,id desc limit ?`).bind(baseId, baseId, ...teamVals, detailRowLimit).all()).results;
+  if (!recentRows.length) recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where session_id=?${teamClause} order by created_at desc,id desc limit ?`).bind(id,...teamVals,detailRowLimit).all()).results;
+  if (!recentRows.length) recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where base_session_id like ?${teamClause} order by created_at desc,id desc limit ?`).bind(baseId+'_%',...teamVals,detailRowLimit).all()).results;
 
   recentRows.sort((a,b) => (Number(a.created_at||0) - Number(b.created_at||0)) || (Number(a.id||0) - Number(b.id||0)));
   const rows = [];
@@ -1681,40 +1704,54 @@ async function replayEvents(env,id,url){
     }
   }
 
-  const merged=[];
-  let segId=null,anchored=false;
+  const instances=new Map();
   for(const row of rows){
-    if (performance.now() - startTime > 25) break;
     const evs=await decodeReplayEventsFromStorage(row.events_json);
     if(!Array.isArray(evs)||!evs.length)continue;
-    if(row.session_id!==segId){segId=row.session_id;anchored=false}
-    const snapIdx=evs.findIndex(e=>e&&e.type===2);
-    if(!anchored){
-      if(snapIdx<0)continue;
-      let start=snapIdx;
-      if(start>0&&evs[start-1]&&evs[start-1].type===4)start--;
-      for(let i=start;i<evs.length;i++)merged.push(evs[i]);
-      anchored=true;
-    }else{
-      for(const e of evs)merged.push(e);
-    }
+    const sid=row.session_id||'__default__'
+    if(!instances.has(sid))instances.set(sid,[])
+    instances.get(sid).push(evs)
   }
-  if(!merged.length||!merged.some(e=>e&&e.type===2))return json({events:[],truncated:false});
+  const merged=[];
+  for(const pages of instances.values()){
+    const flat=[]
+    let seq=0
+    for(const page of pages)for(const event of page)flat.push({event,seq:seq++})
+    flat.sort((a,b)=>(replayEventTsW(a.event)-replayEventTsW(b.event))||(a.seq-b.seq))
+    const nativeReplay=flat.some(item=>isNativeReplayEventW(item.event))
+    let start=0
+    if(!nativeReplay){
+      const snapIdx=flat.findIndex(item=>item.event?.type===2)
+      if(snapIdx<0)continue
+      start=snapIdx
+      if(start>0&&flat[start-1]?.event?.type===4)start--
+    }
+    for(let i=start;i<flat.length;i++)merged.push(flat[i].event)
+  }
+  const nativeStream=merged.some(isNativeReplayEventW)
+  if(!merged.length||(!nativeStream&&!merged.some(e=>e&&e.type===2)))return json({events:[],truncated:false});
   const REPLAY_SPAN_LIMIT_MS=30*60*1000;
-  const originalSpanMs=merged[merged.length-1].timestamp-merged[0].timestamp;
+  const lastTs=replayEventTsW(merged[merged.length-1])
+  const firstTs=replayEventTsW(merged[0])
+  const originalSpanMs=Math.max(0,lastTs-firstTs);
   let out=merged,truncated=false;
   if(originalSpanMs>REPLAY_SPAN_LIMIT_MS){
-    const cutoff=merged[merged.length-1].timestamp-REPLAY_SPAN_LIMIT_MS;
-    let start=merged.findIndex(e=>e.timestamp>=cutoff);
+    const cutoff=lastTs-REPLAY_SPAN_LIMIT_MS;
+    let start=merged.findIndex(e=>replayEventTsW(e)>=cutoff);
     if(start<0)start=0;
-    let snapIdx=-1;
-    for(let i=start;i<merged.length;i++){if(merged[i]&&merged[i].type===2){snapIdx=i;break}}
-    if(snapIdx>start||(snapIdx===start&&start>0)){
-      if(snapIdx>0&&merged[snapIdx-1]&&merged[snapIdx-1].type===4)snapIdx--;
-      out=merged.slice(snapIdx);truncated=true;
+    if(nativeStream){
+      if(start>0){out=merged.slice(start);truncated=true}
+    }else{
+      let snapIdx=-1;
+      for(let i=start;i<merged.length;i++){if(merged[i]&&merged[i].type===2){snapIdx=i;break}}
+      if(snapIdx>start||(snapIdx===start&&start>0)){
+        if(snapIdx>0&&merged[snapIdx-1]&&merged[snapIdx-1].type===4)snapIdx--;
+        out=merged.slice(snapIdx);truncated=true;
+      }
     }
   }
-  return json({events:out,truncated,originalSpanMs,spanMs:out[out.length-1].timestamp-out[0].timestamp})
+  const spanMs=out.length>1?Math.max(0,replayEventTsW(out[out.length-1])-replayEventTsW(out[0])):0
+  return json({events:out,truncated,originalSpanMs,spanMs})
 }
 async function traces(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["trace_id<>''"]);
   // BUG-006 修复：快照类 perf 指标（memory 字节 / *_rate 比率 / redirect_count 次数）是周期监控采样，
@@ -3637,7 +3674,7 @@ function group(items,key){return items.reduce((out,item)=>((out[key(item)]||=[])
 function cleanObject(value){if(!value||typeof value!=='object')return null;return Object.fromEntries(Object.entries(value).slice(0,50).map(([k,v])=>[clip(k,80),redact(clip(typeof v==='object'?JSON.stringify(v):v,1000))]))}
 function cleanUrl(value){try{const u=new URL(String(value));for(const key of ['token','password','key','secret','authorization'])u.searchParams.delete(key);return clip(u.toString(),2048)}catch{return clip(value||'',2048)}}
 function redact(v){return String(v).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi,'$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g,'***$1')}
-function cors(response,request){const r=new Response(response.body,response),origin=request.headers.get('origin');r.headers.set('access-control-allow-origin',origin||'*');if(origin){r.headers.set('access-control-allow-credentials','true');r.headers.append('vary','Origin')}r.headers.set('access-control-allow-methods','GET,POST,PUT,DELETE,OPTIONS');r.headers.set('access-control-allow-headers','content-type,x-app-key,x-ai-key,traceparent,if-none-match,if-match,if-modified-since,if-unmodified-since');return r}
+function cors(response,request){const r=new Response(response.body,response),origin=request.headers.get('origin');r.headers.set('access-control-allow-origin',origin||'*');if(origin){r.headers.set('access-control-allow-credentials','true');r.headers.append('vary','Origin')}r.headers.set('access-control-allow-methods','GET,POST,PUT,DELETE,PATCH,OPTIONS');const reqHeaders=request.headers.get('access-control-request-headers');r.headers.set('access-control-allow-headers',reqHeaders||'content-type,authorization,x-app-key,x-collect-key,x-team-id,x-ai-key,x-sdk-version,x-sdk-name,x-eys-raw-access,traceparent,tracestate,baggage,if-none-match,if-match,if-modified-since,if-unmodified-since');r.headers.set('access-control-expose-headers','server-timing,traceresponse,x-request-id');return r}
 function parse(value,fallback){try{return typeof value==='string'?JSON.parse(value):value??fallback}catch{return fallback}}
 function strings(v){return Array.isArray(v)?v.map(String).map(s=>s.trim()).filter(Boolean):[]}
 function clip(v,n){return String(v??'').slice(0,n)} function rate(v){return Math.max(0,Math.min(1,Number(v??1)))} function origin(v){try{return new URL(v).origin}catch{return''}} function maskPhone(v=''){return String(v).replace(/^(\d{3})\d{4}(\d{4})$/,'$1****$2')} function random(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/[+/=]/g,'').slice(0,n*2)} async function sha256(v){return[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))].map(x=>x.toString(16).padStart(2,'0')).join('')}
