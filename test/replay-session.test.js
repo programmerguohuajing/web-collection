@@ -256,3 +256,23 @@ test('worker replayEvents：无数据返回空信封（不再是裸空数组）'
   assert.deepEqual(body.events, [])
   assert.equal(body.truncated, false)
 })
+
+test('worker replayEvents：Flutter/React Native 原生事件流无需 type=2 也返回可播放事件', async () => {
+  const worker = await loadWorker()
+  const rows = [{
+    id: 1,
+    created_at: 10,
+    session_id: 'mobile_seg1',
+    base_session_id: 'mobile',
+    events_json: JSON.stringify([
+      { type: 'replay', name: 'canvas_snapshot', timestamp: 10, props: { snapshot_type: 'image_png', image_data: 'x' } },
+      { type: 'replay', name: 'pointer_event', timestamp: 20, props: { platform: 'flutter', kind: 'down', x: 12, y: 34 } }
+    ])
+  }]
+  const res = await worker.fetch(new Request('https://example.com/api/replays/mobile'), { DB: replayRowsDb(rows) })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.events.length, 2)
+  assert.equal(body.events[0].name, 'canvas_snapshot')
+  assert.equal(body.truncated, false)
+})

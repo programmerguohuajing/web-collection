@@ -13,6 +13,7 @@ export function mapReplay(row) {
     userName: row.user_name ?? row.userName,
     userPhone: maskPhone(row.user_phone ?? row.userPhone),
     count: Number(row.count),
+    segmentCount: Number(row.segment_count ?? row.segmentCount ?? 1),
     firstSeen: Number(row.first_seen ?? row.firstSeen),
     lastSeen: Number(row.last_seen ?? row.lastSeen),
     url: row.url,

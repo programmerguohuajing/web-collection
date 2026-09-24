@@ -293,24 +293,27 @@ export async function uploadSourceMap(payload) {
 }
 
 export async function getReplay(replayKey) {
-  const cached = replayCache.get(replayKey)
+  // 同一 replayKey 在不同团队可能对应不同数据；缓存键必须包含租户上下文，避免切团队后命中旧回放。
+  const teamId = typeof localStorage !== 'undefined' ? (localStorage.getItem('currentTeamId') || '') : ''
+  const cacheKey = `${teamId}:${String(replayKey)}`
+  const cached = replayCache.get(cacheKey)
   if (cached?.expiresAt > Date.now()) {
     // 并发调用共享同一个 inflight promise（避免同 key 重复请求）；
     // 空结果在解析后从缓存移除，后续再次点击会重新请求而不是 30s 内都拿到空数组。
     return cached.promise.then(value => {
-      if (!hasReplayEvents(value)) replayCache.delete(replayKey)
+      if (!hasReplayEvents(value)) replayCache.delete(cacheKey)
       return value
     })
   }
   const promise = api(`/api/replays/${encodeURIComponent(replayKey)}`).then(value => {
     // 空事件（会话已被清理 / 深链无效）不缓存，避免短时间内重试也返回空
-    if (!hasReplayEvents(value)) replayCache.delete(replayKey)
+    if (!hasReplayEvents(value)) replayCache.delete(cacheKey)
     return value
   }, error => {
-    replayCache.delete(replayKey)
+    replayCache.delete(cacheKey)
     throw error
   })
-  replayCache.set(replayKey, { promise, expiresAt: Date.now() + 30000 })
+  replayCache.set(cacheKey, { promise, expiresAt: Date.now() + 30000 })
   return promise
 }
 

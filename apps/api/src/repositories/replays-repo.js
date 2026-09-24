@@ -23,9 +23,10 @@ const fullSnapshotWhere = `exists (
 export async function listReplaySessions(limit = 20, filters = {}, offset = 0) {
   const { where, params } = replayWhere(filters)
   return all(
-    `select max(id)::text as "replayId",
-            session_id as "sessionId",
+    `select coalesce(nullif(base_session_id, ''), session_id) as "replayId",
+            coalesce(nullif(base_session_id, ''), session_id) as "sessionId",
             count(*)::integer as count,
+            count(distinct session_id)::integer as "segmentCount",
             (array_agg(user_id order by created_at desc, id desc) filter(where user_id is not null))[1] as "userId",
             (array_agg(user_name order by created_at desc, id desc) filter(where user_name is not null))[1] as "userName",
             (array_agg(user_phone order by created_at desc, id desc) filter(where user_phone is not null))[1] as "userPhone",
@@ -37,7 +38,7 @@ export async function listReplaySessions(limit = 20, filters = {}, offset = 0) {
      from replay_events
      ${where}
        ${where ? 'and' : 'where'} ${fullSnapshotWhere}
-     group by app_id, session_id
+     group by app_id, coalesce(nullif(base_session_id, ''), session_id)
      order by max(created_at) desc
      limit ? offset ?`,
     [...params, limit, offset]
@@ -48,10 +49,10 @@ export async function countReplaySessions(filters = {}) {
   const { where, params } = replayWhere(filters)
   return scalar(
     `select count(*) as count from (
-       select app_id, session_id
+       select app_id, coalesce(nullif(base_session_id, ''), session_id) replay_key
        from replay_events ${where}
        ${where ? 'and' : 'where'} ${fullSnapshotWhere}
-       group by app_id, session_id
+       group by app_id, coalesce(nullif(base_session_id, ''), session_id)
      ) sessions`,
     params
   )
@@ -74,24 +75,31 @@ export async function listReplayEventRows(idOrSessionId, limit = 500, filters = 
       [idOrSessionId, ...teamParams]
     )
     const row = hit[0]
-    if (!row) return []
-    if (row.base_session_id) {
-      const grouped = await all(
+    if (row) {
+      if (row.base_session_id) {
+        const grouped = await all(
+          `select session_id, events_json from replay_events
+           where base_session_id = ?${teamClause}
+           order by created_at asc, id asc limit ?`,
+          [row.base_session_id, ...teamParams, rowLimit]
+        )
+        if (grouped.length) return grouped
+      }
+      return all(
         `select session_id, events_json from replay_events
-         where base_session_id = ?${teamClause}
+         where session_id = ?${teamClause}
          order by created_at asc, id asc limit ?`,
-        [row.base_session_id, ...teamParams, rowLimit]
+        [row.session_id, ...teamParams, rowLimit]
       )
-      if (grouped.length) return grouped
     }
-    return all(
-      `select session_id, events_json from replay_events
-       where session_id = ?${teamClause}
-       order by created_at asc, id asc limit ?`,
-      [row.session_id, ...teamParams, rowLimit]
-    )
+    // 纯数字也可能是 SDK 生成的真实会话键；未命中旧 row-id 时继续按会话键查询。
   }
   let rows = await all(
+    `select session_id, events_json from replay_events where base_session_id = ?${teamClause} order by created_at asc, id asc limit ?`,
+    [idOrSessionId, ...teamParams, rowLimit]
+  )
+  if (rows.length) return rows
+  rows = await all(
     `select session_id, events_json from replay_events where session_id = ?${teamClause} order by created_at asc, id asc limit ?`,
     [idOrSessionId, ...teamParams, rowLimit]
   )
@@ -99,11 +107,6 @@ export async function listReplayEventRows(idOrSessionId, limit = 500, filters = 
   rows = await all(
     `select session_id, events_json from replay_events where session_id ilike ?${teamClause} order by created_at asc, id asc limit ?`,
     [`${idOrSessionId}%`, ...teamParams, rowLimit]
-  )
-  if (rows.length) return rows
-  rows = await all(
-    `select session_id, events_json from replay_events where base_session_id = ?${teamClause} order by created_at asc, id asc limit ?`,
-    [idOrSessionId, ...teamParams, rowLimit]
   )
   if (!rows.length) {
     rows = await all(

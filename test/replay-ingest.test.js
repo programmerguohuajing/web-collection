@@ -118,3 +118,20 @@ test('端到端：gzip 分页上报 → 服务端重组得到完整有序回放'
   const out = reassembleReplayEvents(rows)
   assert.deepEqual(out, all)
 })
+
+test('reassembleReplayEvents 原生回放无需 rrweb type=2 也会保留并按时间排序', () => {
+  const rows = [
+    {
+      session_id: 'mobile_seg1',
+      events_json: [
+        { type: 'replay', name: 'pointer_event', ts: 30, props: { platform: 'flutter', kind: 'up' } },
+        { type: 'replay', name: 'canvas_snapshot', timestamp: 10, props: { snapshot_type: 'image_png', image_data: 'x' } },
+        { type: 'replay', name: 'pointer_event', timestamp: 20, props: { platform: 'flutter', kind: 'down' } }
+      ]
+    }
+  ]
+  const out = reassembleReplayEvents(rows)
+  assert.equal(out.length, 3)
+  assert.deepEqual(out.map(e => Number(e.timestamp ?? e.ts)), [10, 20, 30])
+  assert.equal(out[0].name, 'canvas_snapshot')
+})

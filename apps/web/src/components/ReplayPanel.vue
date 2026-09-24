@@ -15,6 +15,7 @@ import {
 } from '@element-plus/icons-vue'
 import OverflowTip from './OverflowTip.vue'
 import { detectReplayKind, getReplayPlaybackBlocker } from '../utils/replay-events.js'
+import { normalizeReplayPayload } from '../utils/replay-payload.js'
 
 const props = defineProps({
   replays: { type: Array, default: () => [] },
@@ -313,16 +314,15 @@ async function openReplay(item, autoPlay = false, isAutoFallback = false) {
   try {
     const payload = await props.loadReplay(item.replayId)
     if (requestId !== playRequestId || currentReplayId.value !== String(item.replayId)) return
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && payload.truncated) {
-      replayTruncated.value = { originalSpanMs: Number(payload.originalSpanMs) || 0, spanMs: Number(payload.spanMs) || 0 }
+    const normalized = normalizeReplayPayload(payload)
+    if (normalized.truncated) {
+      replayTruncated.value = {
+        originalSpanMs: normalized.originalSpanMs,
+        spanMs: normalized.spanMs
+      }
     }
     await nextTick()
-    const events = Array.isArray(payload)
-      ? payload
-      : Array.isArray(payload?.events)
-        ? payload.events
-        : Array.isArray(payload?.data) ? payload.data : []
-    if (!events.length) {
+    if (!normalized.rawEventCount) {
       replayError.value = '未获取到回放事件数据'
       failedReplayIds.value.add(String(item.replayId))
       emit('replay-not-found', item.replayId)
@@ -332,10 +332,7 @@ async function openReplay(item, autoPlay = false, isAutoFallback = false) {
       return
     }
 
-    const validEvents = events
-      .filter(event => event && (Number.isFinite(Number(event.timestamp)) || Number.isFinite(Number(event.ts))))
-      .map(event => ({ ...event, timestamp: Number(event.timestamp || event.ts) }))
-
+    const validEvents = normalized.events
     if (!validEvents.length) {
       replayError.value = '事件数据格式不完整，无法播放'
       failedReplayIds.value.add(String(item.replayId))

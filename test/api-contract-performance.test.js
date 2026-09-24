@@ -62,18 +62,21 @@ test('trace detail and distributed tree honor application/release filters', asyn
 test('replay list groups segments and preserves latest non-empty metadata', async () => {
   const suffix = randomUUID().replaceAll('-', '')
   const appId = `replay-${suffix}`
-  const sessionId = `session-${suffix}`
+  const baseSessionId = `session-${suffix}`
   const first = Date.now() - 1000
   try {
-    await run(`insert into replay_events (app_id, session_id, user_id, user_name, created_at, url, release, end_reason, events_json)
-      values (?, ?, 'user-old', 'Old Name', ?, 'https://old.example', '1.0.0', 'route', ?::jsonb),
-             (?, ?, 'user-new', 'New Name', ?, 'https://new.example', '1.0.1', 'normal', ?::jsonb)`, [
-      appId, sessionId, first, JSON.stringify([{ type: '2' }]),
-      appId, sessionId, first + 1000, JSON.stringify([{ type: '2' }])
+    await run(`insert into replay_events (app_id, session_id, base_session_id, user_id, user_name, created_at, url, release, end_reason, events_json)
+      values (?, ?, ?, 'user-old', 'Old Name', ?, 'https://old.example', '1.0.0', 'route', ?::jsonb),
+             (?, ?, ?, 'user-new', 'New Name', ?, 'https://new.example', '1.0.1', 'normal', ?::jsonb)`, [
+      appId, `${baseSessionId}_seg1`, baseSessionId, first, JSON.stringify([{ type: '2' }]),
+      appId, `${baseSessionId}_seg2`, baseSessionId, first + 1000, JSON.stringify([{ type: '2' }])
     ])
     const rows = await listReplaySessions(10, { appId })
     assert.equal(rows.length, 1)
+    assert.equal(rows[0].replayId, baseSessionId)
+    assert.equal(rows[0].sessionId, baseSessionId)
     assert.equal(rows[0].count, 2)
+    assert.equal(rows[0].segmentCount, 2)
     assert.equal(rows[0].userId, 'user-new')
     assert.equal(rows[0].release, '1.0.1')
     assert.equal(rows[0].url, 'https://new.example')
@@ -115,6 +118,10 @@ test('numeric replay id loads the base session snapshot across segments', async 
     const rows = await listReplayEventRows(String(latestId))
     assert.equal(rows.length, 2)
     assert.deepEqual(rows.flatMap(row => row.events_json).map(event => event.type), [2, 3])
+
+    const canonicalRows = await listReplayEventRows(baseSessionId)
+    assert.equal(canonicalRows.length, 2)
+    assert.deepEqual(canonicalRows.flatMap(row => row.events_json).map(event => event.type), [2, 3])
   } finally {
     await run('delete from replay_events where app_id=?', [appId])
   }

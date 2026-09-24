@@ -55,8 +55,9 @@ export function decompressReplayEvents(event) {
  * 全量快照塞进 B 实例的增量流），rrweb 重建镜像树时 node id 对不上 → 回放窗口空白。
  * 因此按 `session_id`（= 录制实例）分组，各自独立处理后再依次拼接：
  *   - 实例内按事件 `timestamp` 升序还原时间线（容忍分页乱序到达），同时间戳按入库顺序稳定排序；
- *   - 每个实例只从「它自己的」首个全量快照（type === 2）开始输出，快照之前的增量丢弃；
- *   - 实例若完全没有自身全量快照 → 整段跳过（不可重建，强行借用他段快照只会让画面崩坏）；
+ *   - rrweb 实例只从「它自己的」首个全量快照（type === 2）开始输出，快照之前的增量丢弃；
+ *   - rrweb 实例若完全没有自身全量快照 → 整段跳过，避免借用其他实例快照污染镜像树；
+ *   - Flutter / React Native 原生回放不依赖 rrweb type=2，保留其 canvas_snapshot / pointer_event 时间线；
  *   - 缺失 `session_id` 的行按同一默认实例处理，保持旧调用方的兼容性。
  * - 上限 `cap` 防止异常超大回放拖垮前端。
  *
@@ -64,6 +65,21 @@ export function decompressReplayEvents(event) {
  * @param {number} [cap=100000] 返回事件数上限
  * @returns {Array<object>}
  */
+function isNativeReplayEvent(event) {
+  const platform = String(event?.props?.platform || '').toLowerCase()
+  return event?.name === 'canvas_snapshot'
+    || event?.name === 'pointer_event'
+    || event?.props?.snapshot_type === 'image_png'
+    || platform === 'flutter'
+    || platform === 'react-native'
+    || platform === 'react_native'
+}
+
+function replayTimestamp(event) {
+  const value = Number(event?.timestamp ?? event?.ts)
+  return Number.isFinite(value) ? value : 0
+}
+
 export function reassembleReplayEvents(rows, cap = 100000) {
   const list = Array.isArray(rows) ? rows : []
   // 按录制实例（session_id）分组，保持首次出现顺序（SQL 已按 created_at,id 正序，即录制顺序）。
@@ -80,13 +96,18 @@ export function reassembleReplayEvents(rows, cap = 100000) {
     const flat = []
     let seq = 0
     for (const arr of pages) for (const e of arr) flat.push({ e, seq: seq++ })
-    flat.sort((a, b) => (Number(a.e?.timestamp) - Number(b.e?.timestamp)) || (a.seq - b.seq))
-    const idx = flat.findIndex((x) => x.e?.type === 2)
-    if (idx < 0) continue // 该实例无自身全量快照：跳过，避免污染整条时间线导致画面空白
-    // 保留紧邻全量快照之前的 Meta（type:4）：它携带 viewport 尺寸 / href，属同一实例，
-    // 是 rrweb 事件流的规范开头（Meta → FullSnapshot）。只裁掉快照之前的增量。
-    let start = idx
-    if (start > 0 && flat[start - 1]?.e?.type === 4) start--
+    flat.sort((a, b) => (replayTimestamp(a.e) - replayTimestamp(b.e)) || (a.seq - b.seq))
+    const nativeReplay = flat.some((x) => isNativeReplayEvent(x.e))
+    let start = 0
+    if (!nativeReplay) {
+      const idx = flat.findIndex((x) => x.e?.type === 2)
+      if (idx < 0) continue // rrweb 实例无自身全量快照：跳过，避免污染整条时间线导致画面空白
+      // 保留紧邻全量快照之前的 Meta（type:4）：它携带 viewport 尺寸 / href，属同一实例，
+      // 是 rrweb 事件流的规范开头（Meta → FullSnapshot）。只裁掉快照之前的增量。
+      start = idx
+      if (start > 0 && flat[start - 1]?.e?.type === 4) start--
+    }
+    // Flutter / React Native 的快照或手势流没有 rrweb type=2；按自身事件时间线直接保留。
     for (let i = start; i < flat.length; i++) merged.push(flat[i].e)
   }
   return merged.slice(0, cap)
