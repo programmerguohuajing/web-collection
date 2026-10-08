@@ -4,14 +4,19 @@
 
 # 🛰️ Web Collection
 
-> Frontend monitoring, session replay & product analytics — one SDK, one console.
+> Frontend monitoring, session replay & product analytics — one SDK, one console. **AI-native**: built-in MCP server, Claude/Cursor can directly query telemetry.
 
 <p align="center">
   <a href="https://github.com/programmerguohuajing/web-collection"><img src="https://img.shields.io/github/stars/programmerguohuajing/web-collection" alt="GitHub stars" /></a>
   <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/dm/@web-collection/sdk" alt="npm downloads" /></a>
   <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/v/@web-collection/sdk" alt="npm version" /></a>
-  <a href="https://web-collection.jingguohua.cc.cd/overview"><img src="https://img.shields.io/badge/demo-online-brightgreen" alt="Live Demo" /></a>
+  <a href="https://web-collection.jingguohua.cc.cd/overview"><img src="https://img.shields.io/website?down_color=red&down_message=offline&up_color=brightgreen&up_message=online&url=https%3A%2F%2Fweb-collection.jingguohua.cc.cd&label=demo" alt="Demo Status" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+</p>
+
+<p align="center">
+  <b>开源自部署的前端监控（对标 Sentry 自建版），额外内置 AI 诊断 + MCP 协议，开箱即用。</b><br>
+  <i>Open-source self-hosted frontend monitoring (alternative to self-hosted Sentry), with built-in AI diagnosis + MCP protocol, ready out of the box.</i>
 </p>
 
 </div>
@@ -53,13 +58,14 @@ Web Collection is not just a console — it ships **agent-ready interfaces and b
 
 ## 📑 Table of Contents
 
-- [🌟 What's New in 0.5.0](#whats-new-in-050)
+- [🌟 What's New in 0.7.0](#whats-new-in-070)
 - [🤖 AI & MCP](#ai-mcp)
+- [📚 Documentation](#documentation)
+- [📂 Project Structure](#project-structure)
+- [📸 Console Screenshots](#console-screenshots)
 - [🚀 Quick Start](#quick-start)
 - [🐳 Docker & K8s Containerized Deployment](#docker--k8s-containerized-deployment)
 - [🔌 SDK Integration](#sdk-integration)
-- [📚 Documentation](#documentation)
-- [📂 Project Structure](#project-structure)
 - [📜 Script Reference](#script-reference)
 
 ## 📚 Documentation
@@ -83,6 +89,23 @@ This README is a **project introduction** only. For usage and integration detail
 - `packages/sdk/src/runtime`: Service Worker state monitoring
 - `packages/sdk/src/utils/environment.js`: device & environment fingerprint
 - `packages/sdk/src/utils/runtime.js`: build-time runtime info
+
+## 📸 Console Screenshots
+
+### 🐛 Error Monitoring & SourceMap Mapping
+> Aggregated issue tracking, affected user metrics, distributed trace linking, and stack frame SourceMap de-obfuscation.
+
+![Error Monitoring](docs/images/error-list.png)
+
+### 🎬 Session Replay
+> Full interactive session replay powered by rrweb, recreating DOM interactions, console logs, and exception timelines.
+
+![Session Replay](docs/images/session-replay.png)
+
+### 🤖 AI Smart Diagnosis Report
+> Built-in LLM root-cause diagnostic assistant analyzing telemetry context, generating hypotheses, and suggesting actionable fixes.
+
+![AI Diagnosis Report](docs/images/ai-diagnosis.png)
 
 ## 🚀 Quick Start
 

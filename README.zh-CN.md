@@ -4,14 +4,18 @@
 
 # 🛰️ Web Collection
 
-> 前端监控、会话回放与产品分析 —— 一个 SDK，一个控制台。
+> 前端监控、会话回放、产品分析——一个 SDK，一个控制台。**并且是 AI 原生的**：自带 MCP 服务，Claude/Cursor 可直接查 telemetry。
 
 <p align="center">
   <a href="https://github.com/programmerguohuajing/web-collection"><img src="https://img.shields.io/github/stars/programmerguohuajing/web-collection" alt="GitHub stars" /></a>
   <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/dm/@web-collection/sdk" alt="npm downloads" /></a>
   <a href="https://www.npmjs.com/package/@web-collection/sdk"><img src="https://img.shields.io/npm/v/@web-collection/sdk" alt="npm version" /></a>
-  <a href="https://web-collection.jingguohua.cc.cd/overview"><img src="https://img.shields.io/badge/demo-online-brightgreen" alt="Live Demo" /></a>
+  <a href="https://web-collection.jingguohua.cc.cd/overview"><img src="https://img.shields.io/website?down_color=red&down_message=offline&up_color=brightgreen&up_message=online&url=https%3A%2F%2Fweb-collection.jingguohua.cc.cd&label=demo" alt="Demo Status" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+</p>
+
+<p align="center">
+  <b>开源自部署的前端监控（对标 Sentry 自建版），额外内置 AI 诊断 + MCP 协议，开箱即用。</b>
 </p>
 
 </div>
@@ -53,13 +57,14 @@ Web Collection 不只是控制台——它内置**智能能力**并提供**面�
 
 ## 📑 目录
 
-- [🌟 0.5.0 新特性](#050-新特性)
+- [🌟 0.7.0 新特性](#070-新特性)
 - [🤖 AI 与 MCP](#ai-与-mcp)
+- [📚 使用文档](#使用文档)
+- [📂 项目结构](#项目结构)
+- [📸 控制台界面预览](#控制台界面预览)
 - [🚀 快速开始](#快速开始)
 - [🐳 Docker 与 K8s 容器化部署](#docker--k8s-容器化部署)
 - [🔌 SDK 接入](#sdk-接入)
-- [📚 使用文档](#使用文档)
-- [📂 项目结构](#项目结构)
 - [📜 脚本一览](#脚本一览)
 
 ## 📚 使用文档
@@ -79,6 +84,23 @@ Web Collection 不只是控制台——它内置**智能能力**并提供**面�
 - `packages/sdk/src/behavior`: PV、点击、路由、停留、滚动行为采集
 - `packages/sdk/src/exposure`: 元素曝光采集
 - `packages/sdk/src/replay`: rrweb 会话回放采集
+
+## 📸 控制台界面预览
+
+### 🐛 错误监控与 SourceMap 还原
+> 聚合错误列表、影响用户数统计、Trace 链路关联与源码位置还原定位。
+
+![错误监控](docs/images/error-list.png)
+
+### 🎬 会话回放 (Session Replay)
+> 基于 rrweb 的完整会话录屏回放，精确重现用户交互、控制台事件与异常发生现场。
+
+![会话回放](docs/images/session-replay.png)
+
+### 🤖 AI 智能诊断报告
+> 内置大模型根因诊断助手，自动提取上下文、分析异常假设并提供可落地的修复建议。
+
+![AI 诊断报告](docs/images/ai-diagnosis.png)
 
 ## 🚀 快速开始
 
