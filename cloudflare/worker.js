@@ -490,7 +490,16 @@ async function collect(request, env, ctx) {
   const inputs = payload.type === 'replay' ? [payload] : Array.isArray(payload.events) ? payload.events : Array.isArray(payload) ? payload : [payload]
   const appId = clip(inputs[0]?.appId || 'default', 64)
   if (inputs.some(item => clip(item?.appId || 'default', 64) !== appId)) return new Response('mixed app ids', { status: 400 })
-  const events = inputs.slice(0, 100).map(sanitize)
+  let events = inputs.slice(0, 100).map(sanitize)
+  // 紧急降载：D1 rows_written 配额接近打满时，通过 EMERGENCY_SAMPLE_RATE 环境变量
+  // 对非错误事件做概率采样（如 0.1 = 保留 10%），错误事件始终全量保留。
+  // 2026-10-13 启用：rows_written 达 94%，配额重置前约 1 小时将打满。
+  const emergencyRate = Number(env.EMERGENCY_SAMPLE_RATE)
+  if (Number.isFinite(emergencyRate) && emergencyRate >= 0 && emergencyRate < 1) {
+    const before = events.length
+    events = events.filter(e => e.type === 'error' || Math.random() < emergencyRate)
+    if (events.length < before) console.log(`[collect] emergency sampling: kept ${events.length}/${before} (rate=${emergencyRate})`)
+  }
   // 采集红线（PRD R0）：采集端永远不因平台侧故障收到 5xx。应用配置查询失败（D1 rows_read
   // 打满 / 临时不可用）时 fail-open 降级：跳过采样配置与 collect_key 校验，仍返回 200——
   // 落库失败由 waitUntil 内部的 ingestionMonitor 计数 + 自动告警暴露，采集端零感知。
@@ -542,6 +551,13 @@ async function collectGif(url, env) {
   if (data) {
     try {
       const gifEvent = sanitize(JSON.parse(data))
+      // 紧急降载：与 collect() 同策略，非错误事件按 EMERGENCY_SAMPLE_RATE 概率丢弃
+      const gifEmergencyRate = Number(env.EMERGENCY_SAMPLE_RATE)
+      if (Number.isFinite(gifEmergencyRate) && gifEmergencyRate >= 0 && gifEmergencyRate < 1 && gifEvent.type !== 'error' && Math.random() >= gifEmergencyRate) {
+        ingestionMonitor.tick()
+        ingestionMonitor.received++
+        return new Response(Uint8Array.from(atob('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=='), c => c.charCodeAt(0)), { headers: { 'content-type': 'image/gif', 'cache-control': 'no-store' } })
+      }
       await ensureAppAndReleaseW(env, [gifEvent])
       await record(env, gifEvent)
       ingestionMonitor.tick()
