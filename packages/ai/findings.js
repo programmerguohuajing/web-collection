@@ -116,9 +116,12 @@ export async function detectReleaseRegressions(db, { appId } = {}) {
   if (list.length < 2) return []
   const cur = list[list.length - 1]
   const prev = list[list.length - 2]
+  // D1 行读优化：按版本活跃窗口裁剪扫描（[prev.firstTs, cur.firstTs) 与 [cur.firstTs, now)），
+  // 避免无时间界的全表扫描打满日配额。firstTs 缺失时回退为不限（原行为）。
+  const now = Date.now()
   const [curStats, prevStats] = await Promise.all([
-    getReleaseStats(db, cur.release_name, appId),
-    getReleaseStats(db, prev.release_name, appId)
+    getReleaseStats(db, cur.release_name, appId, { fromTs: cur.firstTs || undefined, toTs: now }),
+    getReleaseStats(db, prev.release_name, appId, { fromTs: prev.firstTs || undefined, toTs: cur.firstTs || undefined })
   ])
   if (!curStats || !prevStats || !prevStats.total) return []
   const errRateCur = curStats.errors / curStats.total

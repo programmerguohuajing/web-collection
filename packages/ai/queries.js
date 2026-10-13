@@ -213,25 +213,33 @@ export async function getSessionEvents(db, sessionId, appId) {
 /**
  * 单版本聚合统计（供 release 级诊断上下文）。
  * 返回 { release, appId, total, errors, perfAvg }，无数据返回 null。
+ *
+ * D1 按读取行计费：必须传 fromTs/toTs 把扫描裁剪到版本活跃窗口，否则每次调用都
+ * 全表扫描 events（线上 250 万行 × 2 次 = 直接打满免费版 500 万行/日配额）。
+ * 调用方从 releases.firstTs 取窗口：[cur.firstTs, now) 与 [prev.firstTs, cur.firstTs)。
  */
 const RELEASE_STATS_FRESH_MS = 60 * 60 * 1000
 const RELEASE_STATS_STALE_MS = 24 * 60 * 60 * 1000
 const releaseStatsCache = new Map()
 const releaseStatsInflight = new Map()
 
-export async function getReleaseStats(db, releaseName, appId) {
+export async function getReleaseStats(db, releaseName, appId, { fromTs, toTs } = {}) {
   if (!releaseName?.trim()) return null
-  const key = `${appId || '*'}\u0000${releaseName}`
+  const from = fromTs != null ? Number(fromTs) : null
+  const to = toTs != null ? Number(toTs) : null
+  const key = `${appId || '*'}\u0000${releaseName}\u0000${from ?? ''}\u0000${to ?? ''}`
   const cached = releaseStatsCache.get(key)
   if (cached && Date.now() - cached.at < RELEASE_STATS_FRESH_MS) return cached.value
   if (releaseStatsInflight.has(key)) return releaseStatsInflight.get(key)
 
   const task = (async () => {
     try {
-      const sql = appId
-        ? 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? and app_id=? group by type'
-        : 'select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where release_name=? group by type'
-      const params = appId ? ['perf', releaseName, appId] : ['perf', releaseName]
+      const where = ['release_name=?']
+      const params = ['perf', releaseName]
+      if (appId) { where.push('app_id=?'); params.push(appId) }
+      if (from != null) { where.push('ts >= ?'); params.push(from) }
+      if (to != null) { where.push('ts < ?'); params.push(to) }
+      const sql = `select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where ${where.join(' and ')} group by type`
       const rows = await db.prepare(sql).bind(...params).all()
       let value = null
       if (rows?.length) {

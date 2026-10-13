@@ -8,7 +8,7 @@
  * P0 产品化：解耦「错误前提」——trace 诊断不再因无错误而整体降级；新增统一入口
  * `diagnose({scope,ref,...})`，scope ∈ {trace, perf, session, release}（ask 留待 P2）。
  */
-import { getDistributedTrace, getErrorEvents, getIssue, getSimilarIssues, getTrace, getSessionEvents, getReleaseStats, getPreviousRelease, getErrorClusters, getPerfWindow, getVolumeWindow } from './queries.js'
+import { getDistributedTrace, getErrorEvents, getIssue, getSimilarIssues, getTrace, getSessionEvents, getReleaseStats, getReleaseList, getErrorClusters, getPerfWindow, getVolumeWindow } from './queries.js'
 import { SYSTEM_PROMPT, ASK_SYSTEM_PROMPT, buildUserPrompt } from './prompt.js'
 import { parseJsonOutput } from './model-gateway.js'
 import { createConversationStore } from './conversation.js'
@@ -142,10 +142,15 @@ export function createDiagnoser({ db, gateway, kb, embedder }) {
     if (!releaseName?.trim()) throw Object.assign(new Error('release 必填'), { status: 400 })
     const cachedResult = await cached('release', releaseName)
     if (cachedResult) return cachedResult
-    const stats = await getReleaseStats(db, releaseName, appId)
+    // D1 行读优化：按版本活跃窗口裁剪扫描，避免无时间界的全表扫描打满日配额
+    const releaseList = await getReleaseList(db, appId).catch(() => [])
+    const curIdx = releaseList.findIndex(r => r.release_name === releaseName)
+    const curEntry = curIdx >= 0 ? releaseList[curIdx] : null
+    const prev = curIdx > 0 ? releaseList[curIdx - 1] : null
+    const now = Date.now()
+    const stats = await getReleaseStats(db, releaseName, appId, { fromTs: curEntry?.firstTs || undefined, toTs: now })
     if (!stats || !stats.total) return { degraded: true, summary: '该版本无事件数据', context: { releaseName } }
-    const prev = await getPreviousRelease(db, releaseName, appId)
-    const prevStats = prev ? await getReleaseStats(db, prev.release_name, appId) : null
+    const prevStats = prev ? await getReleaseStats(db, prev.release_name, appId, { fromTs: prev.firstTs || undefined, toTs: curEntry?.firstTs || undefined }) : null
     const releaseContext = buildReleaseContext(stats, prevStats, prev)
     const query = buildQuery({ scope: 'release', releaseContext })
     const kbResults = embedder ? await kb.search(query, { appId, topK: 8 }) : []
