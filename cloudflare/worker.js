@@ -508,6 +508,8 @@ async function collect(request, env, ctx) {
   // 关键：写库异常原本被 waitUntil 静默吞掉（health 绿、接口 200、但零入库，即 2026-08-28 事故根因）。
   // 现捕获 → console.error（wrangler tail 可见）→ 计数 → 自动告警，确保「入库失败」可被发现。
   ctx.waitUntil((async () => {
+    // D1 写放大优化：应用/版本目录按批去重 upsert（原先每个事件 2 次）
+    await ensureAppAndReleaseW(env, events)
     for (const event of events) {
       try {
         await record(env, event, app, ctx)
@@ -539,7 +541,9 @@ async function collectGif(url, env) {
   const data = url.searchParams.get('data')
   if (data) {
     try {
-      await record(env, sanitize(JSON.parse(data)))
+      const gifEvent = sanitize(JSON.parse(data))
+      await ensureAppAndReleaseW(env, [gifEvent])
+      await record(env, gifEvent)
       ingestionMonitor.tick()
       ingestionMonitor.received++
       ingestionMonitor.eventsAccepted++
@@ -967,11 +971,34 @@ export async function decodeReplayEventsFromStorage(value) {
   }
 }
 
+/**
+ * D1 写放大优化：应用/版本目录 upsert 按批去重后执行一次。
+ * 原先 record() 内每个事件各 2 次（insights 实测日 4 万次空 upsert），现提到批级。
+ * 幂等（on conflict do nothing），失败仅打日志不阻断采集主链路。
+ */
+async function ensureAppAndReleaseW(env, events) {
+  const now = Date.now()
+  const seenApps = new Set(), seenReleases = new Set()
+  for (const event of events) {
+    const appId = event?.appId
+    if (!appId) continue
+    try {
+      if (!seenApps.has(appId)) {
+        seenApps.add(appId)
+        await storageWrite(env, `insert into applications (app_id,name,enabled,sample_rate,replay_sample_rate,created_at,updated_at) values (?,?,1,1,1,?,?) on conflict(app_id) do nothing`, [appId, appId, now, now])
+      }
+      const relKey = appId + '\0' + (event.release || '')
+      if (!seenReleases.has(relKey)) {
+        seenReleases.add(relKey)
+        await storageWrite(env, `insert into releases (app_id,release_name,status,created_at) values (?,?, 'active', ?) on conflict(app_id,release_name) do nothing`, [appId, event.release, now])
+      }
+    } catch (err) { console.error('[ingest] ensure app/release failed', appId, err?.message || err) }
+  }
+}
+
 async function record(env, event, application, ctx) {
   const now = Date.now()
   if (event.type === 'error' && event.props?.name) event.name = clip(event.props.name, 160)
-  await storageWrite(env, `insert into applications (app_id,name,enabled,sample_rate,replay_sample_rate,created_at,updated_at) values (?,?,1,1,1,?,?) on conflict(app_id) do nothing`, [event.appId, event.appId, now, now])
-  await storageWrite(env, `insert into releases (app_id,release_name,status,created_at) values (?,?, 'active', ?) on conflict(app_id,release_name) do nothing`, [event.appId, event.release, now])
   const app = application || await env.DB.prepare('select enabled,sample_rate,replay_sample_rate,rules_json from applications where app_id=?').bind(event.appId).first()
   if (app && (!app.enabled || Math.random() > Number(event.type === 'replay' ? app.replay_sample_rate : app.sample_rate))) return false
   const rules = parse(app?.rules_json, {})
@@ -1029,7 +1056,12 @@ async function storageWrite(env, sql, values) {
     if (!/maximum DB size|SQLITE_FULL|database or disk is full/i.test(String(error?.message || error))) throw error
     // 库满兜底只清理 events（错误事件优先保留），不再删回放：回放不可再生，
     // 被批量清走会造成「列表有会话、点开无数据」；events 可随采样率重新积累。
-    const freed = await env.DB.prepare(`delete from events where id in (select id from events order by case when type='error' then 1 else 0 end,ts asc limit 1000)`).run()
+    // D1 行读优化：原 `order by case when type='error'...` 无法走索引，每次触发都全表扫描；
+    // 改为先删最旧非错误事件（idx_events_ts 顺序走索引取 1000 行），删不到再删错误事件。
+    let freed = await env.DB.prepare(`delete from events where id in (select id from events where type <> 'error' order by ts asc limit 1000)`).run()
+    if (!Number(freed.meta.changes)) {
+      freed = await env.DB.prepare(`delete from events where id in (select id from events order by ts asc limit 1000)`).run()
+    }
     if (!Number(freed.meta.changes)) throw error
     return run()
   }
