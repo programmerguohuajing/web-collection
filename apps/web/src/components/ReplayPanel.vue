@@ -684,22 +684,18 @@ defineExpose({ play, currentSessionCode })
               role="group"
               :aria-label="`${timelineMarkers.length} 个关键事件标记（点击可定位）`"
             >
-              <el-tooltip
+              <button
                 v-for="marker in timelineMarkers"
                 :key="marker.id"
-                :content="`${marker.label} · ${formatTime(marker.offset)}`"
-                placement="top"
-                :show-after="200"
+                type="button"
+                class="replay-timeline-marker"
+                :class="`is-${marker.kind}`"
+                :style="{ left: `${marker.percent}%` }"
+                :aria-label="`${marker.label}，定位到 ${formatTime(marker.offset)}`"
+                @click.stop="seek(marker.offset)"
               >
-                <button
-                  type="button"
-                  class="replay-timeline-marker"
-                  :class="`is-${marker.kind}`"
-                  :style="{ left: `${marker.percent}%` }"
-                  :aria-label="`${marker.label}，定位到 ${formatTime(marker.offset)}`"
-                  @click.stop="seek(marker.offset)"
-                ></button>
-              </el-tooltip>
+                <span class="replay-timeline-marker-tip">{{ marker.label }} · {{ formatTime(marker.offset) }}</span>
+              </button>
             </div>
             <!-- 当前进度时间气泡：组件内渲染、锚定在进度条手柄正上方（不用 teleport 的 popper，避免定位飘移） -->
             <div v-if="duration" class="replay-progress-bubble" :style="{ left: bubbleLeft }">{{ formatTime(progress) }}</div>
@@ -866,7 +862,31 @@ defineExpose({ play, currentSessionCode })
   cursor: pointer;
   transition: transform .12s ease, box-shadow .12s ease;
 }
-.replay-timeline-marker:hover { transform: translate(-50%, -50%) scale(1.45); box-shadow: 0 0 0 3px rgba(100, 116, 139, .25); }
+.replay-timeline-marker:hover { box-shadow: 0 0 0 3px rgba(100, 116, 139, .25); }
+/* 标注点 tooltip：组件内渲染、锚定在标注点正上方，不用 teleport 的 popper
+   （el-tooltip 在此处会飘到页面顶部，见进度气泡同款注释）。 */
+.replay-timeline-marker-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  color: #f2f4f7;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(23, 28, 40, .92);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+  opacity: 0;
+  transition: opacity .12s ease;
+  z-index: 10;
+}
+.replay-timeline-marker:hover .replay-timeline-marker-tip,
+.replay-timeline-marker:focus-visible .replay-timeline-marker-tip { opacity: 1; }
 .replay-timeline-marker:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
 .replay-timeline-marker.is-error { background: var(--c-danger); }
 .replay-timeline-marker.is-click { background: var(--c-primary); }
