@@ -60,7 +60,9 @@ export const router = createRouter({
       { path: 'dictionary', component: () => import('../views/governance/dictionary/index.vue'), meta: { title: '事件字典' } },
       { path: 'access-levels', component: () => import('../views/settings/access-levels/index.vue'), meta: { title: '成员与数据等级' } }
       ]
-    }
+    },
+    // 404 兜底（2026-10-14 深度测试 P0-1）：此前无 catch-all，未知路径整页白屏。
+    { path: '/:pathMatch(.*)*', component: () => import('../views/NotFound.vue'), meta: { title: '页面不存在' } }
   ]
 })
 

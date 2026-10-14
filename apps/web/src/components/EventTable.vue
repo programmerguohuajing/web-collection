@@ -12,9 +12,11 @@ const props = defineProps({
   total: { type: Number, default: 0 },
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 10 },
-  showUser: { type: Boolean, default: true }
+  showUser: { type: Boolean, default: true },
+  // 行点击详情（2026-10-14 深度测试 P1-5）：默认关闭，仅显式传入的页面启用，避免影响其他复用页。
+  clickable: { type: Boolean, default: false }
 })
-defineEmits(['page-change', 'size-change'])
+defineEmits(['page-change', 'size-change', 'row-click'])
 const behaviorTable = props.title?.includes('行为')
 const performanceTable = props.title?.includes('性能')
 
@@ -62,7 +64,7 @@ function statusType(status) {
         <small>{{ rows.length }} 条</small>
       </div>
     </template>
-    <el-table :data="rows" size="small" empty-text="暂无数据">
+    <el-table :data="rows" size="small" empty-text="暂无数据" :row-class-name="() => (props.clickable ? 'clickable-row' : '')" @row-click="row => props.clickable && $emit('row-click', row)">
       <template v-if="stream">
         <el-table-column label="时间" :width="behaviorTable ? 180 : 200" cell-class-name="time-cell">
           <template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template>
@@ -130,4 +132,5 @@ function statusType(status) {
 <style scoped>
 :deep(.no-ellipsis .cell) { overflow: visible; white-space: nowrap; word-break: keep-all; }
 :deep(.no-ellipsis .el-tag) { max-width: none; white-space: nowrap; word-break: keep-all; }
+:deep(.clickable-row) { cursor: pointer; }
 </style>

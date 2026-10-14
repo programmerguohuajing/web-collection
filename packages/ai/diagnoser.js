@@ -9,6 +9,7 @@
  * `diagnose({scope,ref,...})`，scope ∈ {trace, perf, session, release}（ask 留待 P2）。
  */
 import { getDistributedTrace, getErrorEvents, getIssue, getSimilarIssues, getTrace, getSessionEvents, getReleaseStats, getReleaseList, getErrorClusters, getPerfWindow, getVolumeWindow } from './queries.js'
+import { MS_DURATION_METRICS } from './baseline.js'
 import { SYSTEM_PROMPT, ASK_SYSTEM_PROMPT, buildUserPrompt } from './prompt.js'
 import { parseJsonOutput } from './model-gateway.js'
 import { createConversationStore } from './conversation.js'
@@ -262,7 +263,8 @@ function buildSessionContext(events) {
   for (const e of events) {
     byType[e.type] = (byType[e.type] || 0) + 1
     if (e.type === 'error') errorCount++
-    if (e.type === 'perf') { perfCount++; if (Number(e.value) > 0) perfSum += Number(e.value) }
+    // perfAvg 只统计毫秒级时长指标（P1-3：memory 字节等混入 avg 导致小时级错误值）
+    if (e.type === 'perf' && MS_DURATION_METRICS.includes(e.metric)) { perfCount++; if (Number(e.value) > 0) perfSum += Number(e.value) }
     if (e.url && !urls.includes(e.url)) urls.push(e.url)
   }
   const perfAvg = perfCount ? Number((perfSum / perfCount).toFixed(2)) : null

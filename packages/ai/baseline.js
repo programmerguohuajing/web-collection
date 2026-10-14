@@ -20,6 +20,22 @@
 const HOUR_MS = 3600 * 1000
 const DAY_MS = 24 * HOUR_MS
 
+/**
+ * 毫秒级时长指标白名单（2026-10-14 深度测试 P1-3 修复）。
+ * perf 事件的 value 列混了多种单位：memory（字节，均值 8400 万）、cache_hit_rate / slow_api_rate
+ * （比率/百分比）、cls（无量纲 0~1）、redirect_count / fetch_body（计数/字节）等。
+ * 此前 perfAvg 对全部 perf 事件取 avg(value) 再按毫秒渲染，导致"性能均值 3h53m"这类小时级错误值。
+ * 性能均值只统计毫秒级时长指标；未在白名单的新增 metric 默认排除（allowlist 优先于 denylist）。
+ */
+export const MS_DURATION_METRICS = [
+  'dns', 'dom_ready', 'download', 'fcp', 'fetch', 'fid', 'first_screen', 'fp',
+  'js_boot', 'longtask', 'navigation', 'page_load', 'redirect', 'request',
+  'resource', 'route_render', 'sse', 'tbt', 'tcp', 'tls', 'ttfb',
+  'websocket', 'white_screen', 'xhr'
+]
+/** SQL IN 占位符：`metric in (?,?,...)`。 */
+export const msDurationPlaceholders = () => MS_DURATION_METRICS.map(() => '?').join(',')
+
 /** 基线检测器默认集（D2 默认指标集 / D4 灵敏度 / D5 预热门槛，详见设计文档 §3.3） */
 export const BaselineConfig = {
   metrics: ['errorRate', 'perfAvg', 'volume'],
@@ -133,11 +149,11 @@ export async function getDailyMetricAggregates(db, { appId, metric, fromTs, toTs
   const sql = `select ${day} as day,
     count(*) as total,
     sum(case when type='error' then 1 else 0 end) as errors,
-    avg(case when type='perf' then value else null end) as perf_avg,
+    avg(case when type='perf' and metric in (${msDurationPlaceholders()}) then value else null end) as perf_avg,
     count(case when type<>'error' then 1 end) as non_error
     from events where ${appCond} ts >= ? and ts < ?
     group by ${day} order by day asc`
-  const params = appId ? [appId, fromTs, toTs] : [fromTs, toTs]
+  const params = appId ? [appId, ...MS_DURATION_METRICS, fromTs, toTs] : [...MS_DURATION_METRICS, fromTs, toTs]
   const rows = await db.prepare(sql).bind(...params).all()
   return (rows || []).map(r => {
     const total = Number(r.total || 0)
@@ -192,11 +208,11 @@ export async function writeMetricDailyStats(db, { days } = {}) {
     const stmts = [
       // per-app：按应用分组的当日口径
       ["errorRate:app", `insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
-      ["perfAvg:app", `insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? group by app_id having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
+      ["perfAvg:app", `insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'perfAvg', ?, avg(case when type='perf' and metric in (${msDurationPlaceholders()}) then value else null end), count(*) from events where ts>=? and ts<? group by app_id having avg(case when type='perf' and metric in (${msDurationPlaceholders()}) then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, ...MS_DURATION_METRICS, startTs, endTs, ...MS_DURATION_METRICS]],
       ["volume:app", `insert into metric_daily_stats (app_id, metric, day, value, samples) select app_id, 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? group by app_id on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
       // global：全站汇总（注意 errorRate 必须总错误/总事件，而非 per-app 比率的平均）；having 跳过零事件日
       ["errorRate:global", `insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'errorRate', ?, sum(case when type='error' then 1 else 0 end)*1.0/count(*), count(*) from events where ts>=? and ts<? having count(*)>0 on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
-      ["perfAvg:global", `insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'perfAvg', ?, avg(case when type='perf' then value else null end), count(*) from events where ts>=? and ts<? having avg(case when type='perf' then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]],
+      ["perfAvg:global", `insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'perfAvg', ?, avg(case when type='perf' and metric in (${msDurationPlaceholders()}) then value else null end), count(*) from events where ts>=? and ts<? having avg(case when type='perf' and metric in (${msDurationPlaceholders()}) then value else null end) is not null on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, ...MS_DURATION_METRICS, startTs, endTs, ...MS_DURATION_METRICS]],
       ["volume:global", `insert into metric_daily_stats (app_id, metric, day, value, samples) select 'global', 'volume', ?, count(case when type<>'error' then 1 end), count(*) from events where ts>=? and ts<? having count(*)>0 on conflict(app_id, metric, day) do update set value=excluded.value, samples=excluded.samples`, [day, startTs, endTs]]
     ]
     for (const [label, sql, params] of stmts) {
@@ -243,8 +259,8 @@ export async function getObserved(db, { appId, metric, fromTs, toTs }) {
     return total > 0 ? errors / total : null
   }
   if (metric === 'perfAvg') {
-    const sql = `select avg(value) as perf_avg from events where ${appCond} type='perf' and ts >= ? and ts < ?`
-    const params = appId ? [appId, fromTs, toTs] : [fromTs, toTs]
+    const sql = `select avg(value) as perf_avg from events where ${appCond} type='perf' and metric in (${msDurationPlaceholders()}) and ts >= ? and ts < ?`
+    const params = appId ? [appId, ...MS_DURATION_METRICS, fromTs, toTs] : [...MS_DURATION_METRICS, fromTs, toTs]
     const r = await db.prepare(sql).bind(...params).first()
     return r?.perf_avg != null ? Number(r.perf_avg) : null
   }

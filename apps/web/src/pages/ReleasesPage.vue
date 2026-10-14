@@ -76,7 +76,8 @@ onMounted(load)
             <el-table-column label="事件数" width="100" align="center"><template #default="{ row }">{{ number(row.events) }}</template></el-table-column>
             <el-table-column label="错误数" width="100" align="center"><template #default="{ row }"><el-tag v-if="row.errors > 0" type="danger" size="small">{{ number(row.errors) }}</el-tag><span v-else>0</span></template></el-table-column>
             <el-table-column label="受影响用户" width="120" align="center"><template #default="{ row }">{{ number(row.users) }}</template></el-table-column>
-            <el-table-column label="P95 LCP" width="120" align="center"><template #default="{ row }">{{ milliseconds(row.lcp) }}</template></el-table-column>
+            <!-- 列名与口径对齐（2026-10-14 深度测试 P2）：后端算的是 AVG 并已过滤异常值，此前误标 P95 -->
+            <el-table-column label="平均 LCP" width="120" align="center"><template #default="{ row }">{{ milliseconds(row.lcp) }}</template></el-table-column>
           </el-table>
           <el-pagination v-if="pager.total > 0" class="pager" v-model:current-page="pager.page" v-model:page-size="pager.pageSize" :total="pager.total" layout="total, sizes, prev, pager, next" @current-change="onSearch" @size-change="onSearch" />
         </el-card>

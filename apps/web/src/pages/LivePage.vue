@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import EventTable from '../components/EventTable.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import KpiGrid from '../components/KpiGrid.vue'
@@ -8,10 +8,16 @@ import { api, normalizePageResponse, queryFromFilters, pageLoading } from '../da
 const events = ref([])
 const initialLoading = ref(false)
 const liveError = ref('')
+const detailRow = ref(null)
+const detailOpen = ref(false)
+
+function openDetail(row) {
+  detailRow.value = row || null
+  detailOpen.value = true
+}
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
-const query = reactive({ userId: '', path: '', keyword: '' })
 const liveKpis = computed(() => [
   { label: '近 5 分钟会话', value: events.value.filter(item => item.sessionId || item.session_id).length.toLocaleString(), delta: '实时', valueClass: 'value-primary' },
   { label: '近 5 分钟事件', value: Number(total.value || events.value.length).toLocaleString(), delta: '实时事件流', valueClass: 'value-purple' },
@@ -27,7 +33,10 @@ async function pollLive() {
   liveError.value = ''
   pageLoading.value = true
   try {
-    const suffix = queryFromFilters({ ...query, page: page.value, pageSize: pageSize.value })
+    // 筛选条件来自全局 filters（SearchPanel 写入）；此处只传分页参数。
+    // 2026-10-14 深度测试 P1-1 修复：此前本地 query（全空字符串）在 spread 中
+    // 后覆盖全局 filters，导致 URL/用户/关键字筛选点查询毫无效果。
+    const suffix = queryFromFilters({ page: page.value, pageSize: pageSize.value })
     const data = await api(`/api/events?${suffix}&type=error,perf,behavior&_t=${Date.now()}`, { requestKey: 'live:events' })
     const normalized = normalizePageResponse(data, { page: page.value, pageSize: pageSize.value })
     events.value = normalized.items.filter(item => item && (item.type || item.name || item.ts))
@@ -61,11 +70,26 @@ onMounted(() => { void pollLive() })
     <el-button :loading="initialLoading" size="small" type="primary" plain @click="pollLive">立即刷新</el-button>
   </div>
   <el-alert v-if="liveError" class="table-error" type="error" :title="liveError" show-icon :closable="false"><template #default><el-button link type="primary" @click="pollLive">重试</el-button></template></el-alert>
-  <EventTable title="实时事件" :rows="events" :loading="initialLoading" :total="total" :page="page" :page-size="pageSize" stream @page-change="page = $event; pollLive()" @size-change="pageSize = $event; page = 1; pollLive()" />
+  <EventTable title="实时事件" :rows="events" :loading="initialLoading" :total="total" :page="page" :page-size="pageSize" stream clickable @page-change="page = $event; pollLive()" @size-change="pageSize = $event; page = 1; pollLive()" @row-click="openDetail" />
+  <!-- 事件详情（2026-10-14 深度测试 P1-5）：此前点击行无任何反应 -->
+  <el-dialog v-model="detailOpen" title="事件详情" width="640px" append-to-body>
+    <el-descriptions v-if="detailRow" :column="1" border size="small">
+      <el-descriptions-item label="时间">{{ detailRow.ts ? new Date(detailRow.ts).toLocaleString() : '-' }}</el-descriptions-item>
+      <el-descriptions-item label="类型">{{ detailRow.type || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="名称">{{ detailRow.name || detailRow.message || detailRow.metric || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="页面">{{ detailRow.path || detailRow.url || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="用户">{{ detailRow.userName || detailRow.userId || detailRow.userPhone || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="会话">{{ detailRow.sessionId || detailRow.session_id || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="版本">{{ detailRow.release || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="消息">{{ detailRow.message || '-' }}</el-descriptions-item>
+    </el-descriptions>
+    <pre v-if="detailRow" class="event-raw">{{ JSON.stringify(detailRow, null, 2) }}</pre>
+  </el-dialog>
 </template>
 
 <style scoped>
 .table-error { margin-bottom: 12px; }
 .live-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .live-hint { font-size: 12px; color: var(--el-text-color-secondary); }
+.event-raw { max-height: 320px; margin-top: 16px; padding: 12px; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; background: var(--c-surface-2); border-radius: 8px; }
 </style>

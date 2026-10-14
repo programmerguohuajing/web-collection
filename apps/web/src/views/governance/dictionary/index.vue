@@ -186,9 +186,12 @@ onMounted(load)
         <el-table-column label="最近上报" width="120">
           <template #default="{ row }">{{ formatTime(row.lastSeenAt) }}</template>
         </el-table-column>
-        <el-table-column label="字段完整率" width="130" align="right">
+        <el-table-column label="字段完整率" width="160" align="right">
           <template #default="{ row }">
-            <span v-if="row.fieldCompleteness">{{ Math.round((row.fieldCompleteness.overall ?? 0) * 100) }}%</span>
+            <span v-if="row.fieldCompleteness">
+              {{ Math.round((row.fieldCompleteness.overall ?? 0) * 100) }}%
+              <small v-if="row.fieldCompleteness.worst" class="worst-hint">最差 {{ row.fieldCompleteness.worst.field }} {{ Math.round((row.fieldCompleteness.worst.rate ?? 0) * 100) }}%</small>
+            </span>
             <span v-else>—</span>
           </template>
         </el-table-column>
@@ -262,4 +265,5 @@ onMounted(load)
 .trend-bars { display: flex; gap: 4px; align-items: flex-end; height: 90px; }
 .trend-bars i { flex: 1; min-height: 3px; border-radius: 3px 3px 0 0; transition: height 200ms ease; }
 :deep(.dict-row) { cursor: pointer; }
+.worst-hint { display: block; color: var(--c-text-muted); font-size: 11px; }
 </style>

@@ -1,7 +1,14 @@
 # 入口 HTML 与 SPA 路由：不缓存，确保浏览器始终拿到最新入口，
 # 避免旧 HTML 引用已被删除的旧 chunk 导致 “Failed to fetch dynamically imported module”。
+# 安全响应头（2026-10-14 深度测试 P2-2）：SPA 路由由静态资源直出不经过 Worker，
+# 故安全头需在此声明；Worker 的 cors() 同时给 /api/* 等动态响应加同款头。
+# 注意：不设 X-Frame-Options / frame-ancestors——/embed 分享嵌入需被第三方站点 iframe 引用。
 /*
   Cache-Control: no-cache
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'
 
 # 带内容哈希的静态资源（/assets/index-xxxx.js、css 等）：内容永久不变，强缓存且不可变。
 /assets/*

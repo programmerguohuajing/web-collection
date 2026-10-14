@@ -21,7 +21,8 @@ const clickLoading = ref(false)
 const clickError = ref('')
 const pathKpis = computed(() => [
   { label: '路径总数', value: Number(pager.total || rows.value.length).toLocaleString(), delta: '近 24h', valueClass: 'value-primary' },
-  { label: 'Top 路径占比', value: rows.value.length ? '—' : '-', delta: '等待路径数据', valueClass: 'value-purple' },
+  // Top 路径占比 = 首条路径 count / 当前页全部路径 count 之和（2026-10-14 深度测试 P2：此前为占位符 '—'）
+  { label: 'Top 路径占比', value: (() => { if (!rows.value.length) return '-'; const sum = rows.value.reduce((a, r) => a + Number(r.count || 0), 0); const top = Math.max(...rows.value.map(r => Number(r.count || 0))); return sum > 0 ? `${(top / sum * 100).toFixed(1)}%` : '-'; })(), delta: '最高路径 / 当前页合计', valueClass: 'value-purple' },
   { label: '平均路径深度', value: rows.value.length ? `${(rows.value.reduce((sum, row) => sum + Number(row.depth || row.steps || 0), 0) / rows.value.length).toFixed(1)} 步` : '-', delta: '当前筛选范围', valueClass: 'value-success' },
   { label: '跳出路径', value: rows.value.filter(row => Number(row.depth || row.steps || 0) <= 1).length.toLocaleString(), delta: '当前筛选范围', valueClass: 'value-danger' }
 ])

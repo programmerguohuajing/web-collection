@@ -510,6 +510,17 @@ export async function api(path, options = {}) {
     if (slowRequestIds.delete(requestId)) slowRequest.value = slowRequestIds.size > 0
     activeRequestCount.value = Math.max(0, activeRequestCount.value - 1)
     if (requestKey && inflightRequests.get(requestKey) === controller) inflightRequests.delete(requestKey)
+    // 自愈（2026-10-14 深度测试 P2）：各页 load() / refresh() 用条件 finally（仅最新请求重置），
+    // 请求被取消/超期的交错时可能漏重置，导致 pageLoading 常驻"加载中"。无进行中请求时自动清零。
+    // 用 queueMicrotask 避开同步调用间隙：同一同步块内新发起的 api() 会先把计数加回。
+    if (activeRequestCount.value === 0) {
+      queueMicrotask(() => {
+        if (activeRequestCount.value === 0) {
+          pageLoading.value = false
+          loading.value = false
+        }
+      })
+    }
   }
 }
 

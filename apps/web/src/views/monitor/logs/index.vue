@@ -22,7 +22,14 @@ function formatDate(value) {
 }
 
 function text(value) {
-  return value == null || value === '' ? '-' : String(value)
+  if (value == null || value === '') return '-'
+  let s = String(value)
+  // 清洗 console 样式占位符（2026-10-14 深度测试 P2）：SDK 采集的 console.log 原文含
+  // %c 与 color: #FF7D00 这类样式参数原文，展示时应去掉，只留真实日志内容。
+  s = s.replace(/%[csdifoO]/g, '')
+  s = s.replace(/color\s*:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-z]+)/gi, '')
+  s = s.replace(/background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-z]+)/gi, '')
+  return s.replace(/\s{2,}/g, ' ').trim() || '-'
 }
 
 async function load() {

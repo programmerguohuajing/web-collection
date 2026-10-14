@@ -150,6 +150,21 @@ async function createApplication() {
   }
 }
 
+function maskKey(key) {
+  const s = String(key || '')
+  if (s.length <= 8) return '****'
+  return `${s.slice(0, 4)}****${s.slice(-4)}`
+}
+
+async function copyKey(key) {
+  try {
+    await navigator.clipboard.writeText(String(key || ''))
+    ElMessage.success('SDK Key 已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动复制')
+  }
+}
+
 function configure(row) {
   router.push({ path: '/governance', query: { appId: row.id || row.appKey } })
 }
@@ -518,7 +533,13 @@ onMounted(load)
       <el-alert v-if="loadError" class="table-error" type="error" :title="loadError" :closable="false" show-icon><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
       <el-table :data="applications" v-loading="loading" empty-text="暂无应用数据">
         <el-table-column prop="name" label="应用名称" min-width="220" />
-        <el-table-column prop="appKey" label="SDK Key" min-width="220" />
+        <!-- SDK Key 默认遮蔽展示（2026-10-14 深度测试 P2-10）：仅显示首尾，点击复制取完整值 -->
+        <el-table-column label="SDK Key" min-width="220">
+          <template #default="{ row }">
+            <span class="masked-key">{{ maskKey(row.appKey) }}</span>
+            <el-button link type="primary" size="small" @click="copyKey(row.appKey)">复制</el-button>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag class="status-tag" :type="row.enabled ? 'success' : 'info'" effect="plain">{{ row.enabled ? '启用' : '暂停' }}</el-tag></template></el-table-column>
         <el-table-column label="今日事件" width="130"><template #default="{ row }">{{ row.events.toLocaleString() }}</template></el-table-column>
         <el-table-column label="操作" width="120"><template #default="{ row }"><el-button link type="primary" @click="configure(row)">配置</el-button></template></el-table-column>

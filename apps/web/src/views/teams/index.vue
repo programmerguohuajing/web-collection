@@ -26,7 +26,7 @@ const INVITATION_STATUS_MAP: Record<string, { label: string; type: 'warning' | '
   expired: { label: '已过期', type: 'info' }
 }
 
-const { me, currentTeamId, isLoggedIn, authApi, logout, loadMe, switchTeam, loadCapabilities } = useAuth()
+const { me, currentTeamId, isLoggedIn, authApi, logout, loadMe, switchTeam, loadCapabilities, accountsEnabled } = useAuth()
 const router = useRouter()
 
 type Role = 'owner' | 'admin' | 'member' | 'viewer'
@@ -442,7 +442,10 @@ async function onTabChange(): Promise<void> {
 
 onMounted(async () => {
   await loadCapabilities()
-  if (!isLoggedIn.value) {
+  // 访问控制统一（2026-10-14 深度测试 P1-2）：此前本页无条件强制登录，而其他管理页
+  // 由路由守卫按 accounts 能力位放行，导致 accounts 关闭时行为不一致。
+  // accounts 关闭（自托管默认，无登录体系）时不再强制跳登录，与其他管理页一致。
+  if (accountsEnabled.value && !isLoggedIn.value) {
     await router.replace('/login')
     return
   }

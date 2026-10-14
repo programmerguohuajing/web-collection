@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
@@ -14,6 +14,7 @@ const router = useRouter()
 const loading = ref(false)
 const funnels = ref([])
 const report = ref(null)
+const reportEl = ref(null)
 const reportLoading = ref(false)
 // 细分维度切换
 const segmentField = ref('')
@@ -46,6 +47,10 @@ async function openReport(funnel) {
     report.value = data
     const fields = (data.segments || []).map(item => item.field)
     segmentField.value = fields[0] || ''
+    // 报告在列表下方内联渲染（2026-10-14 深度测试 P1-4）：此前加载后无任何视觉反馈，
+    // 用户不往下滚动就以为按钮没反应。加载后自动滚动到报告区。
+    await nextTick()
+    reportEl.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } catch (error) {
     ElMessage.error(error.message || '漏斗报告加载失败')
   } finally {
@@ -255,7 +260,7 @@ onMounted(loadFunnels)
     </el-card>
 
     <!-- 漏斗报告 -->
-    <div v-if="report" v-loading="reportLoading">
+    <div v-if="report" ref="reportEl" v-loading="reportLoading">
       <div class="prd-kpis">
         <div class="prd-kpi"><span class="k-label">进入用户</span><span class="k-value primary">{{ Number(report.meta.users).toLocaleString() }}</span><span class="k-foot">user_id 去重</span></div>
         <div class="prd-kpi"><span class="k-label">总转化率</span><span class="k-value success">{{ (report.meta.overallRate * 100).toFixed(1) }}%</span><span class="k-foot">窗口 {{ formatWindow(report.meta.windowMs) }}</span></div>

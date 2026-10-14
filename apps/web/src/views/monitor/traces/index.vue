@@ -487,6 +487,8 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 
     <el-card v-else class="trace-card trace-empty-card" shadow="never">
       <el-empty :description="listError || '暂无可展示的链路数据'">
+        <!-- 空态指引（2026-10-14 深度测试 P2）：此前仅有"选择 Trace"按钮，用户不知道如何产生 Trace 数据 -->
+        <p class="trace-empty-hint">链路数据来自 SDK 上报的 Span（接口/资源调用）或携带 trace_id 的错误事件。接入应用开启链路追踪并产生调用后，在此选择 Trace 查看完整调用过程。</p>
         <el-button type="primary" :icon="Select" @click="tracePickerOpen = true">选择 Trace</el-button>
       </el-empty>
     </el-card>
@@ -659,6 +661,7 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 .span-id { color: #656b7c; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
 .span-duration { color: #3c4051; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .trace-empty-card :deep(.el-card__body) { display: grid; min-height: 360px; place-items: center; }
+.trace-empty-hint { max-width: 520px; margin: 0 0 16px; color: var(--c-text-muted); font-size: 13px; line-height: 1.7; text-align: center; }
 
 .trace-picker :deep(.el-drawer__body) {
   display: flex;

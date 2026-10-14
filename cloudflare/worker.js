@@ -416,6 +416,10 @@ async function maybeIngestionAlert(env, appId, err) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url)
+    // 查询参数别名（2026-10-14 深度测试 P2-3）：接入方常误用 limit/app_id（下划线），
+    // 此前被静默忽略导致分页/过滤"看起来生效实际没生效"。显式驼峰参数优先。
+    if (url.searchParams.has('limit') && !url.searchParams.has('pageSize')) url.searchParams.set('pageSize', url.searchParams.get('limit'))
+    if (url.searchParams.has('app_id') && !url.searchParams.has('appId')) url.searchParams.set('appId', url.searchParams.get('app_id'))
     if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }), request)
     try {
       let response
@@ -490,7 +494,13 @@ async function collect(request, env, ctx) {
   const inputs = payload.type === 'replay' ? [payload] : Array.isArray(payload.events) ? payload.events : Array.isArray(payload) ? payload : [payload]
   const appId = clip(inputs[0]?.appId || 'default', 64)
   if (inputs.some(item => clip(item?.appId || 'default', 64) !== appId)) return new Response('mixed app ids', { status: 400 })
-  let events = inputs.slice(0, 100).map(sanitize)
+  // 客户端校验错误（非法 type 等）返回 400，避免 sanitize 抛错冒泡到顶层统一 500（2026-10-14 深度测试 P2-1）。
+  let events
+  try {
+    events = inputs.slice(0, 100).map(sanitize)
+  } catch (err) {
+    return json({ error: err?.message || 'invalid event' }, 400)
+  }
   // 紧急降载：D1 rows_written 配额接近打满时，通过 EMERGENCY_SAMPLE_RATE 环境变量
   // 对非错误事件做概率采样（如 0.1 = 保留 10%），错误事件始终全量保留。
   // 2026-10-13 启用：rows_written 达 94%，配额重置前约 1 小时将打满。
@@ -1670,8 +1680,12 @@ async function apiHealth(env,url){
     return json({endpoint:String(endpoint),series})
   }
   const grouped=new Map()
+  // 过滤静态资源（2026-10-14 深度测试 P2）：fetch/xhr 事件含图片/CSS/JS 等静态资源请求
+  //（如 images/bg/login-bg.png），此前被当作 API 端点列出。按 URL 扩展名排除。
+  const STATIC_EXT = /\.(png|jpe?g|gif|svg|ico|webp|avif|css|js|mjs|map|woff2?|ttf|otf|eot|mp3|mp4|webm|wav|pdf|zip|gz)$/i
   for(const row of rows){
     const item=read(row)
+    if (STATIC_EXT.test(item.url.split('?')[0])) continue
     const key=`${item.method} ${item.url}`
     const entry=grouped.get(key)||{method:item.method,url:item.url,endpoint:key,count:0,total:0,values:[],status:{}}
     entry.count++;entry.total+=item.value;entry.values.push(item.value)
@@ -1689,7 +1703,11 @@ async function replayList(env,url){
   const page=Math.max(1,Number(url.searchParams.get('page')||1))
   const size=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)))
   const {where,values}=replayFilters(url)
-  const replayKey="coalesce(nullif(base_session_id,''),session_id)"
+  // 去重（2026-10-14 深度测试 P2）：同一会话的 _r{n} 轮换段（闲置后轮换）与 _seg{n} 分段
+  // 此前按完整 id 分组，导致同一会话在列表出现两次（如 ..._r1 与原 id）。
+  // id 格式为 {ts}.{random}，下划线只出现在 _seg/_r 后缀中，instr 定位安全。
+  const _rawKey="coalesce(nullif(base_session_id,''),session_id)"
+  const replayKey=`case when ${_rawKey} glob '*_seg[0-9]*' then substr(${_rawKey},1,instr(${_rawKey},'_seg')-1) when ${_rawKey} glob '*_r[0-9]*' then substr(${_rawKey},1,instr(${_rawKey},'_r')-1) else ${_rawKey} end`
   const rows=await env.DB.prepare(`select ${replayKey} replayId,${replayKey} sessionId,max(user_id) userId,max(user_name) userName,max(user_phone) userPhone,min(created_at) firstSeen,max(created_at) lastSeen,max(url) url,max(release_name) release,max(end_reason) endReason,max(user_agent) userAgent,count(*) eventCount,count(distinct session_id) segmentCount from replays ${where} group by app_id,${replayKey} order by lastSeen desc limit ? offset ?`).bind(...values,size,(page-1)*size).all()
   const total=await env.DB.prepare(`select count(*) count from (select 1 from replays ${where} group by app_id,${replayKey})`).bind(...values).first()
   return json({items:rows.results,total:Number(total.count),page,pageSize:size})
@@ -1860,13 +1878,47 @@ async function traceTopology(env,id,url){
   return json({nodes:[...nodes.values()],edges:[...edges.values()]})
 }
 export { buildDistributedTrace }
-async function sessions(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["session_id<>''"]),[rows,total]=await Promise.all([env.DB.prepare(`select session_id,max(user_id) user_id,max(user_name) user_name,max(device_id) device_id,min(ts) started_at,max(ts) ended_at,count(*) event_count,sum(case when type='error' then 1 else 0 end) error_count,group_concat(distinct path) paths from events ${where} group by session_id order by ended_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by session_id)`).bind(...values).first()]),replayTeam=url.__teamId?' where app_id in (select app_id from applications where team_id=?)':'',replayVals=url.__teamId?[url.__teamId]:[],replayIds=(await env.DB.prepare(`select distinct session_id from replays${replayTeam}`).bind(...replayVals).all()).results;return json({items:rows.results.map(r=>({...r,duration:r.ended_at-r.started_at,paths:(r.paths||'').split(',').filter(Boolean),replaySessionId:replayIds.find(x=>x.session_id.startsWith(r.session_id))?.session_id})),total:Number(total.count),page,pageSize})}
+async function sessions(env,url){
+  const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),{where,values}=filters(url,null,["session_id<>''"])
+  const [rows,total]=await Promise.all([env.DB.prepare(`select session_id,max(user_id) user_id,max(user_name) user_name,max(device_id) device_id,min(ts) started_at,max(ts) ended_at,count(*) event_count,sum(case when type='error' then 1 else 0 end) error_count,group_concat(distinct path) paths from events ${where} group by session_id order by ended_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from (select 1 from events ${where} group by session_id)`).bind(...values).first()])
+  const sessionIds = rows.results.map(r => r.session_id).filter(Boolean)
+  // 活跃时长（2026-10-14 深度测试 P2）：此前 duration = max(ts)-min(ts)，Uni-App 里 session_id
+  // 跨启动复用（线上实测同一 session_id 9 月生成、10 月仍在用，资源事件连续数天），导致 23h 会话。
+  // 按 30 分钟不活跃即新会话切分，时长取最长连续段并封顶 12h（单次会话连续活跃超 12h 即为
+  // 后台挂起/复用 ID）；仅对当前页会话计算，避免全表二次扫描。
+  // SDK 会话轮换（后台恢复超 30 分钟即新 sessionId）为后续跟进：涉及采样/回放关联，需单独设计测试。
+  let activeDurations = new Map()
+  if (sessionIds.length) {
+    try {
+      const placeholders = sessionIds.map(() => '?').join(',')
+      const durRows = await env.DB.prepare(`
+        with ordered as (
+          select session_id, ts, lag(ts) over (partition by session_id order by ts) as prev_ts
+          from events ${where} and session_id in (${placeholders})
+        ),
+        segs as (
+          select session_id, ts, sum(case when prev_ts is null or ts - prev_ts > 1800000 then 1 else 0 end) over (partition by session_id order by ts rows unbounded preceding) as seg
+          from ordered
+        ),
+        bounds as (
+          select session_id, seg, min(ts) as s, max(ts) as e from segs group by session_id, seg
+        )
+        select session_id, min(max(e - s), 43200000) as active_duration from bounds group by session_id
+      `).bind(...values, ...sessionIds).all()
+      for (const r of durRows.results || []) activeDurations.set(r.session_id, Number(r.active_duration || 0))
+    } catch (e) { console.error('[sessions] active duration failed, fallback to span:', e?.message || e) }
+  }
+  const replayTeam=url.__teamId?' where app_id in (select app_id from applications where team_id=?)':'',replayVals=url.__teamId?[url.__teamId]:[],replayIds=(await env.DB.prepare(`select distinct session_id from replays${replayTeam}`).bind(...replayVals).all()).results
+  return json({items:rows.results.map(r=>({...r,duration:activeDurations.has(r.session_id)?activeDurations.get(r.session_id):r.ended_at-r.started_at,paths:(r.paths||'').split(',').filter(Boolean),replaySessionId:replayIds.find(x=>x.session_id.startsWith(r.session_id))?.session_id})),total:Number(total.count),page,pageSize})
+}
 async function sessionEvents(env,id,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)));if(!id?.trim())return json({items:[],total:0,page,pageSize});const{where,values}=filters(url,null,['session_id=?'],[id]);const[rows,total]=await Promise.all([env.DB.prepare(`select * from events ${where} order by ts limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from events ${where}`).bind(...values).first()]);return json({items:rows.results.map(mapEvent),total:Number(total.count),page,pageSize})}
 async function paths(env,url){const {where,values}=filters(url,'behavior',[`name in ('pv','pushState','replaceState','popstate','hashchange')`]);const rows=(await env.DB.prepare(`select session_id,path,ts,user_id,user_name from events ${where} order by session_id,ts limit 20000`).bind(...values).all()).results;const grouped=group(rows,r=>r.session_id),counts={};for(const events of Object.values(grouped)){const value=events.map(e=>e.path).filter((v,i,a)=>v&&v!==a[i-1]).slice(0,8).join(' → ');if(value){const existing=counts[value]||{path:value,count:0,users:[]};existing.count++;const userId=events[0]?.user_id?.trim(),userName=events[0]?.user_name?.trim();if(userId&&!existing.users.find(u=>u.id===userId))existing.users.push({id:userId,name:userName||userId});counts[value]=existing}}return json(Object.entries(counts).map(([,v])=>({path:v.path,count:v.count,users:v.users})).sort((a,b)=>b.count-a.count).slice(0,50))}
 async function clickPaths(env,url){const {where,values}=filters(url,'behavior',["name='click'"]);const rows=(await env.DB.prepare(`select session_id,ts,path,props_json from events ${where} order by session_id,ts limit 20000`).bind(...values).all()).results;const grouped=group(rows,r=>r.session_id||'');const nodeMap=new Map(),edgeMap=new Map();for(const events of Object.values(grouped)){const clicks=events.map(e=>{const props=parse(e.props_json,{});const label=props.elementLabel||props.label||props.text||props.ariaLabel||props.title||props.tag||'';return{id:`${label||props.tag||'node'}@${e.path||props.path||''}`,label:label||props.tag||'unknown',path:e.path||props.path||''}}).filter(c=>c.label&&c.label!=='unknown');for(const c of clicks){if(!nodeMap.has(c.id))nodeMap.set(c.id,{id:c.id,label:c.label,type:'click',value:0});nodeMap.get(c.id).value++}const seen=new Set();for(let i=1;i<clicks.length;i++){const from=clicks[i-1],to=clicks[i];if(!from||!to)continue;const key=`${from.id}|${to.id}`;if(!edgeMap.has(key))edgeMap.set(key,{source:from.id,target:to.id,calls:0,sessions:0});const edge=edgeMap.get(key);edge.calls++;if(!seen.has(key)){edge.sessions++;seen.add(key)}}}return json({nodes:[...nodeMap.values()],edges:[...edgeMap.values()]})}
 async function live(env,url){const since=Date.now()-300000,{where,values}=filters(url,null,['ts>=?'],[since]);const row=await env.DB.prepare(`select count(distinct session_id) sessions,count(distinct coalesce(nullif(user_id,''),device_id)) users,count(*) events from events ${where}`).bind(...values).first();return json({since,...row})}
 async function heatmap(env,url){const{where,values}=filters(url,null,["type='behavior'","name in ('click','scroll')"]);const rows=(await env.DB.prepare(`select ts,name,props_json,path,url from events ${where} order by ts desc limit 50000`).bind(...values).all()).results;const clickPoints=[],scrollAggregate=new Map();for(const row of rows){const props=parse(row.props_json,{});if(row.name==='click'){const x=Number(props.x),y=Number(props.y);if(Number.isFinite(x)&&Number.isFinite(y)&&x>=0&&y>=0)clickPoints.push({x,y,viewportWidth:Number(props.viewportWidth)||0,viewportHeight:Number(props.viewportHeight)||0,elementType:props.elementType||'',elementLabel:props.elementLabel||'',ts:row.ts,path:row.path||'',url:row.url||''})}if(row.name==='scroll'&&Number.isFinite(Number(props.depth))){const key=row.path||row.url||'';if(key){const existing=scrollAggregate.get(key)||{path:key,count:0,totalDepth:0,maxDepth:0,scrollEvents:0};existing.count++;existing.totalDepth+=Number(props.depth)||0;existing.maxDepth=Math.max(existing.maxDepth,Number(props.maxDepth)||0);existing.scrollEvents++;scrollAggregate.set(key,existing)}}}return json({clickPoints:clickPoints.slice(0,10000),scrollData:[],scrollAggregate:[...scrollAggregate.values()].sort((a,b)=>b.count-a.count).slice(0,50)})}
-async function releasesReport(env,url){const appId=url.searchParams.get('appId'),release=url.searchParams.get('release'),startTime=url.searchParams.get('startTime'),endTime=url.searchParams.get('endTime');let sql='select r.app_id,r.release_name release,r.status,r.created_at,count(e.id) events,sum(case when e.type=\'error\' then 1 else 0 end) errors,count(distinct coalesce(nullif(e.user_id,\'\'),e.device_id)) users,round(avg(case when e.type=\'perf\' and e.metric=\'lcp\' then e.value end),2) lcp from releases r left join events e on e.app_id=r.app_id and e.release_name=r.release_name';const params=[];if(startTime){sql+=' and e.ts>=?';params.push(Number(startTime))}if(endTime){sql+=' and e.ts<=?';params.push(Number(endTime))}const where=[];if(url.__teamId){where.push('r.app_id in (select app_id from applications where team_id=?)');params.push(url.__teamId)}if(appId){where.push('r.app_id=?');params.push(appId)}if(release){where.push('r.release_name=?');params.push(release)}sql+=where.length?` where ${where.join(' and ')}`:' where 1=1';sql+=' group by r.app_id,r.release_name,r.status,r.created_at order by r.created_at desc limit 20';return json((await env.DB.prepare(sql).bind(...params).all()).results)}
+// P95 LCP 列实际算 AVG（2026-10-14 深度测试 P2）：列名改为平均 LCP，并过滤 value 异常值
+//（线上 LCP 仅 10 条历史样本，含 4.68 亿时间戳级脏数据，未过滤时均值 5680 万 ms）。
+async function releasesReport(env,url){const appId=url.searchParams.get('appId'),release=url.searchParams.get('release'),startTime=url.searchParams.get('startTime'),endTime=url.searchParams.get('endTime');let sql='select r.app_id,r.release_name release,r.status,r.created_at,count(e.id) events,sum(case when e.type=\'error\' then 1 else 0 end) errors,count(distinct coalesce(nullif(e.user_id,\'\'),e.device_id)) users,round(avg(case when e.type=\'perf\' and e.metric=\'lcp\' and e.value between 0 and 60000 then e.value end),2) lcp from releases r left join events e on e.app_id=r.app_id and e.release_name=r.release_name';const params=[];if(startTime){sql+=' and e.ts>=?';params.push(Number(startTime))}if(endTime){sql+=' and e.ts<=?';params.push(Number(endTime))}const where=[];if(url.__teamId){where.push('r.app_id in (select app_id from applications where team_id=?)');params.push(url.__teamId)}if(appId){where.push('r.app_id=?');params.push(appId)}if(release){where.push('r.release_name=?');params.push(release)}sql+=where.length?` where ${where.join(' and ')}`:' where 1=1';sql+=' group by r.app_id,r.release_name,r.status,r.created_at order by r.created_at desc limit 20';return json((await env.DB.prepare(sql).bind(...params).all()).results)}
 async function funnelEventNames(env,url){const scoped=new URL(url);scoped.__teamId=url.__teamId||'';scoped.searchParams.delete('type');scoped.searchParams.delete('name');const{where,values}=filters(scoped,null,["type in ('behavior','track')","name<>''"]);return json((await env.DB.prepare(`select name,count(*) count from events ${where} group by name order by count desc,name limit 100`).bind(...values).all()).results)}
 async function funnelList(env,url){const page=Math.max(1,Number(url.searchParams.get('page')||1)),pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10))),where=url.__teamId?' where app_id in (select app_id from applications where team_id=?)':'',values=url.__teamId?[url.__teamId]:[],[rows,total]=await Promise.all([env.DB.prepare(`select * from funnel_definitions${where} order by updated_at desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from funnel_definitions${where}`).bind(...values).first()]);return json({items:rows.results.map(row=>({...row,steps_json:parse(row.steps_json,[])})),total:Number(total.count),page,pageSize})}
 
@@ -3748,7 +3800,14 @@ function group(items,key){return items.reduce((out,item)=>((out[key(item)]||=[])
 function cleanObject(value){if(!value||typeof value!=='object')return null;return Object.fromEntries(Object.entries(value).slice(0,50).map(([k,v])=>[clip(k,80),redact(clip(typeof v==='object'?JSON.stringify(v):v,1000))]))}
 function cleanUrl(value){try{const u=new URL(String(value));for(const key of ['token','password','key','secret','authorization'])u.searchParams.delete(key);return clip(u.toString(),2048)}catch{return clip(value||'',2048)}}
 function redact(v){return String(v).replace(/(authorization|password|token|secret|cookie)(["'\s:=]+)[^\s,;}]+/gi,'$1$2[REDACTED]').replace(/\b1\d{2}\d{4}(\d{4})\b/g,'***$1')}
-function cors(response,request){const r=new Response(response.body,response),origin=request.headers.get('origin');r.headers.set('access-control-allow-origin',origin||'*');if(origin){r.headers.set('access-control-allow-credentials','true');r.headers.append('vary','Origin')}r.headers.set('access-control-allow-methods','GET,POST,PUT,DELETE,PATCH,OPTIONS');const reqHeaders=request.headers.get('access-control-request-headers');r.headers.set('access-control-allow-headers',reqHeaders||'content-type,authorization,x-app-key,x-collect-key,x-team-id,x-ai-key,x-sdk-version,x-sdk-name,x-eys-raw-access,traceparent,tracestate,baggage,if-none-match,if-match,if-modified-since,if-unmodified-since');r.headers.set('access-control-expose-headers','server-timing,traceresponse,x-request-id');return r}
+function cors(response,request){const r=new Response(response.body,response),origin=request.headers.get('origin');r.headers.set('access-control-allow-origin',origin||'*');if(origin){r.headers.set('access-control-allow-credentials','true');r.headers.append('vary','Origin')}
+// 安全响应头（2026-10-14 深度测试 P2-2）：HSTS + nosniff + Referrer-Policy + CSP。
+// 注意：不设 X-Frame-Options / frame-ancestors——/embed/dashboard/:token 分享嵌入需被第三方站点 iframe 引用。
+r.headers.set('strict-transport-security','max-age=31536000; includeSubDomains')
+r.headers.set('x-content-type-options','nosniff')
+r.headers.set('referrer-policy','strict-origin-when-cross-origin')
+r.headers.set('content-security-policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'")
+r.headers.set('access-control-allow-methods','GET,POST,PUT,DELETE,PATCH,OPTIONS');const reqHeaders=request.headers.get('access-control-request-headers');r.headers.set('access-control-allow-headers',reqHeaders||'content-type,authorization,x-app-key,x-collect-key,x-team-id,x-ai-key,x-sdk-version,x-sdk-name,x-eys-raw-access,traceparent,tracestate,baggage,if-none-match,if-match,if-modified-since,if-unmodified-since');r.headers.set('access-control-expose-headers','server-timing,traceresponse,x-request-id');return r}
 function parse(value,fallback){try{return typeof value==='string'?JSON.parse(value):value??fallback}catch{return fallback}}
 function strings(v){return Array.isArray(v)?v.map(String).map(s=>s.trim()).filter(Boolean):[]}
 function clip(v,n){return String(v??'').slice(0,n)} function rate(v){return Math.max(0,Math.min(1,Number(v??1)))} function origin(v){try{return new URL(v).origin}catch{return''}} function maskPhone(v=''){return String(v).replace(/^(\d{3})\d{4}(\d{4})$/,'$1****$2')} function random(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return btoa(String.fromCharCode(...a)).replace(/[+/=]/g,'').slice(0,n*2)} async function sha256(v){return[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(v)))].map(x=>x.toString(16).padStart(2,'0')).join('')}
@@ -4229,7 +4288,7 @@ function dictionaryList(env,url){
     const completeness=d1Completeness(sampleRows.results||[])
     const items=(rows.results||[]).map(r=>{
       const count7d=Number(r.count7d||0),count24h=Number(r.count24h||0),comp=completeness.get(r.name)||null
-      const health=judgeHealth(count7d,count24h,Number(r.last_seen_at||0),historicSet.has(r.name),comp?.worst?.rate)
+      const health=judgeHealth(count7d,count24h,Number(r.last_seen_at||0),historicSet.has(r.name),comp?.worst?.rate,comp?.worst?.field)
       const registeredRow=regMap.get(r.name)
       return {name:r.name,type:r.type,source:['pv','page_leave','click'].includes(r.name)?'auto':['behavior','perf'].includes(r.type)?'auto':'manual',platform:'',count7d,count24h,lastSeenAt:Number(r.last_seen_at||0),fieldCompleteness:comp,health:health.status,verdict:health.verdict,registered:!!registeredRow,owner:registeredRow?.owner||''}
     })
@@ -4264,9 +4323,11 @@ function d1Completeness(rows){
   }
   return out
 }
-function judgeHealth(count7d,count24h,lastSeenAt,hasHistory,worstRate){
+function judgeHealth(count7d,count24h,lastSeenAt,hasHistory,worstRate,worstField){
   if(count7d===0&&hasHistory)return{status:'stalled',verdict:`${Math.max(0,Math.floor((Date.now()-lastSeenAt)/86400000))} 天无上报`}
-  if(worstRate!=null&&worstRate<0.95)return{status:'incomplete',verdict:`关键字段完整率 ${(worstRate*100).toFixed(0)}% < 95%`}
+  // 判定引用最差字段（2026-10-14 深度测试 P2）：此前文案称"关键字段完整率"，与列内 overall 均值
+  // 数值不一致（如 pv 均值 54% 但最差字段 referrer 仅 7%），看起来像算错。写明最差字段名。
+  if(worstRate!=null&&worstRate<0.95)return{status:'incomplete',verdict:`最差字段${worstField ? `「${worstField}」` : ''}完整率 ${(worstRate*100).toFixed(0)}% < 95%`}
   if(count7d>0){const dailyAvg=(count7d-count24h)/6
     if(dailyAvg>0&&Math.abs(count24h-dailyAvg)/dailyAvg>0.5){const delta=Math.round((count24h-dailyAvg)/dailyAvg*100);return{status:'fluctuating',verdict:`近24h较前6日日均 ${delta>0?'+':''}${delta}%，偏离基线`}}}
   if(count7d===0)return{status:'stalled',verdict:'从未上报'}

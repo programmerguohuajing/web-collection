@@ -6,6 +6,7 @@
  * worker.js 改为 import 本模块并 re-export，保持对外行为一致。
  */
 import { maskPhone, parse } from './pii.js'
+import { MS_DURATION_METRICS, msDurationPlaceholders } from './baseline.js'
 
 // 单个 trace 若被业务侧长期复用，事件数会无界增长。D1 按读取行计费，且把数万条
 // 事件交给诊断模型既昂贵也不会增加有效上下文；保留最近 5,000 条足以覆盖一次正常链路。
@@ -239,8 +240,9 @@ export async function getReleaseStats(db, releaseName, appId, { fromTs, toTs } =
       if (appId) { where.push('app_id=?'); params.push(appId) }
       if (from != null) { where.push('ts >= ?'); params.push(from) }
       if (to != null) { where.push('ts < ?'); params.push(to) }
-      const sql = `select type, count(*) as cnt, avg(case when type=? then value else null end) as perf_avg from events where ${where.join(' and ')} group by type`
-      const rows = await db.prepare(sql).bind(...params).all()
+      // perfAvg 只统计毫秒级时长指标（P1-3：memory 字节 / 比率 / CLS 等混入 avg 导致小时级错误值）。
+      const sql = `select type, count(*) as cnt, avg(case when type=? and metric in (${msDurationPlaceholders()}) then value else null end) as perf_avg from events where ${where.join(' and ')} group by type`
+      const rows = await db.prepare(sql).bind(params[0], ...MS_DURATION_METRICS, ...params.slice(1)).all()
       let value = null
       if (rows?.length) {
         let total = 0, errors = 0, perfAvg = null
