@@ -15,7 +15,10 @@
 /** 内置默认配置：全开。SDK 在从未拉到配置时按此运行，绝不因配置系统故障停采 */
 export const DEFAULT_COLLECT_CONFIG = {
   master_switch: 'on',
-  sampling: { error: 1, performance: 0.1, replay: 0.05, behavior: 1 },
+  // replay: 1（全保留）。2026-10-14 前为 0.05，SDK 均匀采样丢掉 95% 增量事件，
+  // 回放只剩全量快照、画面静止/空白。新版 SDK 已按事件类型区分（仅 MouseMove/
+  // TouchMove/Log 参与采样），旧版 SDK 仍依赖本值兜底，故默认值必须为 1。
+  sampling: { error: 1, performance: 0.1, replay: 1, behavior: 1 },
   blocked_events: [],
   blocked_patterns: [],
   blocked_errors: [],

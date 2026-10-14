@@ -5,7 +5,7 @@ import { ReplayRingBuffer } from '../src/replay/ring-buffer.js'
 import { createReplayCompressor, hasCompressionStream } from '../src/replay/compress.js'
 import { loadRrweb, injectScript } from '../src/replay/rrweb-driver.js'
 import { ensureDriver, isDriverLoaded, addReplayEvent, takeReplaySnapshot, __setDriver, setupReplayMonitor } from '../src/replay/index.js'
-import { replayShouldKeep, paginate } from '../src/replay/sampler.js'
+import { replayShouldKeep, isReplayEventSamplable, paginate } from '../src/replay/sampler.js'
 import { createEys } from '../src/index.js'
 
 // ---------------------------------------------------------------------------
@@ -365,6 +365,23 @@ test('replayShouldKeep：升采样窗口内全保留，rate 边界正确', () =>
   // rate 边界
   assert.equal(replayShouldKeep(1, false), true)
   assert.equal(replayShouldKeep(0, false), false)
+})
+
+// 2026-10-14 回放空白事故：仅高频非状态事件可参与采样，状态事件永不丢。
+test('isReplayEventSamplable：仅 MouseMove/TouchMove/Log 参与采样', () => {
+  // 可采样：type=3 + source 1/6/11
+  assert.equal(isReplayEventSamplable({ type: 3, data: { source: 1 } }), true)
+  assert.equal(isReplayEventSamplable({ type: 3, data: { source: 6 } }), true)
+  assert.equal(isReplayEventSamplable({ type: 3, data: { source: 11 } }), true)
+  // 状态事件永不采样：Mutation/点击/滚动/视口/输入/样式规则
+  for (const source of [0, 2, 3, 4, 5, 7, 8, 9, 10, 12]) {
+    assert.equal(isReplayEventSamplable({ type: 3, data: { source } }), false, `source=${source} 不应参与采样`)
+  }
+  // 非 type=3 永不采样：快照/Meta/自定义/插件
+  assert.equal(isReplayEventSamplable({ type: 2, data: {} }), false)
+  assert.equal(isReplayEventSamplable({ type: 4, data: {} }), false)
+  assert.equal(isReplayEventSamplable({ type: 5, data: {} }), false)
+  assert.equal(isReplayEventSamplable(null), false)
 })
 
 test('replayShouldKeep：rate<1 按概率取舍（确定性 rng）', () => {

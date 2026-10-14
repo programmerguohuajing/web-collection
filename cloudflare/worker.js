@@ -1753,7 +1753,14 @@ async function replayEvents(env,id,url){
   }
 
   const instances=new Map();
+  // Worker 资源护栏：单段 events_json 可达 1.8MB，160 段全解码可达数百 MB，
+  // 曾触发 Cloudflare error 1102（Worker 资源超限）返回 503。按原始字节预算
+  // 截断解码（8MB 足够覆盖 30 分钟窗口的正常回放），超预算的旧段丢弃。
+  let decodedBudgetBytes = 0;
+  const REPLAY_DECODE_BUDGET_BYTES = 8 * 1024 * 1024;
   for(const row of rows){
+    decodedBudgetBytes += (typeof row.events_json === 'string' ? row.events_json.length : 0);
+    if (decodedBudgetBytes > REPLAY_DECODE_BUDGET_BYTES) break;
     const evs=await decodeReplayEventsFromStorage(row.events_json);
     if(!Array.isArray(evs)||!evs.length)continue;
     const sid=row.session_id||'__default__'

@@ -7,6 +7,31 @@
  */
 
 /**
+ * rr-web 增量事件（type=3）的 source 枚举（与 rrweb 官方一致）：
+ *   0 Mutation（DOM 变更） 1 MouseMove 2 MouseInteraction（点击）
+ *   3 Scroll 4 ViewportResize 5 Input 6 TouchMove 7 MediaInteraction
+ *   8 StyleSheetRule 9 CanvasMutation 10 Font 11 Log 12 Drag
+ *
+ * 仅高频且不改变页面状态的事件可参与采样：鼠标移动、触摸移动、控制台日志。
+ * 其余（DOM 变更、点击、滚动、输入、样式规则等）一旦丢弃，回放就无法重建
+ * 页面状态——表现为只有全量快照、画面静止/空白（2026-10-14 线上事故：
+ * 服务端 replay:0.05 均匀采样丢掉 95% 增量事件，所有回放只剩快照）。
+ */
+export const REPLAY_SAMPLABLE_SOURCES = new Set([1, 6, 11])
+
+/**
+ * 判断一条回放事件是否可参与采样丢弃。
+ * type=2（全量快照）、type=4（Meta）、type=5（自定义）、type=6（插件）永不参与；
+ * type=3 中仅高频非状态事件（MouseMove/TouchMove/Log）可参与。
+ * @param {object} event - rr-web 事件
+ * @returns {boolean}
+ */
+export function isReplayEventSamplable(event) {
+  if (!event || event.type !== 3) return false
+  return REPLAY_SAMPLABLE_SOURCES.has(Number(event?.data?.source))
+}
+
+/**
  * 判断一条回放增量事件是否保留。
  *
  * 逻辑：

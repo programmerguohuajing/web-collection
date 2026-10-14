@@ -26,7 +26,7 @@ import { ensureDriver, setupReplayMonitor, addReplayEvent, takeReplaySnapshot, _
 import { ReplayRingBuffer } from './replay/ring-buffer.js'
 import { createReplayCompressor } from './replay/compress.js'
 // SDK-211 · Replay 增强：错误触发升采样 + 分页加载纯函数。
-import { replayShouldKeep, paginate } from './replay/sampler.js'
+import { replayShouldKeep, isReplayEventSamplable, paginate } from './replay/sampler.js'
 import { createReplayAssetInliner } from './replay/inline-assets.js'
 import { setupServiceWorkerMonitor } from './runtime/sw.js'
 import { imageReport } from './core/report.js'
@@ -1520,10 +1520,11 @@ export function createEys(options = {}) {
       replayRing.setWindow(cfg.replayWindowMs)
     }
     // SDK-211 · 常态降采样（replaySampleRate<1 时降本）；错误升采样期间全保留。
-    // 全量快照（type:2）永不参与采样丢弃：快照被丢后回放只剩增量事件，
-    // 播放窗口表现为「有播放时间、无画面、仅鼠标」。RingBuffer 亦已独立留存，
-    // 这里从源头避免快照被采样率筛掉。
-    if (event?.type !== 2 && !replayShouldKeep(cfg.replaySampleRate, errorBoosted, Math.random)) {
+    // 仅高频非状态事件（MouseMove/TouchMove/Log）参与采样：DOM 变更、点击、
+    // 滚动、输入、样式规则等状态事件全保留——采样丢掉它们会让回放无法重建
+    // 页面（2026-10-14 事故：均匀采样丢掉 95% 增量事件，回放只剩静态快照）。
+    // 全量快照（type:2）与 Meta/自定义/插件事件永不参与采样。
+    if (isReplayEventSamplable(event) && !replayShouldKeep(cfg.replaySampleRate, errorBoosted, Math.random)) {
       replaySampledDrops++
       return
     }
