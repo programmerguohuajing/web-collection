@@ -908,7 +908,11 @@ defineExpose({ play, currentSessionCode })
   border-radius: 6px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
   z-index: 5;
+  opacity: 1;
+  transition: opacity .12s ease;
 }
+/* 悬浮标注点时藏起进度气泡，避免两个 tooltip 在同一位置重叠 */
+.replay-slider-wrap:has(.replay-timeline-marker:hover) .replay-progress-bubble { opacity: 0; }
 .replay-progress-bubble::after {
   position: absolute;
   bottom: -4px;
