@@ -34,4 +34,7 @@
   //   ⚠️ 未配置密钥先开 ACCOUNTS_ENABLED 会导致认证端点 503，前端路由守卫把所有人拦在登录页外（等效锁死）。
   //   ⚠️ ACCOUNTS_ENFORCE=1（严格模式）会拦掉 MCP rest 模式（x-app-key 透传）等服务间调用，开启前须评估。
   // "vars": { "ACCOUNTS_ENABLED": "1" }
+  // 紧急降载（2026-10-14）：D1 rows_written 配额紧张，非错误事件仅保留 5%。
+  // 配额稳定后删除本行并重新部署。
+  "vars": { "EMERGENCY_SAMPLE_RATE": "0.05" }
 }
