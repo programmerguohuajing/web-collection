@@ -30,6 +30,9 @@ const emit = defineEmits(['page-change', 'size-change', 'filter', 'refresh', 're
 const replayEl = ref(null)
 const isPlaying = ref(false)
 const progress = ref(0)
+// 滑块拖拽中：startProgress 的 100ms 同步会用 getCurrentTime() 覆盖 progress，
+// 与 el-slider 拖拽打架（手柄弹回/拖不动）。拖拽期间暂停同步，松手后再恢复。
+const isSliderDragging = ref(false)
 const duration = ref(0)
 const playbackRate = ref(1)
 const replayError = ref('')
@@ -471,6 +474,7 @@ function pauseReplay() {
 }
 
 function seek(value) {
+  isSliderDragging.value = false
   const offset = Math.max(0, Number(value) || 0)
   progress.value = offset
   if (replayKind.value === 'rrweb') {
@@ -486,6 +490,7 @@ function seek(value) {
 }
 
 function onSliderInput(value) {
+  isSliderDragging.value = true
   progress.value = Math.max(0, Number(value) || 0)
 }
 
@@ -498,6 +503,8 @@ function startProgress() {
   window.clearInterval(progressTimer)
   progressTimer = window.setInterval(() => {
     if (!duration.value) return
+    // 拖拽期间不从播放器回写进度，避免与 el-slider 拖拽打架
+    if (isSliderDragging.value) return
     if (replayKind.value === 'rrweb') {
       if (!currentReplayer) return
       const current = typeof currentReplayer.getCurrentTime === 'function'
@@ -526,6 +533,7 @@ function startProgress() {
 function destroyPlayer() {
   window.clearInterval(progressTimer)
   progressTimer = 0
+  isSliderDragging.value = false
   progress.value = 0
   duration.value = 0
   isPlaying.value = false
@@ -674,19 +682,24 @@ defineExpose({ play, currentSessionCode })
               v-if="timelineMarkers.length"
               class="replay-timeline"
               role="group"
-              :title="`${timelineMarkers.length} 个关键事件标记（点击可定位）`"
+              :aria-label="`${timelineMarkers.length} 个关键事件标记（点击可定位）`"
             >
-              <button
+              <el-tooltip
                 v-for="marker in timelineMarkers"
                 :key="marker.id"
-                type="button"
-                class="replay-timeline-marker"
-                :class="`is-${marker.kind}`"
-                :style="{ left: `${marker.percent}%` }"
-                :title="`${marker.label} · ${formatTime(marker.offset)}`"
-                :aria-label="`${marker.label}，定位到 ${formatTime(marker.offset)}`"
-                @click.stop="seek(marker.offset)"
-              ></button>
+                :content="`${marker.label} · ${formatTime(marker.offset)}`"
+                placement="top"
+                :show-after="200"
+              >
+                <button
+                  type="button"
+                  class="replay-timeline-marker"
+                  :class="`is-${marker.kind}`"
+                  :style="{ left: `${marker.percent}%` }"
+                  :aria-label="`${marker.label}，定位到 ${formatTime(marker.offset)}`"
+                  @click.stop="seek(marker.offset)"
+                ></button>
+              </el-tooltip>
             </div>
             <!-- 当前进度时间气泡：组件内渲染、锚定在进度条手柄正上方（不用 teleport 的 popper，避免定位飘移） -->
             <div v-if="duration" class="replay-progress-bubble" :style="{ left: bubbleLeft }">{{ formatTime(progress) }}</div>
