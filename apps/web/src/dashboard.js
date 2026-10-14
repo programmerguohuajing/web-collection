@@ -241,7 +241,8 @@ export function normalizePageResponse(data, fallback = {}) {
   const pageSize = positiveInteger(payload?.pageSize ?? envelopeMeta?.pageSize, fallback.pageSize || (items.length || 10))
   const totalValue = payload?.total ?? payload?.count ?? envelopeMeta?.total ?? envelopeMeta?.count
   const total = Number.isFinite(Number(totalValue)) ? Math.max(0, Number(totalValue)) : items.length
-  return { items, page, pageSize, total }
+  const totalEstimated = Boolean(payload?.totalEstimated ?? envelopeMeta?.totalEstimated)
+  return { items, page, pageSize, total, totalEstimated }
 }
 
 export function toList(data) {

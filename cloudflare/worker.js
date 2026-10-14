@@ -1341,24 +1341,89 @@ async function pagedEvents(env, url, forcedType) {
   const page = Math.max(1, Number(url.searchParams.get('page') || 1)), pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || 10)))
   // 控制台默认请求只含 app/type/time/page。此类总数从小时读模型 + 两端不足一小时的
   // events 边角精确缝合，避免每个事件页签都对 24h/7d 原始表执行一次全窗 COUNT。
+  // P0（2026-10-15 D1 读配额打满）：缝合计划不可用时，禁止对任意窗口执行无界
+  // `count(*) from events`（实测 90 天窗单次 12 万行读、42 次打满 500 万/日配额）。
+  // 窗口 ≤7 天走精确 COUNT（有界）；更大窗口改读小时预聚合估计值并标记 totalEstimated。
   const countPlan = await hourlyStitchPlan(env, url, { extraKeys: ['type', 'page', 'pageSize', '_t'], checkBrowser: false })
   const types = String(forcedType || url.searchParams.get('type') || '').split(',').filter(Boolean)
+  let totalEstimated = false
+  const countPromise = (async () => {
+    if (countPlan) return stitchedEventCount(env, countPlan, types)
+    if (queryWindowMs(url) <= 7 * 86400000) {
+      const r = await env.DB.prepare(`select count(*) count from events ${where}`).bind(...values).first()
+      return Number(r?.count || 0)
+    }
+    totalEstimated = true
+    return estimatedEventCount(env, url, types)
+  })()
   const [items, total] = await Promise.all([
     env.DB.prepare(`select * from events ${where} order by ts desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),
-    countPlan
-      ? stitchedEventCount(env, countPlan, types).then(count => ({ count }))
-      : env.DB.prepare(`select count(*) count from events ${where}`).bind(...values).first()
+    countPromise
   ])
-  return json({ items: items.results.map(mapEvent), total: total.count, page, pageSize })
+  return json({ items: items.results.map(mapEvent), total, totalEstimated, page, pageSize })
+}
+
+/** 查询窗口毫秒数（无显式起止时沿用 filters 的 90 天默认口径）。 */
+function queryWindowMs(url, defMs = 90 * 86400000) {
+  const now = Date.now()
+  const f = Number(url.searchParams.get('startTime')) || now - defMs
+  const t = Number(url.searchParams.get('endTime')) || now
+  return Math.max(0, t - f)
+}
+
+/**
+ * 大窗口事件总数估计：整窗读 events_hourly_stats（体积约为 events 的 1/50），
+ * 行读有界。小时表无覆盖时退化为近 7 天精确计数（仍有界），调用方须标记为估计值。
+ */
+async function estimatedEventCount(env, url, types = []) {
+  const p = url.searchParams, HOUR = 3600000, now = Date.now()
+  const fromTs = Number(p.get('startTime')) || now - 90 * 86400000
+  const toTs = Number(p.get('endTime')) || now
+  const h1 = Math.floor(fromTs / HOUR) * HOUR, h2 = Math.ceil(toTs / HOUR) * HOUR
+  const appId = p.get('appId') || ''
+  const typeCond = types.length ? ` and type in (${types.map(() => '?').join(',')})` : ''
+  try {
+    const row = await env.DB.prepare(
+      `select coalesce(sum(cnt),0) as c from events_hourly_stats where hour_ts>=? and hour_ts<?${appId ? ' and app_id=?' : ''}${typeCond}`
+    ).bind(h1, h2, ...(appId ? [appId] : []), ...types).first()
+    const est = Number(row?.c || 0)
+    if (est > 0) return est
+  } catch { /* fall through */ }
+  const r = await env.DB.prepare(`select count(*) count from events where ts>=?`).bind(now - 7 * 86400000).first().catch(() => null)
+  return Number(r?.count || 0)
 }
 
 async function paged(env, table, url, order) {
   const page=Math.max(1,Number(url.searchParams.get('page')||1)), pageSize=Math.min(100,Math.max(1,Number(url.searchParams.get('pageSize')||10)))
   const {where,values}=table==='issues'?issueFilters(url):{where:'',values:[]}
-  const issueUsers=`(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users`
-  const select=table==='issues'?`select *,${issueUsers} from issues`:`select * from ${table}`
+  const select=`select * from ${table}`
   const [rows,total]=await Promise.all([env.DB.prepare(`${select} ${where} order by ${order} desc limit ? offset ?`).bind(...values,pageSize,(page-1)*pageSize).all(),env.DB.prepare(`select count(*) count from ${table} ${where}`).bind(...values).first()])
-  return json({items:rows.results.map(mapIssue),total:total.count,page,pageSize})
+  let items=rows.results
+  if(table==='issues') items=await attachAffectedUsers(env,items,url)
+  return json({items:items.map(mapIssue),total:total.count,page,pageSize})
+}
+
+/**
+ * P0（2026-10-15 D1 读配额打满）：原实现是每行 issue 的关联子查询、无时间界，
+ * 每行都全历史扫描 error 事件（实测 7 次共 47 万行读）。现改为一次分组查询、
+ * 按问题窗口（默认 90 天）裁剪 error 事件，批量回填 affected_users。
+ */
+async function attachAffectedUsers(env, issues, url) {
+  if (!issues?.length) return issues || []
+  const since = Number(url.searchParams.get('startTime')) || Date.now() - 90 * 86400000
+  const keys = new Map(), params = []
+  for (const i of issues) {
+    const k = `${i.app_id}${i.name}${i.message}`
+    if (!keys.has(k)) { keys.set(k, 0); params.push(i.app_id, i.name, i.message) }
+  }
+  try {
+    const placeholders = Array.from({ length: keys.size }, () => '(?,?,?)').join(',')
+    const rows = (await env.DB.prepare(
+      `select app_id, name, message, count(distinct coalesce(nullif(user_id,''),nullif(device_id,''),nullif(session_id,''))) users from events where type='error' and ts>=? and (app_id,name,message) in (${placeholders}) group by 1,2,3`
+    ).bind(since, ...params).all().catch(() => ({ results: [] }))).results || []
+    for (const r of rows) keys.set(`${r.app_id}${r.name}${r.message}`, Number(r.users || 0))
+  } catch (e) { console.error('[issues] affected users failed:', e?.message || e) }
+  return issues.map(i => ({ ...i, affected_users: keys.get(`${i.app_id}${i.name}${i.message}`) || 0 }))
 }
 
 // ==================== D1 行读优化：预聚合 writer（① metric_daily_stats 日表 / ② events_hourly_stats 小时表） ====================
@@ -1604,7 +1669,7 @@ async function summary(env,url){
       return rows
     })(),
     all(env.DB.prepare(`select metric,value,name,props_json from events ${perfFilter.where} and ${perfGuard} and metric in ('fetch','xhr','resource') order by ts desc limit 1000`).bind(...perfFilter.values)),
-    all(env.DB.prepare(`select *,(select count(distinct coalesce(nullif(e.user_id,''),nullif(e.device_id,''),nullif(e.session_id,''))) from events e where e.type='error' and e.app_id=issues.app_id and e.name=issues.name and e.message=issues.message) affected_users from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values)),
+    all(env.DB.prepare(`select * from issues ${issueFilter.where} order by last_seen desc limit 100`).bind(...issueFilter.values)),
     one(env.DB.prepare(`select sum(case when status<>'resolved' then 1 else 0 end) issue_count,sum(case when status='regression' then 1 else 0 end) regression_count from issues ${issueFilter.where}`).bind(...issueFilter.values)),
     stitchPlan?.browserCovered ? Promise.resolve(null) : all(env.DB.prepare(`select coalesce(nullif(browser,''),'Unknown') browser, count(*) count from events ${where} group by 1 order by 2 desc`).bind(...values)),
     // 非缝合路径的三项聚合（缝合时该 Promise 结果被忽略，直扫代价与原实现一致）
@@ -1627,7 +1692,7 @@ async function summary(env,url){
   } else {
     [byTypeRows, behaviorRows, perfStats] = directAgg
   }
-  const issues=issueResult,byType={},behavior={},perf={},perfCounts={},byBrowser={}
+  const issues=await attachAffectedUsers(env,issueResult,url),byType={},behavior={},perf={},perfCounts={},byBrowser={}
   for(const row of byTypeRows)byType[row.type]=Number(row.count)
   for(const row of behaviorRows)behavior[row.name ?? 'null']=Number(row.count)
   for(const row of perfStats)perfCounts[row.metric ?? 'null']=Number(row.count)
@@ -1886,26 +1951,25 @@ async function sessions(env,url){
   // 跨启动复用（线上实测同一 session_id 9 月生成、10 月仍在用，资源事件连续数天），导致 23h 会话。
   // 按 30 分钟不活跃即新会话切分，时长取最长连续段并封顶 12h（单次会话连续活跃超 12h 即为
   // 后台挂起/复用 ID）；仅对当前页会话计算，避免全表二次扫描。
+  // P0（2026-10-15 D1 读配额打满）：原实现用窗口函数先扫全窗再按 session_id 过滤
+  //（实测单次 83 万行读）。现逐会话 `session_id=?` 走 idx_events_session 索引，
+  // 只读该会话自身的事件行，分段逻辑在 JS 侧等价实现（最长连续段，封顶 12h）。
   // SDK 会话轮换（后台恢复超 30 分钟即新 sessionId）为后续跟进：涉及采样/回放关联，需单独设计测试。
   let activeDurations = new Map()
   if (sessionIds.length) {
     try {
-      const placeholders = sessionIds.map(() => '?').join(',')
-      const durRows = await env.DB.prepare(`
-        with ordered as (
-          select session_id, ts, lag(ts) over (partition by session_id order by ts) as prev_ts
-          from events ${where} and session_id in (${placeholders})
-        ),
-        segs as (
-          select session_id, ts, sum(case when prev_ts is null or ts - prev_ts > 1800000 then 1 else 0 end) over (partition by session_id order by ts rows unbounded preceding) as seg
-          from ordered
-        ),
-        bounds as (
-          select session_id, seg, min(ts) as s, max(ts) as e from segs group by session_id, seg
-        )
-        select session_id, min(max(e - s), 43200000) as active_duration from bounds group by session_id
-      `).bind(...values, ...sessionIds).all()
-      for (const r of durRows.results || []) activeDurations.set(r.session_id, Number(r.active_duration || 0))
+      const durWhere = where.replace("session_id<>''", 'session_id=?')
+      await Promise.all(sessionIds.map(async sid => {
+        const rows = (await env.DB.prepare(`select ts from events ${durWhere} order by ts`).bind(sid, ...values).all().catch(() => ({ results: [] }))).results || []
+        let best = 0, segStart = null, prev = null
+        for (const r of rows) {
+          const t = Number(r.ts)
+          if (segStart == null || t - prev > 1800000) { if (segStart != null) best = Math.max(best, prev - segStart); segStart = t }
+          prev = t
+        }
+        if (segStart != null) best = Math.max(best, prev - segStart)
+        activeDurations.set(sid, Math.min(best, 43200000))
+      }))
     } catch (e) { console.error('[sessions] active duration failed, fallback to span:', e?.message || e) }
   }
   const replayTeam=url.__teamId?' where app_id in (select app_id from applications where team_id=?)':'',replayVals=url.__teamId?[url.__teamId]:[],replayIds=(await env.DB.prepare(`select distinct session_id from replays${replayTeam}`).bind(...replayVals).all()).results

@@ -394,3 +394,110 @@ assert.ok(exportQueries.every(([, sql, values]) => sql.includes('app_id=?') && v
 assert.doesNotMatch(exportQueries.find(([kind]) => kind === 'replays')[1], /events_json/)
 
 console.log('cloudflare filters tests passed')
+
+// P0（2026-10-15 D1 读配额打满回归）：大窗口（>7d）且缝合不可用时，事件分页总数
+// 禁止无界 `count(*) from events`，改读小时预聚合估计值并标记 totalEstimated。
+{
+  const queries = []
+  const response = await worker.fetch(new Request('https://example.com/api/events?page=1&pageSize=10'), {
+    DB: {
+      prepare(sql) {
+        let values = []
+        return {
+          bind(...bound) { values = bound; return this },
+          async all() { queries.push([sql, values]); return { results: [] } },
+          async first() {
+            queries.push([sql, values])
+            if (sql.includes('coalesce(sum(cnt),0)')) return { c: 500 }
+            return null
+          }
+        }
+      }
+    }
+  })
+  const body = await response.json()
+  assert.equal(body.total, 500)
+  assert.equal(body.totalEstimated, true)
+  assert.ok(queries.some(([sql]) => sql.includes('from events_hourly_stats')), '大窗口总数应读小时预聚合表')
+  assert.ok(!queries.some(([sql]) => /^select count\(\*\) count from events /.test(sql)), '大窗口禁止无界 events COUNT')
+}
+
+// 小窗口（≤7d）即使带小时表没有的维度（如 release）仍走精确 COUNT（有界，安全）。
+{
+  const queries = []
+  const now = Date.now()
+  const response = await worker.fetch(new Request(`https://example.com/api/events?release=1.2.3&startTime=${now - 86400000}&endTime=${now}&page=1&pageSize=10`), {
+    DB: {
+      prepare(sql) {
+        let values = []
+        return {
+          bind(...bound) { values = bound; return this },
+          async all() { queries.push([sql, values]); return { results: [] } },
+          async first() { queries.push([sql, values]); return { count: 42 } }
+        }
+      }
+    }
+  })
+  const body = await response.json()
+  assert.equal(body.total, 42)
+  assert.equal(body.totalEstimated, false)
+  assert.ok(queries.some(([sql]) => /^select count\(\*\) count from events /.test(sql)), '小窗口允许精确 COUNT')
+}
+
+// P0 回归：issues 列表不再用每行关联子查询扫全历史 error 事件；一次分组查询、按窗口裁剪。
+{
+  const queries = []
+  const response = await worker.fetch(new Request('https://example.com/api/issues?appId=web'), {
+    DB: {
+      prepare(sql) {
+        let values = []
+        return {
+          bind(...bound) { values = bound; return this },
+          async all() {
+            queries.push([sql, values])
+            if (sql.startsWith('select * from issues')) return { results: [{ fingerprint: 'f1', app_id: 'web', name: 'TypeError', message: 'boom', status: 'open', count: 3, first_seen: 1, last_seen: 2 }] }
+            if (sql.includes('group by 1,2,3')) return { results: [{ app_id: 'web', name: 'TypeError', message: 'boom', users: 7 }] }
+            return { results: [] }
+          },
+          async first() { queries.push([sql, values]); return { count: 1 } }
+        }
+      }
+    }
+  })
+  const body = await response.json()
+  assert.equal(body.items[0].affectedUsers, 7)
+  assert.ok(!queries.some(([sql]) => sql.includes('affected_users from issues') || /from events e where e\.type='error'/.test(sql)), '不得再用关联子查询')
+  const batch = queries.find(([sql]) => sql.includes('group by 1,2,3'))
+  assert.ok(batch, '应有一次批量 affected_users 查询')
+  assert.ok(batch[0].includes('ts>=?'), '批量查询须带时间界')
+  assert.ok(batch[0].includes('(app_id,name,message) in'), '批量查询按问题三元组匹配')
+}
+
+// P0 回归：会话时长不再用窗口函数全窗扫描；逐会话 session_id=? 走索引，JS 侧分段。
+{
+  const queries = []
+  const response = await worker.fetch(new Request('https://example.com/api/analytics/sessions?appId=web&_t=1'), {
+    DB: {
+      prepare(sql) {
+        let values = []
+        return {
+          bind(...bound) { values = bound; return this },
+          async all() {
+            queries.push([sql, values])
+            if (sql.includes('group by session_id')) return { results: [{ session_id: 's1', user_id: 'u1', user_name: '', device_id: '', started_at: 1000, ended_at: 9000000, event_count: 3, error_count: 0, paths: '/a' }] }
+            if (sql.includes('from replays')) return { results: [] }
+            if (sql.includes('session_id=?')) return { results: [{ ts: 1000 }, { ts: 2000 }, { ts: 4000000 }] }
+            return { results: [] }
+          },
+          async first() { queries.push([sql, values]); return { count: 1 } }
+        }
+      }
+    }
+  })
+  const body = await response.json()
+  // 1000→2000 一段 1000ms；2000→4000000 间隔 >30min 切分；最长连续段 1000ms
+  assert.equal(body.items[0].duration, 1000)
+  assert.ok(!queries.some(([sql]) => sql.includes('lag(ts) over')), '不得再用窗口函数全窗扫描')
+  const perSession = queries.filter(([sql]) => /from events .*session_id=\?/.test(sql))
+  assert.ok(perSession.length >= 1, '应逐会话按 session_id=? 查询')
+}

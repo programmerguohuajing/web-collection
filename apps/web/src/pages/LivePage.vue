@@ -16,11 +16,12 @@ function openDetail(row) {
   detailOpen.value = true
 }
 const total = ref(0)
+const totalEstimated = ref(false)
 const page = ref(1)
 const pageSize = ref(10)
 const liveKpis = computed(() => [
   { label: '近 5 分钟会话', value: events.value.filter(item => item.sessionId || item.session_id).length.toLocaleString(), delta: '实时', valueClass: 'value-primary' },
-  { label: '近 5 分钟事件', value: Number(total.value || events.value.length).toLocaleString(), delta: '实时事件流', valueClass: 'value-purple' },
+  { label: '近 5 分钟事件', value: `${totalEstimated.value ? '约 ' : ''}${Number(total.value || events.value.length).toLocaleString()}`, delta: totalEstimated.value ? '大窗口估计值' : '实时事件流', valueClass: 'value-purple' },
   { label: '实时在线', value: events.value.filter(item => item.userId || item.user_id).length.toLocaleString(), delta: '实时', valueClass: 'value-success' },
   { label: '实时错误率', value: events.value.length ? `${Math.round(events.value.filter(item => item.type === 'error').length / events.value.length * 10000) / 100}%` : '-', delta: '当前窗口', valueClass: 'value-danger' }
 ])
@@ -41,6 +42,7 @@ async function pollLive() {
     const normalized = normalizePageResponse(data, { page: page.value, pageSize: pageSize.value })
     events.value = normalized.items.filter(item => item && (item.type || item.name || item.ts))
     total.value = normalized.total
+    totalEstimated.value = normalized.totalEstimated
     pageSize.value = normalized.pageSize
     page.value = normalized.page
   } catch (error) {
