@@ -407,13 +407,15 @@ assert.doesNotMatch(exportQueries.find(([kind]) => kind === 'replays')[1], /even
           bind(...bound) { values = bound; return this },
           async all() {
             queries.push([sql, values])
-            if (sql.includes('order by created_at desc')) return { results: [snapRow, noSnapRow] }
+            // 元信息查询（不含大字段）：返回 id+长度，按时间倒序
+            if (sql.includes('length(events_json)')) return { results: [{ id: 2, created_at: 2000, session_id: 'g_r2_s1', len: 100 }, { id: 1, created_at: 1000, session_id: 'g_s1', len: 100 }] }
+            // 按 id 精确取回分段内容
+            if (sql.includes('where id in')) return { results: [snapRow, noSnapRow] }
             return { results: [] }
           },
           async first() {
             queries.push([sql, values])
             if (sql.includes('where session_id=?')) return null
-            if (sql.includes('order by created_at asc')) return noSnapRow
             return null
           }
         }
@@ -424,6 +426,9 @@ assert.doesNotMatch(exportQueries.find(([kind]) => kind === 'replays')[1], /even
   assert.ok(body.events.length > 0, '组内轮换段的快照应被加载，播放不应为空')
   assert.ok(body.events.some(e => e.type === 2), '应包含 type=2 全量快照')
   assert.ok(queries.some(([sql, values]) => sql.includes('base_session_id glob ?') && values.includes('ce8cbb78-3ff1-4d2a-9ec5-96e4be034008_r[0-9]*')), '应按组匹配 _r{n} 轮换段')
+  // 传输护栏：分段元信息查询不得携带 events_json 大字段（107 段全量拉取曾触发 Worker 1102）
+  const metaSql = queries.map(([sql]) => sql).find(sql => sql.includes('length(events_json)'))
+  assert.ok(metaSql && !/select[^]*events_json[^]*from replays where/.test(metaSql.replace('length(events_json)', '')), '元信息查询不得 select events_json')
 }
 
 console.log('cloudflare filters tests passed')

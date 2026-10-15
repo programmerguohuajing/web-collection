@@ -1822,20 +1822,25 @@ async function replayEvents(env,id,url){
   const root=replayGroupRoot(baseId), rGlob=root+'_r[0-9]*';
   const groupClause=`(base_session_id=? or base_session_id glob ? or (base_session_id is null and (session_id=? or session_id glob ?)))`;
   const groupVals=[root,rGlob,root,rGlob];
-  const firstSnap = await env.DB.prepare(`select id,created_at,session_id,events_json from replays where ${groupClause}${teamClause} order by created_at asc,id asc limit 1`).bind(...groupVals, ...teamVals).first();
-  // 最近 160 个存储分片足以覆盖正常 30 分钟窗口，同时避免旧超长会话把 D1 行读取放大到无界。
-  // 不再使用 wall-clock 25ms 截止：D1 查询耗时会计入该时间，曾导致循环尚未解码任何一行就直接返回空事件。
+  // D1→Worker 传输护栏（2026-10-15 事故：17891241267000.769… 会话组 107 段，
+  // 一次 select events_json 拉取上百 MB 直接触发 Worker 1102）：
+  // ① 先只取元信息（id/时间/长度，不含大字段）；② 按时间倒序累加至 8MB 预算即停；
+  // ③ 再按 id 精确取回入选分段。播放语义为"最近约 8MB 的回放内容"，超限部分截断。
   const detailRowLimit=160;
-  let recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where ${groupClause}${teamClause} order by created_at desc,id desc limit ?`).bind(...groupVals, ...teamVals, detailRowLimit).all()).results;
-  if (!recentRows.length) return json({events:[],truncated:false});
+  const FETCH_BUDGET_BYTES=8*1024*1024;
+  const metaRows=(((await env.DB.prepare(`select id,created_at,session_id,length(events_json) len from replays where ${groupClause}${teamClause} order by created_at desc,id desc limit ?`).bind(...groupVals,...teamVals,detailRowLimit).all()).results)||[]);
+  const pickedIds=[]; let fetchCapped=false, remaining=FETCH_BUDGET_BYTES;
+  for(const m of metaRows){
+    const len=Number(m.len||0);
+    if(pickedIds.length&&remaining-len<0){ fetchCapped=true; break; }
+    pickedIds.push(m.id); remaining-=len;
+  }
+  if(!pickedIds.length) return json({events:[],truncated:false});
+  const recentRows=(((await env.DB.prepare(`select id,created_at,session_id,events_json from replays where id in (${pickedIds.map(()=>'?').join(',')})`).bind(...pickedIds).all()).results)||[]);
 
   recentRows.sort((a,b) => (Number(a.created_at||0) - Number(b.created_at||0)) || (Number(a.id||0) - Number(b.id||0)));
   const rows = [];
   const seenIds = new Set();
-  if (firstSnap) {
-    const k = firstSnap.id || firstSnap.session_id;
-    if (k) { rows.push(firstSnap); seenIds.add(k); }
-  }
   for (const r of recentRows) {
     const k = r?.id || r?.session_id;
     if (k && !seenIds.has(k)) {
@@ -1881,7 +1886,7 @@ async function replayEvents(env,id,url){
   const lastTs=replayEventTsW(merged[merged.length-1])
   const firstTs=replayEventTsW(merged[0])
   const originalSpanMs=Math.max(0,lastTs-firstTs);
-  let out=merged,truncated=false;
+  let out=merged,truncated=fetchCapped;
   if(originalSpanMs>REPLAY_SPAN_LIMIT_MS){
     const cutoff=lastTs-REPLAY_SPAN_LIMIT_MS;
     let start=merged.findIndex(e=>replayEventTsW(e)>=cutoff);
