@@ -48,7 +48,9 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error, trac
     try {
       const res = await originalFetch(input, requestInit)
       if (!url.includes(endpoint) && allowedRequest(url, requestAllowlist)) {
-        const timing = performance.getEntriesByName(new URL(url, location.href).href).at(-1)
+        // 兼容旧 WebView（Uni-App 等环境不支持 Array.prototype.at，ES2022）
+        const perfEntries = performance.getEntriesByName(new URL(url, location.href).href)
+        const timing = perfEntries[perfEntries.length - 1]
         const fetchProps = {
           url,
           method,

@@ -23,7 +23,9 @@ export function setupTtiMonitor({ metric }) {
   // 捕获 LCP 时间点
   try {
     const lcpObs = new PerformanceObserver(list => {
-      const entry = list.getEntries().at(-1)
+      // 兼容旧 WebView（不支持 Array.prototype.at，ES2022）
+      const lcpEntries = list.getEntries()
+      const entry = lcpEntries[lcpEntries.length - 1]
       if (entry) lcpTime = entry.startTime
     })
     lcpObs.observe({ type: 'largest-contentful-paint', buffered: true })
