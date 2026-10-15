@@ -653,3 +653,64 @@ test('回放文件截断策略：rotateReplaySession / cutReplay / 路由 / 错�
   }
 })
 
+
+// 快照捕获校验（2026-10-15 事故：某 iPhone 录制整段无 type=2，无法播放且不可恢复）。
+// takeFullSnapshot 为异步发出，若 3s 内仍未捕获到快照，应补打一次。
+test('startReplay 快照丢失时延迟重试补打', async () => {
+  const props = {
+    window: globalThis,
+    location: { href: 'https://example.com/', pathname: '/', referrer: '' },
+    document: {
+      title: '', hidden: false,
+      addEventListener() {}, removeEventListener() {}, querySelector: () => null,
+      head: { appendChild() {} },
+      createElement: () => ({ dataset: {}, addEventListener() {}, style: {} })
+    },
+    navigator: { userAgent: 'node-test' },
+    history: { pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    requestAnimationFrame: (cb) => setTimeout(() => cb(Date.now()), 0),
+    cancelAnimationFrame: () => {},
+    BroadcastChannel: undefined,
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({}) })
+  }
+  const originals = {}
+  for (const k of Object.keys(props)) {
+    originals[k] = Object.getOwnPropertyDescriptor(globalThis, k)
+    Object.defineProperty(globalThis, k, { value: props[k], configurable: true, writable: true })
+  }
+  let fullSnapshotCalls = 0
+  let capturedEmit = null
+  // 模拟快照异步丢失：takeFullSnapshot 被调用但从不触发 emit。
+  const mockRecord = (opts) => { capturedEmit = opts?.emit; return () => {} }
+  mockRecord.takeFullSnapshot = () => { fullSnapshotCalls++ }
+  __setDriver({ record: mockRecord })
+  let client
+  try {
+    client = createEys({
+      distributedTracing: false, replaySegmentByRoute: false, behavior: false, exposure: false,
+      requests: false, performance: false, console: false, whiteScreen: false, memory: false,
+      runtime: false, environment: false, runtimeInfo: false,
+      replay: true, replaySampleRate: 1, replayCompression: false,
+      appId: 't', endpoint: '/api/collect'
+    })
+    await client.startReplay()
+    assert.equal(fullSnapshotCalls, 1, '启动时应打一次快照')
+    // 只喂增量事件，不喂快照，模拟快照丢失。
+    capturedEmit({ type: 3, timestamp: Date.now(), data: { source: 0 } })
+    await new Promise(resolve => setTimeout(resolve, 3300))
+    assert.equal(fullSnapshotCalls, 2, '3s 未捕获快照应补打一次')
+    // 补打后若快照到达，不应再重复补打。
+    capturedEmit({ type: 2, timestamp: Date.now(), data: {} })
+    await new Promise(resolve => setTimeout(resolve, 3300))
+    assert.equal(fullSnapshotCalls, 2, '快照已捕获后不应再补打')
+  } finally {
+    await client?.destroy?.()
+    __setDriver(null)
+    for (const k of Object.keys(props)) {
+      if (originals[k]) Object.defineProperty(globalThis, k, originals[k])
+      else delete globalThis[k]
+    }
+  }
+})

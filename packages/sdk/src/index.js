@@ -656,6 +656,8 @@ export function createEys(options = {}) {
   let replayStopTimer = 0
   let replayStartTimer = 0
   let replayIdleTimer = 0
+  let replaySnapshotTimer = 0
+  let segmentSnapshotCaptured = false
   let currentSegmentBytes = 0
   let stopLongTaskWatch = null
   /** 闲置会话切分状态：lastUserActivityAt 记录最近交互；replayIdleEnded 表示当前
@@ -1513,6 +1515,7 @@ export function createEys(options = {}) {
   /** 将回放事件写入环形缓冲，达到阈值后批量上报 */
   function queueReplay(event) {
     if (!cfg.replay) return
+    if (event && event.type === 2) segmentSnapshotCaptured = true
     const now = Date.now()
     // SDK-211 · 错误触发升采样：窗口过期后退出升采样并恢复常态窗口。
     if (errorBoosted && now > errorBoostUntil) {
@@ -1657,11 +1660,15 @@ export function createEys(options = {}) {
       console.warn('[web-collection] 加载 rrweb 失败，回放已降级关闭：', err && err.message)
       return
     }
-    // 加载期间 SDK 可能已被销毁（或录制已被停止）：立即停录并返回，避免 rrweb 内部定时器泄露。
-    if (stopReplay || disposed) {
+    // 加载期间 SDK 可能已被销毁：立即停录并返回，避免 rrweb 内部定时器泄露。
+    // 注意：stopReplay 已设置表示另一路并发启动已成功建立录制，此时直接返回，
+    // 不得调用 stopCurrentReplay（2026-10-15 事故：并发启动的第二路把第一路的
+    // 录制停掉，导致快照校验定时器被连带清除）。
+    if (disposed) {
       if (stopReplay) stopCurrentReplay()
       return
     }
+    if (stopReplay) return
     // SDK-211 · 录制实例隔离：每个 rrweb 录制实例（分段）使用独立的环形缓冲。
     // 关键在「建立录制之前」清空——避免上一实例留存的全量快照/增量跨实例串入本实例的
     // 事件流。rrweb 的 node id 空间按录制实例独立，跨实例拼接会让重建镜像树时 node id
@@ -1700,6 +1707,18 @@ export function createEys(options = {}) {
     // 独立加载的分页记录）以全量快照开头。rrweb record() 的隐式初始快照为异步发出，
     // 在错误/路由高频切换时可能丢失，故此处确定性补打，根除「有播放时间、无画面」黑屏。
     takeReplaySnapshot()
+    // 快照捕获校验（2026-10-15 事故：某 iPhone 录制整段无 type=2，无法播放且不可恢复）：
+    // takeFullSnapshot 为异步发出，3s 后若仍未捕获到快照则补打一次并上报诊断。
+    // 仅重试一次，避免驱动异常时无意义循环；重复快照无害（服务端按快照切分合并）。
+    segmentSnapshotCaptured = false
+    clearTimeout(replaySnapshotTimer)
+    replaySnapshotTimer = setTimeout(() => {
+      replaySnapshotTimer = 0
+      if (!segmentSnapshotCaptured && !disposed && stopReplay) {
+        takeReplaySnapshot()
+        diagnostic.emit('replay_snapshot_retry', {})
+      }
+    }, 3000)
     clearTimeout(replayStopTimer)
     if (cfg.replayMaxDuration > 0) {
       replayStopTimer = setTimeout(() => endReplaySegment('max_duration'), cfg.replayMaxDuration)
@@ -1715,6 +1734,8 @@ export function createEys(options = {}) {
   /** 停止当前回放录制：清除定时器、调用 stopReplay 清理函数、置空引用 */
   function stopCurrentReplay() {
     clearTimeout(replayStopTimer)
+    clearTimeout(replaySnapshotTimer)
+    replaySnapshotTimer = 0
     stopReplay?.()
     stopReplay = null
   }
