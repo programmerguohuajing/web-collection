@@ -488,7 +488,10 @@ export async function api(path, options = {}) {
       try { body = JSON.parse(text) } catch { body = text }
     }
     if (!res.ok) {
-      const message = typeof body === 'string' ? body : body?.message || body?.error || `请求失败（${res.status}）`
+      // 服务端网关错误页（如 Cloudflare 1102）是整页 HTML，不能直接当文案展示
+      //（2026-10-15 事故：回放页把 1102 整页 HTML 渲染成了错误提示）。
+      const isHtml = typeof body === 'string' && /^\s*</.test(body)
+      const message = !isHtml && typeof body === 'string' ? body : body?.message || body?.error || `请求失败（${res.status}）`
       const requestError = new Error(message)
       requestError.code = 'HTTP_ERR'
       requestError.status = res.status
