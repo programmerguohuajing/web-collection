@@ -393,6 +393,39 @@ for (const kind of ['events', 'issues', 'replays']) {
 assert.ok(exportQueries.every(([, sql, values]) => sql.includes('app_id=?') && values.includes('web')))
 assert.doesNotMatch(exportQueries.find(([kind]) => kind === 'replays')[1], /events_json/)
 
+// 回放按会话组加载（2026-10-15 事故）：replayList 去掉 _r{n} 后缀分组展示，
+// 播放接口须加载组内全部轮换段；仅精确匹配 base_session_id 会漏掉携带快照的轮换段。
+{
+  const queries = []
+  const snapRow = { id: 2, created_at: 2000, session_id: 'g_r2_s1', events_json: JSON.stringify([{ type: 2, timestamp: 2000, data: {} }, { type: 3, timestamp: 2100, data: {} }]) }
+  const noSnapRow = { id: 1, created_at: 1000, session_id: 'g_s1', events_json: JSON.stringify([{ type: 3, timestamp: 1000, data: {} }]) }
+  const response = await worker.fetch(new Request('https://example.com/api/replays/ce8cbb78-3ff1-4d2a-9ec5-96e4be034008'), {
+    DB: {
+      prepare(sql) {
+        let values = []
+        return {
+          bind(...bound) { values = bound; return this },
+          async all() {
+            queries.push([sql, values])
+            if (sql.includes('order by created_at desc')) return { results: [snapRow, noSnapRow] }
+            return { results: [] }
+          },
+          async first() {
+            queries.push([sql, values])
+            if (sql.includes('where session_id=?')) return null
+            if (sql.includes('order by created_at asc')) return noSnapRow
+            return null
+          }
+        }
+      }
+    }
+  })
+  const body = await response.json()
+  assert.ok(body.events.length > 0, '组内轮换段的快照应被加载，播放不应为空')
+  assert.ok(body.events.some(e => e.type === 2), '应包含 type=2 全量快照')
+  assert.ok(queries.some(([sql, values]) => sql.includes('base_session_id glob ?') && values.includes('ce8cbb78-3ff1-4d2a-9ec5-96e4be034008_r[0-9]*')), '应按组匹配 _r{n} 轮换段')
+}
+
 console.log('cloudflare filters tests passed')
 
 // P0（2026-10-15 D1 读配额打满回归）：大窗口（>7d）且缝合不可用时，事件分页总数

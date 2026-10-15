@@ -1806,19 +1806,28 @@ function replayEventTsW(event){
   const value=Number(event?.timestamp??event?.ts)
   return Number.isFinite(value)?value:0
 }
+/** 回放会话组根键：与 replayList 分组口径一致，去掉 _r{n} 轮换与 _seg{n} 分段后缀。 */
+function replayGroupRoot(id){
+  return String(id||'').replace(/_seg\d+.*$/,'').replace(/_r\d+.*$/,'')
+}
 async function replayEvents(env,id,url){
   if(!id?.trim())return json({events:[]});
   const teamClause=url?.__teamId?' and app_id in (select app_id from applications where team_id=?)':'';
   const teamVals=url?.__teamId?[url.__teamId]:[];
   const hit=await env.DB.prepare(`select session_id,base_session_id from replays where session_id=?${teamClause} limit 1`).bind(id,...teamVals).first();
   const baseId=hit?.base_session_id||id;
-  const firstSnap = await env.DB.prepare(`select id,created_at,session_id,events_json from replays where (base_session_id=? or (base_session_id is null and session_id=?))${teamClause} order by created_at asc,id asc limit 1`).bind(baseId, baseId, ...teamVals).first();
+  // 与 replayList 分组口径一致：_r{n} 轮换段归属同一会话组，播放须加载组内全部分段。
+  // 仅精确匹配 base_session_id 会漏掉轮换段——而快照往往在轮换后的新分段里
+  //（2026-10-15 事故：ce8cbb78…4008 的 4 个原 base 段无快照，_r2/_r3 段有快照可播）。
+  const root=replayGroupRoot(baseId), rGlob=root+'_r[0-9]*';
+  const groupClause=`(base_session_id=? or base_session_id glob ? or (base_session_id is null and (session_id=? or session_id glob ?)))`;
+  const groupVals=[root,rGlob,root,rGlob];
+  const firstSnap = await env.DB.prepare(`select id,created_at,session_id,events_json from replays where ${groupClause}${teamClause} order by created_at asc,id asc limit 1`).bind(...groupVals, ...teamVals).first();
   // 最近 160 个存储分片足以覆盖正常 30 分钟窗口，同时避免旧超长会话把 D1 行读取放大到无界。
   // 不再使用 wall-clock 25ms 截止：D1 查询耗时会计入该时间，曾导致循环尚未解码任何一行就直接返回空事件。
   const detailRowLimit=160;
-  let recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where (base_session_id=? or (base_session_id is null and session_id=?))${teamClause} order by created_at desc,id desc limit ?`).bind(baseId, baseId, ...teamVals, detailRowLimit).all()).results;
-  if (!recentRows.length) recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where session_id=?${teamClause} order by created_at desc,id desc limit ?`).bind(id,...teamVals,detailRowLimit).all()).results;
-  if (!recentRows.length) recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where base_session_id like ?${teamClause} order by created_at desc,id desc limit ?`).bind(baseId+'_%',...teamVals,detailRowLimit).all()).results;
+  let recentRows = (await env.DB.prepare(`select id,created_at,session_id,events_json from replays where ${groupClause}${teamClause} order by created_at desc,id desc limit ?`).bind(...groupVals, ...teamVals, detailRowLimit).all()).results;
+  if (!recentRows.length) return json({events:[],truncated:false});
 
   recentRows.sort((a,b) => (Number(a.created_at||0) - Number(b.created_at||0)) || (Number(a.id||0) - Number(b.id||0)));
   const rows = [];
