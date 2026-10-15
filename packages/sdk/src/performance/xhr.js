@@ -11,6 +11,12 @@
  */
 import { injectBaggage, canTrace } from '../trace/propagation.js'
 
+/** 判断是否为 SDK 自身请求（上报接口 / 配置拉取），避免循环上报。 */
+function isSdkOwnUrl(url, endpoint) {
+  const u = String(url || '')
+  return (endpoint && u.includes(endpoint)) || u.includes('/sdk-config')
+}
+
 export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming, tracer }) {
   if (typeof XMLHttpRequest === 'undefined') return () => {}
   const xhrOpen = XMLHttpRequest.prototype.open
@@ -66,7 +72,7 @@ export function setupXhrMonitor({ endpoint, metric, error, tracing, traceOrigins
       this.addEventListener('abort', () => markFailure('aborted'), { once: true })
       this.addEventListener('error', () => markFailure('network'), { once: true })
       this.addEventListener('loadend', () => {
-        if (!this.__eys.url.includes(endpoint) && allowedRequest(this.__eys.url, requestAllowlist)) {
+        if (!isSdkOwnUrl(this.__eys.url, endpoint) && allowedRequest(this.__eys.url, requestAllowlist)) {
           const status = this.status || 0
           const errorType = this.__eys.failureType || (status === 0 ? 'network' : status >= 400 ? 'http' : undefined)
           const { spanContext, span } = this.__eys

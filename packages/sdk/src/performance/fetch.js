@@ -12,6 +12,16 @@
  */
 import { injectBaggage, canTrace } from '../trace/propagation.js'
 
+/**
+ * 判断是否为 SDK 自身请求（上报接口 / 配置拉取），避免循环上报。
+ * 2026-10-15 修复：此前仅排除 endpoint（如 /api/collect），/sdk-config
+ * 未被排除，导致 SDK 把自己的配置拉取当成业务请求上报。
+ */
+function isSdkOwnUrl(url, endpoint) {
+  const u = String(url || '')
+  return (endpoint && u.includes(endpoint)) || u.includes('/sdk-config')
+}
+
 export function setupFetchMonitor({ originalFetch, endpoint, metric, error, tracing, traceOrigins, pageTraceId, requestAllowlist = [], serverTiming, tracer }) {
   if (!originalFetch) return
 
@@ -47,7 +57,7 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error, trac
 
     try {
       const res = await originalFetch(input, requestInit)
-      if (!url.includes(endpoint) && allowedRequest(url, requestAllowlist)) {
+      if (!isSdkOwnUrl(url, endpoint) && allowedRequest(url, requestAllowlist)) {
         // 兼容旧 WebView（Uni-App 等环境不支持 Array.prototype.at，ES2022）
         const perfEntries = performance.getEntriesByName(new URL(url, location.href).href)
         const timing = perfEntries[perfEntries.length - 1]
@@ -85,7 +95,7 @@ export function setupFetchMonitor({ originalFetch, endpoint, metric, error, trac
       }
       return res
     } catch (err) {
-      if (!url.includes(endpoint) && allowedRequest(url, requestAllowlist)) {
+      if (!isSdkOwnUrl(url, endpoint) && allowedRequest(url, requestAllowlist)) {
         const errorType = err?.name === 'AbortError' ? 'aborted' : err?.name === 'TimeoutError' ? 'timeout' : 'network'
         error(err, { name: 'FetchError', source: url, errorType, aborted: errorType === 'aborted' })
         // 记录异常到 span

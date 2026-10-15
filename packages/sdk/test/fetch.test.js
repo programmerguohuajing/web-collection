@@ -43,3 +43,30 @@ test('traced fetch emits event with spanId and parentSpanId', async () => {
   assert.ok(fetchEvent.props.__parentSpanId, 'fetch 事件必须带 parentSpanId（指向根 span）')
   assert.equal(fetchEvent.props.__traceId, 'ed238df38c1d1dd21f2bf25bf48ebe96')
 })
+
+test('SDK 自身请求（/sdk-config）不被当成业务请求上报', async () => {
+  const captured = []
+  const originalFetch = async () => ({ status: 200, ok: true, headers: { get: () => null } })
+  setupFetchMonitor({
+    originalFetch,
+    endpoint: 'https://web-collection.jingguohua.cc.cd/api/collect',
+    metric: (name, value, props) => captured.push({ name, props }),
+    error: () => {},
+    tracing: false,
+    traceOrigins: [],
+    pageTraceId: 'x',
+    requestAllowlist: [],
+    tracer: null
+  })
+
+  // SDK 拉配置的请求：不应产生 fetch 性能事件
+  await window.fetch('https://web-collection.jingguohua.cc.cd/sdk-config?app_id=ts-app-uni&sdk_version=0.8.1')
+  // 上报接口：不应产生（原有行为）
+  await window.fetch('https://web-collection.jingguohua.cc.cd/api/collect', { method: 'POST' })
+  // 业务请求：应正常产生
+  await window.fetch('https://test-m.jiangjunzh.com/prod-api/accountshop-system/notice/subscribe')
+
+  const fetchEvents = captured.filter(e => e.name === 'fetch')
+  assert.equal(fetchEvents.length, 1, '只应有 1 条业务 fetch 事件')
+  assert.ok(fetchEvents[0].props.url.includes('test-m.jiangjunzh.com'), '应为业务 URL')
+})

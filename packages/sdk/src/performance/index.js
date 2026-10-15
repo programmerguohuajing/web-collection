@@ -60,9 +60,10 @@ export function setupPerformanceMonitor({ metric, error, endpoint, originalFetch
   let blockingTime = 0
   observe('longtask', e => { blockingTime += Math.max(0, e.duration - 50); metric('longtask', e.duration, { name: e.name, attribution: e.attribution?.slice?.(0, 3).map(item => ({ name: item.name, containerType: item.containerType, containerName: item.containerName })) }); metric('tbt', blockingTime) })
   const cls = observeCls()
-  // 资源加载监控，过滤掉自身采集接口的请求
+  // 资源加载监控，过滤掉自身采集接口的请求（含 /sdk-config）
   observe('resource', e => {
-    if (String(e.name).includes(endpoint)) return
+    const rn = String(e.name || '')
+    if ((endpoint && rn.includes(endpoint)) || rn.includes('/sdk-config')) return
     metric('cache_hit_rate', e.transferSize === 0 && e.decodedBodySize > 0 ? 100 : 0)
     metric('resource_failure_rate', 0)
     metric('resource', e.duration, { name: e.name, initiatorType: e.initiatorType, transferSize: e.transferSize, encodedBodySize: e.encodedBodySize, decodedBodySize: e.decodedBodySize, ttfb: e.responseStart })
