@@ -849,7 +849,9 @@ defineExpose({ play, currentSessionCode })
 .replay-play-button { width: 36px; height: 36px; }
 .replay-slider-wrap { position: relative; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 8px; min-width: 0; }
 /* B4 关键事件时间轴：与 el-slider 同宽，标记按相对时间百分比定位 */
-.replay-timeline { position: relative; height: 12px; }
+/* z-index:1002 > el-slider 手柄自带的 z-index:1001，保证标注点 tooltip 悬浮时不被手柄小圆点盖住。
+   时间轴条带在 slider 下方（flex 纵排 + gap），不会遮挡 slider 拖拽区；tip 本身 pointer-events:none。 */
+.replay-timeline { position: relative; height: 12px; z-index: 1002; }
 .replay-timeline-marker {
   position: absolute;
   top: 50%;
