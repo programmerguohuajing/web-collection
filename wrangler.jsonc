@@ -36,5 +36,6 @@
   // "vars": { "ACCOUNTS_ENABLED": "1" }
   // 紧急降载（2026-10-14）：D1 rows_written 配额紧张，非错误事件仅保留 5%。
   // 配额稳定后删除本行并重新部署。
-  "vars": { "EMERGENCY_SAMPLE_RATE": "0.05" }
+  // 告警时间时区（2026-10-15）：告警通知的“发生时间”按此时区格式化，不写死在代码里。
+  "vars": { "EMERGENCY_SAMPLE_RATE": "0.05", "TIMEZONE": "Asia/Shanghai" }
 }

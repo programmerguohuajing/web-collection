@@ -18,7 +18,7 @@ export const templateVariables = [
   { key: 'page', label: '页面路径', desc: '触发页面', example: '/checkout', group: '上下文', types: '*' },
   { key: 'release', label: '版本', desc: '应用版本', example: 'v1.2.3', group: '上下文', types: '*' },
   { key: 'traceId', label: '链路ID', desc: '关联追踪ID', example: 'a1b2c3', group: '上下文', types: '*' },
-  { key: 'occurredAt', label: '发生时间', desc: '本地时间（Asia/Shanghai）', example: '2026-10-15 17:33:18', group: '上下文', types: '*' },
+  { key: 'occurredAt', label: '发生时间', desc: '本地时间（跟随运行环境时区）', example: '2026-10-15 17:33:18', group: '上下文', types: '*' },
   { key: 'alertId', label: '告警ID', desc: '告警唯一标识', example: '1024', group: '上下文', types: '*' },
   { key: 'recipients', label: '接收人', desc: '配置的接收人列表', example: 'a@b.com', group: '渠道', types: ['email', 'sms'] },
   { key: 'subject', label: '主题', desc: '邮件主题', example: '告警通知', group: '渠道', types: ['email'] }

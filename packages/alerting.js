@@ -131,15 +131,21 @@ export async function decryptSecrets(ciphertext, masterKey) {
   return JSON.parse(new TextDecoder().decode(value))
 }
 
-export async function sendChannel(channel, secrets, alert, fetcher = fetch) {
+export async function sendChannel(channel, secrets, alert, fetcher = fetch, opts = {}) {
   const config = parseValue(channel.config_json ?? channel.config, {})
   const occurredAtMs = Number(alert.createdAt || Date.now())
-  // 发生时间：人类可读的本地格式（YYYY-MM-DD HH:mm:ss，Asia/Shanghai），
-  // 不再用 UTC 的 ISO 8601（2026-10-15 用户反馈）。
+  // 发生时间：人类可读的本地格式（YYYY-MM-DD HH:mm:ss），时区跟随运行环境配置，
+  // 不写死（2026-10-15 用户反馈）。优先级：opts.timeZone > 系统时区 > UTC。
   // PagerDuty API 的 timestamp 字段仍需 ISO 8601，单独保留。
+  const timeZone = opts.timeZone || (() => {
+    try {
+      const sys = Intl.DateTimeFormat().resolvedOptions().timeZone
+      return sys || 'UTC'
+    } catch { return 'UTC' }
+  })()
   const occurredAtIso = new Date(occurredAtMs).toISOString()
   const occurredAtLocal = new Date(occurredAtMs).toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
   }).replace(/\//g, '-')
   const variables = {

@@ -3706,7 +3706,7 @@ async function testAlertChannel(env,id){
     await sendChannel(channel,await decryptSecrets(channel.secret_ciphertext,env.ALERT_SECRET_MASTER_KEY),{
       id:'test',appId:'test-app',metric:'error',level:'error',value:1,
       message:'[测试告警] Web Collection 告警渠道配置验证',page:'/governance',release:'test',traceId:'test',createdAt:now
-    })
+    },fetch,{timeZone:env.TIMEZONE})
     await env.DB.prepare(`update alert_channels set last_test_status='sent',last_test_error=null,last_test_at=?,updated_at=? where id=?`).bind(now,now,id).run()
     return json({ok:true})
   }catch(error){
@@ -3735,7 +3735,7 @@ async function createAlertDeliveries(env,alertId){
   const matched=channels.filter(channel=>channelMatches(channel,alertValue))
   if(!channels.length&&env.FEISHU_WEBHOOK_URL){
     try{
-      await sendChannel({type:'feishu',config_json:'{}'},{url:env.FEISHU_WEBHOOK_URL},alertValue)
+      await sendChannel({type:'feishu',config_json:'{}'},{url:env.FEISHU_WEBHOOK_URL},alertValue,fetch,{timeZone:env.TIMEZONE})
       await env.DB.prepare('update alert_history set notified=1,notify_error=null where id=?').bind(alertId).run()
     }catch(error){
       await env.DB.prepare('update alert_history set notified=0,notify_error=? where id=?').bind(alertError(error),alertId).run()
@@ -3806,7 +3806,7 @@ async function deliverWorkerAlert(env,id,retried=0){
     return
   }
   try{
-    const result=await sendChannel({type:row.channel_type,config_json:row.config_json},await decryptSecrets(row.secret_ciphertext,env.ALERT_SECRET_MASTER_KEY),workerAlert(row))
+    const result=await sendChannel({type:row.channel_type,config_json:row.config_json},await decryptSecrets(row.secret_ciphertext,env.ALERT_SECRET_MASTER_KEY),workerAlert(row),fetch,{timeZone:env.TIMEZONE})
     const now=Date.now()
     await env.DB.prepare(`update alert_deliveries set status='sent',provider_message_id=?,last_error=null,sent_at=?,updated_at=? where id=?`).bind(result.providerMessageId,now,now,id).run()
   }catch(error){
