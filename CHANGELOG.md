@@ -11,6 +11,12 @@ AIGC:
 
 # Changelog
 
+## [0.8.2] - 2026-10-15
+
+### 修复
+- **SDK**：去掉 `Array.prototype.at()`（ES2022），改用 `arr[arr.length - 1]`，兼容 Uni-App 等旧 WebView（此前在旧环境直接报 `performance.getEntriesByName(...).at is not a function`）。
+- **SDK 回放采样**：均匀采样曾丢弃 95% 的 rrweb 增量事件导致回放空白，改为按事件类型采样（状态事件永不丢弃）。
+
 ## [0.8.1] - 2026-09-18
 
 ### 亮点
