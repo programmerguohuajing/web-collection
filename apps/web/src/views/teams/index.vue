@@ -546,7 +546,7 @@ onMounted(async () => {
           <el-table-column label="最后活跃" width="140">
             <template #default="{ row }">{{ activeLabel(row.lastActiveAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="100" v-if="canManage">
+          <el-table-column label="操作" cell-class-name="action-cell" width="100" v-if="canManage">
             <template #default="{ row }">
               <el-button v-if="row.role !== 'owner'" link type="danger" @click="removeMember(row)">移除</el-button>
               <span v-else class="muted">—</span>
@@ -583,7 +583,7 @@ onMounted(async () => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="160">
+          <el-table-column label="操作" cell-class-name="action-cell" width="160">
             <template #default="{ row }">
               <el-button link type="primary" :disabled="!inviteUrl(row)" @click="copyText(inviteUrl(row))">复制链接</el-button>
               <el-button link type="danger" @click="revokeInvite(row)">撤销</el-button>

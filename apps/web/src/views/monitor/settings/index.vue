@@ -542,7 +542,7 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag class="status-tag" :type="row.enabled ? 'success' : 'info'" effect="plain">{{ row.enabled ? '启用' : '暂停' }}</el-tag></template></el-table-column>
         <el-table-column label="今日事件" width="130"><template #default="{ row }">{{ row.events.toLocaleString() }}</template></el-table-column>
-        <el-table-column label="操作" width="120"><template #default="{ row }"><el-button link type="primary" @click="configure(row)">配置</el-button></template></el-table-column>
+        <el-table-column label="操作" cell-class-name="action-cell" width="120"><template #default="{ row }"><el-button link type="primary" @click="configure(row)">配置</el-button></template></el-table-column>
       </el-table>
     </el-card>
   </template>
@@ -822,7 +822,7 @@ onMounted(load)
                 <span>{{ formatRelativeTime(row.lastActiveAt || row.createdAt) }}</span>
               </template>
             </el-table-column>
-            <el-table-column v-if="canManageMembers" label="操作" width="90" fixed="right">
+            <el-table-column v-if="canManageMembers" label="操作" cell-class-name="action-cell" width="90" fixed="right">
               <template #default="{ row }">
                 <el-button
                   v-if="row.role !== 'owner' && (row.userId || row.id) !== me?.user?.id"

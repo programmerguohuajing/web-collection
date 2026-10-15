@@ -110,7 +110,7 @@ function openReplay(row) {
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="210" fixed="right">
+      <el-table-column label="操作" cell-class-name="action-cell" width="210" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="showDetail(row)">详情</el-button>
           <el-button link type="primary" @click="openReplay(row)">查看回放</el-button>

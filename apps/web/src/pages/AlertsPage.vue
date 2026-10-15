@@ -248,7 +248,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
       <el-table-column prop="threshold" label="阈值" width="100"><template #default="{ row }">{{ row.threshold != null ? Number(row.threshold).toFixed(2) : '-' }}</template></el-table-column>
       <el-table-column label="状态" width="110" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
       <el-table-column label="通知" width="110" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.notified ? 'success' : 'info'" size="small">{{ row.notified ? '已发送' : '未发送' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" cell-class-name="action-cell" width="220" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.status === 'pending'" link type="primary" size="small" @click="acknowledge(row)">处理</el-button>
           <el-button v-if="row.status !== 'resolved' && row.status !== 'dismissed'" link type="success" size="small" @click="resolve(row)">解决</el-button>
@@ -277,7 +277,7 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
       <el-table-column label="级别" width="180"><template #default="{ row }"><OverflowTip :text="channelFilters(row.levels)" /></template></el-table-column>
       <el-table-column label="指标" width="220"><template #default="{ row }"><OverflowTip :text="channelFilters(row.metrics)" /></template></el-table-column>
       <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" cell-class-name="action-cell" width="240" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="editChannel(row)">编辑</el-button>
           <el-button link size="small" @click="testChannel(row)" :loading="channelTestingId === row.id">测试</el-button>

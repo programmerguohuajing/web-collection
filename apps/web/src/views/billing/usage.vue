@@ -222,7 +222,7 @@ onMounted(load)
         <el-table-column label="回放会话数" width="130" align="right">
           <template #default="{ row }">{{ fmt(row.replay_sessions) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="130" fixed="right">
+        <el-table-column label="操作" cell-class-name="action-cell" width="130" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="viewApp(row)">查看该应用</el-button>
           </template>

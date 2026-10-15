@@ -249,7 +249,7 @@ onMounted(loadFunnels)
         <el-table-column label="更新时间" width="200" cell-class-name="time-cell">
           <template #default="{ row }">{{ row.updated_at ? new Date(Number(row.updated_at)).toLocaleString() : '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="210">
+        <el-table-column label="操作" cell-class-name="action-cell" width="210">
           <template #default="{ row }">
             <el-button link type="primary" @click="openReport(row)">查看报告</el-button>
             <el-button link type="primary" @click="openEditor(row)">编辑</el-button>
@@ -333,7 +333,7 @@ onMounted(loadFunnels)
             <el-table-column label="会话" min-width="150">
               <template #default="{ row }"><OverflowTip :text="row.sessionId" /></template>
             </el-table-column>
-            <el-table-column label="操作" width="220">
+            <el-table-column label="操作" cell-class-name="action-cell" width="220">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="jumpJourney(row.sessionId)">用户链路</el-button>
                 <el-button v-if="row.replaySessionId" link type="primary" size="small" @click="replay(row.replaySessionId)">回放</el-button>

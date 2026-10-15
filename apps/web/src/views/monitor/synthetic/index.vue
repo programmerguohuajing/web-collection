@@ -285,7 +285,7 @@ onMounted(async () => {
               <el-switch :model-value="row.enabled" @change="toggleEnabled(row)" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="250" fixed="right">
+          <el-table-column label="操作" cell-class-name="action-cell" width="250" fixed="right">
             <template #default="{ row }">
               <el-button text type="primary" @click="router.push(`/synthetic/${row.id}`)">详情</el-button>
               <el-button text :loading="runningId === row.id" @click="runNow(row)">立即探测</el-button>

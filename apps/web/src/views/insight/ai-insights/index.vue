@@ -172,7 +172,7 @@ onMounted(() => {
       <el-table-column label="发现时间" width="180">
         <template #default="{ row }"><span style="white-space:nowrap">{{ new Date(row.createdAt).toLocaleString() }}</span></template>
       </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" cell-class-name="action-cell" width="200" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button v-if="row.status === 'open'" link type="success" @click="setStatus(row, 'resolved')">已解决</el-button>
