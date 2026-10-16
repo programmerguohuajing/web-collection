@@ -240,12 +240,16 @@ function render() {
     const lx = 0.25 * a.x + 0.5 * cx + 0.25 * b.x
     const ly = 0.25 * a.y + 0.5 * cy + 0.25 * b.y
     const label = err ? ('⚠ ' + e.errors) : (calls + '·' + Math.round(Number(e.avgDuration || 0)) + 'ms')
+    const lw = label.length * 6.8 + 10
+    const edgeBg = err ? '#fef2f2' : 'rgba(255,255,255,.92)'
+    const edgeBd = err ? '#fecaca' : '#e2e8f0'
+    const edgeTx = err ? '#dc2626' : '#7c8aa0'
     parts.push(`<g class="edge-grp ${cls}" data-edge="${idx}">
       <path class="edge-base ${cls}" d="${d}" stroke-width="${w}" marker-end="url(#${err ? 'topoArrowErr' : 'topoArrow'})"/>
       <path class="edge-flow ${cls}" d="${d}" stroke-width="${Math.max(1.4, w * 0.9)}" style="animation-duration:${dur}s"/>
-      <g class="edge-label" transform="translate(${lx} ${ly - 7})">
-        <rect x="${-label.length * 3.4 - 5}" y="-9" width="${label.length * 6.8 + 10}" height="17" rx="8.5" class="edge-label-bg ${cls}"/>
-        <text text-anchor="middle" dy="3.5" class="edge-label-tx ${cls}">${label}</text>
+      <g transform="translate(${lx} ${ly - 7})" style="pointer-events:none">
+        <rect x="${-lw / 2}" y="-9" width="${lw}" height="17" rx="8.5" fill="${edgeBg}" stroke="${edgeBd}" stroke-width="1"/>
+        <text text-anchor="middle" dy="3.5" style="font-family:ui-monospace,Consolas,monospace;font-size:9px;fill:${edgeTx}${err ? ';font-weight:600' : ''}">${label}</text>
       </g>
     </g>`)
   })
@@ -262,14 +266,16 @@ function render() {
     // 标签宽度估算（用于胶囊底）：中文 12px / 字符，英文数字约 6.5px
     const labelW = Math.max(shortLabel.length * 7, sub.length * 5.4) + 18
     const labelY = n.y + r + 16
+    const tagBg = isErr ? '#fef2f2' : 'rgba(255,255,255,.94)'
+    const tagBd = isErr ? '#fecaca' : '#e2e8f0'
     parts.push(`<g class="topo-node${isErr ? ' is-err' : ''}" data-id="${n.id}" style="cursor:pointer;animation-delay:${delay}s">
       ${isErr ? `<circle cx="${n.x}" cy="${n.y}" r="${r + 7}" fill="none" stroke="${hc}" stroke-width="2.5" opacity="0.5" filter="url(#topoGlowErr)"/>` : `<circle cx="${n.x}" cy="${n.y}" r="${r + 5}" fill="none" stroke="${hc}" stroke-width="1.6" opacity="0.55"/>`}
       <circle cx="${n.x}" cy="${n.y}" r="${r}" fill="url(#${gid})" filter="url(#topoSoft)"/>
       <circle cx="${n.x - r * 0.28}" cy="${n.y - r * 0.32}" r="${r * 0.42}" fill="#ffffff" opacity="0.16"/>
-      <g class="node-tag" transform="translate(${n.x} ${labelY})">
-        <rect x="${-labelW / 2}" y="-10" width="${labelW}" height="30" rx="9" class="node-tag-bg${isErr ? ' err' : ''}"/>
-        <text class="node-label" y="2" text-anchor="middle">${shortLabel}</text>
-        <text class="node-sub" y="14" text-anchor="middle">${sub}</text>
+      <g transform="translate(${n.x} ${labelY})" style="pointer-events:none">
+        <rect x="${-labelW / 2}" y="-10" width="${labelW}" height="30" rx="9" fill="${tagBg}" stroke="${tagBd}" stroke-width="1"/>
+        <text y="2" text-anchor="middle" style="font-family:'Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;font-weight:600;fill:#2b3547">${shortLabel}</text>
+        <text y="14" text-anchor="middle" style="font-family:ui-monospace,Consolas,monospace;font-size:9px;fill:#8a96a7">${sub}</text>
       </g>
     </g>`)
   })
