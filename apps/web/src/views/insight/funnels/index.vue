@@ -262,10 +262,34 @@ onMounted(loadFunnels)
     <!-- 漏斗报告 -->
     <div v-if="report" ref="reportEl" v-loading="reportLoading">
       <div class="prd-kpis">
-        <div class="prd-kpi"><span class="k-label">进入用户</span><span class="k-value primary">{{ Number(report.meta.users).toLocaleString() }}</span><span class="k-foot">user_id 去重</span></div>
-        <div class="prd-kpi"><span class="k-label">总转化率</span><span class="k-value success">{{ (report.meta.overallRate * 100).toFixed(1) }}%</span><span class="k-foot">窗口 {{ formatWindow(report.meta.windowMs) }}</span></div>
-        <div class="prd-kpi"><span class="k-label">完成用户</span><span class="k-value">{{ Number(report.meta.converted).toLocaleString() }}</span><span class="k-foot">走完全部步骤</span></div>
-        <div class="prd-kpi"><span class="k-label">流失用户</span><span class="k-value danger">{{ Number(report.lossInsight.lostUsers).toLocaleString() }}</span><span class="k-foot">{{ report.lossInsight.withErrorRate != null ? `流失中 ${(report.lossInsight.withErrorRate * 100).toFixed(0)}% 遇错` : '-' }}</span></div>
+        <div class="prd-kpi">
+          <div class="k-ico" style="background:linear-gradient(135deg,#6366f1,#8b5cf6)">👥</div>
+          <div class="k-body"><span class="k-label">进入用户</span><span class="k-value primary">{{ Number(report.meta.users).toLocaleString() }}</span><span class="k-foot">user_id 去重</span></div>
+        </div>
+        <div class="prd-kpi">
+          <div class="k-ico" style="background:linear-gradient(135deg,#059669,#10b981)">📈</div>
+          <div class="k-body"><span class="k-label">总转化率</span><span class="k-value success">{{ (report.meta.overallRate * 100).toFixed(1) }}%</span><span class="k-foot">窗口 {{ formatWindow(report.meta.windowMs) }}</span></div>
+        </div>
+        <div class="prd-kpi">
+          <div class="k-ico" style="background:linear-gradient(135deg,#d97706,#f59e0b)">✅</div>
+          <div class="k-body"><span class="k-label">完成用户</span><span class="k-value">{{ Number(report.meta.converted).toLocaleString() }}</span><span class="k-foot">走完全部步骤</span></div>
+        </div>
+        <div class="prd-kpi">
+          <div class="k-ico" style="background:linear-gradient(135deg,#dc2626,#f87171)">📉</div>
+          <div class="k-body"><span class="k-label">流失用户</span><span class="k-value danger">{{ Number(report.lossInsight.lostUsers).toLocaleString() }}</span><span class="k-foot">{{ report.lossInsight.withErrorRate != null ? `流失中 ${(report.lossInsight.withErrorRate * 100).toFixed(0)}% 遇错` : '-' }}</span></div>
+        </div>
+      </div>
+
+      <!-- 步骤流览 -->
+      <div class="funnel-steps-flow">
+        <template v-for="(step, index) in report.steps" :key="step.idx">
+          <div class="flow-step">
+            <span class="flow-num">{{ index + 1 }}</span>
+            <span class="flow-name">{{ step.event }}</span>
+            <span class="flow-rate" :class="{ 'is-first': index === 0 }">{{ index === 0 ? '100%' : `${(step.rate * 100).toFixed(1)}%` }}</span>
+          </div>
+          <div v-if="index < report.steps.length - 1" class="flow-arrow">→</div>
+        </template>
       </div>
 
       <el-card shadow="never" class="section panel">
@@ -279,11 +303,19 @@ onMounted(loadFunnels)
         </template>
         <div class="funnel">
           <template v-for="(step, index) in report.steps" :key="step.idx">
-            <div v-if="index > 0 && step.lost > 0" class="funnel-drop">↓ 流失 {{ Number(step.lost).toLocaleString() }}（{{ ((1 - step.rate) * 100).toFixed(1) }}%）</div>
+            <div v-if="index > 0 && step.lost > 0" class="funnel-drop">
+              <span class="drop-ico">⚠</span>
+              流失 <b>{{ Number(step.lost).toLocaleString() }}</b>
+              <span class="drop-rate">（{{ ((1 - step.rate) * 100).toFixed(1) }}%）</span>
+            </div>
             <div class="funnel-step">
+              <div class="funnel-step-label">
+                <span class="step-badge">{{ index + 1 }}</span>
+                <OverflowTip :text="step.event" />
+              </div>
               <div class="funnel-bar-wrap">
                 <div class="funnel-bar" :class="`s${Math.min(6, step.idx)}`" :style="{ width: barWidth(step.users) }">
-                  {{ step.event }} {{ Number(step.users).toLocaleString() }}
+                  <span class="funnel-users">{{ Number(step.users).toLocaleString() }}</span>
                   <span class="funnel-meta">{{ index === 0 ? '100%' : `${(step.rate * 100).toFixed(1)}%` }}</span>
                 </div>
               </div>
@@ -396,6 +428,40 @@ onMounted(loadFunnels)
 .step-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .prd-sub { margin: 0 0 10px; font-size: 13px; font-weight: 650; color: var(--c-text); }
 .muted { color: var(--c-text-muted); }
-@media (max-width: 1180px) { .tpl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 760px) { .tpl-grid { grid-template-columns: 1fr; } }
+/* KPI 卡片：图标 + 内容 */
+.prd-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.prd-kpi { display: flex; gap: 12px; align-items: center; padding: 16px; background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 12px; }
+.k-ico { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px; font-size: 20px; flex: none; box-shadow: 0 3px 10px rgba(23,32,51,.15); }
+.k-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.k-label { font-size: 11px; color: var(--c-text-muted); }
+.k-value { font-size: 22px; font-weight: 800; font-family: var(--font-mono); line-height: 1.2; }
+.k-value.primary { color: #4f46e5; } .k-value.success { color: #059669; } .k-value.danger { color: #dc2626; }
+.k-foot { font-size: 11px; color: var(--c-text-muted); }
+/* 步骤流览 */
+.funnel-steps-flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; padding: 14px 16px; background: linear-gradient(135deg, #f8fafc, #eef2ff); border: 1px solid #e0e7ff; border-radius: 12px; }
+.flow-step { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: #fff; border: 1px solid #e2e8f0; border-radius: 20px; box-shadow: 0 2px 6px rgba(23,32,51,.06); }
+.flow-num { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #4f46e5; color: #fff; font-size: 11px; font-weight: 700; }
+.flow-name { font-size: 12.5px; font-weight: 600; color: #2b3547; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-rate { font-size: 11px; font-family: var(--font-mono); color: #059669; font-weight: 700; background: #ecfdf5; padding: 2px 8px; border-radius: 10px; }
+.flow-rate.is-first { color: #4f46e5; background: #eef2ff; }
+.flow-arrow { color: #a5b4fc; font-size: 18px; font-weight: 700; }
+/* 漏斗条 */
+.funnel-step { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.funnel-step-label { display: flex; align-items: center; gap: 8px; width: 220px; flex: none; font-size: 12.5px; font-weight: 600; color: #2b3547; }
+.step-badge { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; font-size: 11px; font-weight: 800; flex: none; }
+.funnel-bar-wrap { flex: 1; background: #f1f5f9; border-radius: 8px; overflow: hidden; }
+.funnel-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-radius: 8px; color: #fff; font-size: 12.5px; font-weight: 600; min-width: fit-content; transition: width .6s cubic-bezier(.2,.8,.3,1); box-shadow: inset 0 1px 0 rgba(255,255,255,.25); }
+.funnel-bar.s1 { background: linear-gradient(90deg, #4f46e5, #6366f1); }
+.funnel-bar.s2 { background: linear-gradient(90deg, #7c3aed, #8b5cf6); }
+.funnel-bar.s3 { background: linear-gradient(90deg, #0891b2, #06b6d4); }
+.funnel-bar.s4 { background: linear-gradient(90deg, #059669, #10b981); }
+.funnel-bar.s5 { background: linear-gradient(90deg, #d97706, #f59e0b); }
+.funnel-bar.s6 { background: linear-gradient(90deg, #dc2626, #f87171); }
+.funnel-users { font-family: var(--font-mono); }
+.funnel-meta { font-size: 11px; opacity: .92; background: rgba(255,255,255,.22); padding: 2px 8px; border-radius: 10px; }
+.funnel-drop { display: flex; align-items: center; gap: 6px; margin: 4px 0 4px 232px; font-size: 12px; color: #b45309; }
+.drop-ico { font-size: 14px; }
+.drop-rate { color: #92400e; font-weight: 600; }
+@media (max-width: 1180px) { .tpl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prd-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .tpl-grid { grid-template-columns: 1fr; } .prd-kpis { grid-template-columns: 1fr; } }
 </style>
