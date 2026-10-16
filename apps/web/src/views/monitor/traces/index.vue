@@ -331,6 +331,7 @@ watch(refreshVersion, () => { pager.page = 1; void load() })
 </script>
 
 <template>
+  <div class="page-heading"><div><h1>链路追踪</h1><p>分布式链路追踪，定位跨服务调用瓶颈</p></div></div>
   <section class="trace-design-page">
     <header class="trace-page-head">
       <div class="trace-heading">

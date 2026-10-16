@@ -19,6 +19,7 @@ const behaviorKpis = computed(() => [
 </script>
 
 <template>
+  <div class="page-heading"><div><h1>行为分析</h1><p>用户点击、浏览、滚动行为的排行、热力图与明细</p></div></div>
   <KpiGrid :items="behaviorKpis" />
   <SearchPanel :fields="['path', 'userId', 'keyword']" @search="refreshAll" />
 

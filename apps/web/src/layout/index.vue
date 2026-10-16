@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  Aim, Bell, ChatDotRound, Collection, Compass, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
+  Aim, Bell, ChatDotRound, Collection, Compass, Connection, Cpu, CreditCard, DataAnalysis, DataLine, Document, DocumentChecked, EditPen, Files, Film, Filter, Fold, Guide, Lock, MagicStick, MapLocation, Menu, Monitor, Odometer, Operation, PieChart, Postcard, Reading, Search, Setting, SetUp, Share, Stopwatch, Sunny, Switch, Tickets, Upload, User, View, Warning
 } from '@element-plus/icons-vue'
 import { api, error, insightUnread, loading, loadInsightUnread, markInsightsAsRead, normalizePageResponse, refresh, refreshAll, resetPages, resetPageFilters, applyRoutePrefill, pageLoading } from '../dashboard.js'
 import { RANGE_PRESETS, rangeFromPreset, useFilterStore } from '../stores/filters.js'
@@ -12,6 +12,7 @@ import AiDiagnosisDrawer from '../components/AiDiagnosisDrawer.vue'
 import DashboardHeader from '../components/DashboardHeader.vue'
 import OnboardingTourModal from '../components/OnboardingTourModal.vue'
 import BrandLogo from '../components/BrandLogo.vue'
+import CommandPalette from '../components/CommandPalette.vue'
 import { useAuth } from '../composables/useAuth'
 import { useBrand } from '../composables/useBrand'
 
@@ -26,6 +27,9 @@ const menuOpen = ref(false)
 const aiDrawerOpen = ref(false)
 const aiDrawerRef = ref(null)
 const onboardingModalRef = ref(null)
+const paletteRef = ref(null)
+
+function openPalette() { paletteRef.value?.open() }
 
 function toggleMenu() { menuOpen.value = !menuOpen.value }
 function closeMenu() { menuOpen.value = false }
@@ -266,6 +270,10 @@ onMounted(async () => {
           />
         </div>
         <div class="navbar-actions">
+          <el-button text class="cmd-trigger" aria-label="搜索页面" title="搜索页面 (⌘K)" @click="openPalette">
+            <el-icon><Search /></el-icon>
+            <span class="cmd-trigger-hint"><kbd>⌘</kbd><kbd>K</kbd></span>
+          </el-button>
           <el-badge :value="insightUnread" :hidden="!insightUnread" :max="99">
             <el-button text circle aria-label="通知" @click="openInsights"><el-icon><Bell /></el-icon></el-button>
           </el-badge>
@@ -286,11 +294,36 @@ onMounted(async () => {
 
     <AiDiagnosisDrawer v-model="aiDrawerOpen" />
     <OnboardingTourModal ref="onboardingModalRef" />
+    <CommandPalette ref="paletteRef" :groups="groups" />
   </div>
 </template>
 
 <style scoped>
 .header-tour-btn {
   font-weight: 500;
+}
+/* Cmd+K 搜索触发按钮 */
+.cmd-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: var(--el-text-color-regular);
+}
+.cmd-trigger:hover {
+  background: var(--el-fill-color-light);
+  color: var(--el-color-primary);
+}
+.cmd-trigger .el-icon { font-size: 17px; }
+.cmd-trigger-hint { display: inline-flex; gap: 2px; }
+.cmd-trigger-hint kbd {
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--el-text-color-placeholder);
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 5px;
+  padding: 1px 5px;
 }
 </style>

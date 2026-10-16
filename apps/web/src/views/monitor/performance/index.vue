@@ -15,6 +15,7 @@ const perfKpis = computed(() => [
 </script>
 
 <template>
+  <div class="page-heading"><div><h1>性能分析</h1><p>Web Vitals、资源加载与长任务的性能指标分析</p></div></div>
   <KpiGrid :items="perfKpis" />
   <SearchPanel :fields="['path', 'keyword']" @search="refreshAll" />
   <PerfPanel :perf="summary?.perf || {}" :counts="summary?.perfCounts || {}" />

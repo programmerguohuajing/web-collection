@@ -1,12 +1,14 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowRight, ArrowUp } from '@element-plus/icons-vue'
 import EventTable from '../components/EventTable.vue'
 import OverflowTip from '../components/OverflowTip.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import { api, normalizePageResponse, queryFromFilters, pageLoading } from '../dashboard.js'
 import { formatDuration, formatDate } from '../utils/format.js'
+import { exportCsv, fetchAllPages } from '../utils/csv.js'
 
 const PATH_PREVIEW = 3 // 单元格内联展示的页面数
 const route = useRoute()
@@ -113,6 +115,38 @@ async function loadSessionEvents(sessionId) {
 function onSearch() { pager.page = 1; void load() }
 function onSessionPageChange() { if (activeSession.value) void loadSessionEvents(activeSession.value.session_id) }
 
+const exporting = ref(false)
+async function exportSessions() {
+  exporting.value = true
+  try {
+    const rows = await fetchAllPages(async (page, pageSize) => {
+      const suffix = queryFromFilters({ page, pageSize })
+      const data = await api(`/api/analytics/sessions?${suffix}`, { requestKey: 'sessions:export' })
+      const normalized = normalizePageResponse(data)
+      return { items: normalized.items.map(normalizeSession), total: normalized.total }
+    })
+    const count = exportCsv('用户会话', [
+      { key: 'session_id', label: '会话 ID' },
+      { key: 'user_id', label: '用户 ID' },
+      { key: 'user_name', label: '用户名称' },
+      { key: 'started_at', label: '开始时间' },
+      { key: 'ended_at', label: '结束时间' },
+      { key: 'duration', label: '持续时长(ms)' },
+      { key: 'event_count', label: '事件数' },
+      { key: 'error_count', label: '错误数' }
+    ], rows.map(r => ({
+      ...r,
+      started_at: r.started_at ? formatDate(r.started_at) : '',
+      ended_at: r.ended_at ? formatDate(r.ended_at) : ''
+    })))
+    ElMessage.success(`已导出 ${count} 条`)
+  } catch (error) {
+    ElMessage.error(error.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 watch(() => route.query.userId, value => { if (value) { onSearch() } })
 watch(() => route.query.sessionId, value => {
   if (value) {
@@ -126,7 +160,7 @@ onMounted(() => { void load() })
 
 <template>
   <el-card shadow="never" class="section panel">
-    <template #header><div class="panel-head"><div><b>会话列表</b><small style="margin-left:8px">共 {{ total }} 个会话</small></div><el-button :loading="listLoading" @click="load">刷新</el-button></div></template>
+    <template #header><div class="panel-head"><div><b>会话列表</b><small style="margin-left:8px">共 {{ total }} 个会话</small></div><div><el-button size="small" :loading="exporting" @click="exportSessions" style="margin-right:8px">导出 CSV</el-button><el-button :loading="listLoading" @click="load">刷新</el-button></div></div></template>
     <SearchPanel :fields="['userId', 'userName', 'userPhone']" @search="onSearch" />
     <el-alert v-if="listError" class="table-error" type="error" :title="listError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
     <el-table :data="rows" border v-loading="listLoading" empty-text="暂无会话数据" @row-click="viewSession" style="cursor:pointer">

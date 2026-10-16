@@ -15,6 +15,7 @@ const errorKpis = computed(() => [
 </script>
 
 <template>
+  <div class="page-heading"><div><h1>错误监控</h1><p>捕获 JS 错误、资源错误与接口异常，聚合为问题并跟踪回归</p></div></div>
   <KpiGrid :items="errorKpis" />
   <SearchPanel :fields="['status', 'path', 'userId', 'userName', 'userPhone']" @search="refreshAll" />
   <IssuesPanel :issues="issues" :loading="tableLoading.issues" :total="issuePager.total" :page="issuePager.page" :page-size="issuePager.pageSize" @resolve="resolveIssue" @page-change="setPage('issues', $event)" @size-change="setPageSize('issues', $event)" />

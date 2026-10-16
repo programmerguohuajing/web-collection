@@ -1,9 +1,11 @@
 <script setup>
 import { onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading } from '../../../dashboard.js'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import SearchPanel from '../../../components/SearchPanel.vue'
 import { levelLabel, levelTagType } from '../../../utils/format.js'
+import { exportCsv, fetchAllPages } from '../../../utils/csv.js'
 
 const LOG_LEVELS = ['log', 'info', 'warn', 'error']
 
@@ -70,14 +72,53 @@ function onSearch() {
   void load()
 }
 
+const exporting = ref(false)
+async function exportLogs() {
+  exporting.value = true
+  try {
+    const rows = await fetchAllPages(async (page, pageSize) => {
+      const suffix = queryFromFilters({ name: query.level })
+      const data = await api(`/api/logs?${suffix}&page=${page}&pageSize=${pageSize}`, { requestKey: 'logs:export' })
+      const normalized = normalizePageResponse(data)
+      return { items: normalized.items, total: normalized.total }
+    })
+    const count = exportCsv('结构化日志', [
+      { key: 'ts', label: '时间' },
+      { key: 'name', label: '级别' },
+      { key: 'message', label: '内容' },
+      { key: 'app_id', label: '应用' },
+      { key: 'release', label: '版本' },
+      { key: 'user_id', label: '用户' },
+      { key: 'session_id', label: '会话' },
+      { key: 'trace_id', label: 'Trace' }
+    ], rows.map(r => ({
+      ts: r.ts ? formatDate(r.ts) : '',
+      name: levelLabel(r.name),
+      message: text(r.message),
+      app_id: r.appId ?? r.app_id ?? '',
+      release: r.release ?? r.release_name ?? '',
+      user_id: r.userId ?? r.user_id ?? '',
+      session_id: r.sessionId ?? r.session_id ?? '',
+      trace_id: r.traceId ?? r.trace_id ?? ''
+    })))
+    ElMessage.success(`已导出 ${count} 条`)
+  } catch (error) {
+    ElMessage.error(error.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(load)
 watch(refreshVersion, load)
 </script>
 
 <template>
+  <div class="page-heading"><div><h1>日志平台</h1><p>集中检索应用日志，支持级别筛选与关键字搜索</p></div></div>
   <SearchPanel :fields="['userId']" @search="onSearch" />
   <el-card shadow="never" class="section panel">
     <template #header><div class="panel-head"><b>结构化日志</b><el-space><el-select v-model="query.level" clearable placeholder="全部级别" style="width:130px" @change="changeLevel"><el-option v-for="level in LOG_LEVELS" :key="level" :label="levelLabel(level)" :value="level" /></el-select>
+      <el-button size="small" :loading="exporting" @click="exportLogs">导出 CSV</el-button>
       <el-button :loading="loading" @click="load">刷新</el-button></el-space></div></template>
     <el-alert v-if="loadError" class="table-error" type="error" :title="loadError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
     <el-table :data="rows" border v-loading="loading" empty-text="暂无日志数据">

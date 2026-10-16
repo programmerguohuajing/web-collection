@@ -31,6 +31,7 @@ watch(() => route.query.replayId, async value => {
 </script>
 
 <template>
+  <div class="page-heading"><div><h1>会话回放</h1><p>回放用户真实操作，还原问题现场</p></div></div>
   <ReplayPanel
     ref="panel"
     :replays="replays"
