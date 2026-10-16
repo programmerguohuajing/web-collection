@@ -249,7 +249,7 @@ function render() {
       </g>
     </g>`)
   })
-  // ---- nodes: 光晕 + 渐变球 + 入场动画 ----
+  // ---- nodes: 光晕 + 渐变球 + 标签在圆下方（圆内不放字，避免小节点溢出） ----
   nodes.forEach((n, i) => {
     const r = nodeRadius(n)
     const col = typeColor(n.type)
@@ -257,13 +257,20 @@ function render() {
     const hc = healthColor(n)
     const isErr = n.err > 0
     const delay = Math.min(0.6, i * 0.05)
-    const shortLabel = n.label.length > 12 ? n.label.slice(0, 11) + '…' : n.label
+    const shortLabel = n.label.length > 16 ? n.label.slice(0, 15) + '…' : n.label
+    const sub = `${n.calls} calls · P95 ${n.p95}ms`
+    // 标签宽度估算（用于胶囊底）：中文 12px / 字符，英文数字约 6.5px
+    const labelW = Math.max(shortLabel.length * 7, sub.length * 5.4) + 18
+    const labelY = n.y + r + 16
     parts.push(`<g class="topo-node${isErr ? ' is-err' : ''}" data-id="${n.id}" style="cursor:pointer;animation-delay:${delay}s">
       ${isErr ? `<circle cx="${n.x}" cy="${n.y}" r="${r + 7}" fill="none" stroke="${hc}" stroke-width="2.5" opacity="0.5" filter="url(#topoGlowErr)"/>` : `<circle cx="${n.x}" cy="${n.y}" r="${r + 5}" fill="none" stroke="${hc}" stroke-width="1.6" opacity="0.55"/>`}
       <circle cx="${n.x}" cy="${n.y}" r="${r}" fill="url(#${gid})" filter="url(#topoSoft)"/>
       <circle cx="${n.x - r * 0.28}" cy="${n.y - r * 0.32}" r="${r * 0.42}" fill="#ffffff" opacity="0.16"/>
-      <text class="node-label" x="${n.x}" y="${n.y + 4}" text-anchor="middle">${shortLabel}</text>
-      <text class="node-sub" x="${n.x}" y="${n.y + r + 13}" text-anchor="middle">${n.calls} calls · P95 ${n.p95}ms</text>
+      <g class="node-tag" transform="translate(${n.x} ${labelY})">
+        <rect x="${-labelW / 2}" y="-10" width="${labelW}" height="30" rx="9" class="node-tag-bg${isErr ? ' err' : ''}"/>
+        <text class="node-label" y="2" text-anchor="middle">${shortLabel}</text>
+        <text class="node-sub" y="14" text-anchor="middle">${sub}</text>
+      </g>
     </g>`)
   })
   parts.push('</g>')
@@ -472,6 +479,10 @@ onBeforeUnmount(() => {
 .topo-node:hover { filter: brightness(1.06); }
 .topo-node.is-err .node-label { fill: #fff; }
 @keyframes nodeIn { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: scale(1); } }
-.node-label { font-family: 'Segoe UI','Microsoft YaHei',sans-serif; font-size: 11px; font-weight: 600; fill: #ffffff; paint-order: stroke; stroke: rgba(0,0,0,.18); stroke-width: 2px; pointer-events: none; }
-.node-sub { font-family: ui-monospace,Consolas,monospace; font-size: 9px; fill: #8a96a7; pointer-events: none; }
+/* 节点标签：圆下方胶囊（圆内不放字） */
+.node-tag { pointer-events: none; }
+.node-tag-bg { fill: rgba(255,255,255,.94); stroke: #e2e8f0; stroke-width: 1; filter: drop-shadow(0 1px 3px rgba(23,32,51,.1)); }
+.node-tag-bg.err { fill: #fef2f2; stroke: #fecaca; }
+.node-label { font-family: 'Segoe UI','Microsoft YaHei',sans-serif; font-size: 11px; font-weight: 600; fill: #2b3547; }
+.node-sub { font-family: ui-monospace,Consolas,monospace; font-size: 9px; fill: #8a96a7; }
 </style>
