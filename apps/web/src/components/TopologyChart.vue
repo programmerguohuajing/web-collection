@@ -35,10 +35,10 @@ function buildOption() {
     const value = Number(n.value || 0)
     const color = colorMap[type] || colorMap.default
     const size = Math.max(20, Math.min(68, 18 + Math.sqrt(value || 1) * 6.5))
+    const displayName = n.label || n.id
     return {
       id: n.id,
-      name: n.id,
-      label: n.label || n.id,
+      name: displayName,
       value,
       category: type,
       symbolSize: size,
@@ -60,7 +60,7 @@ function buildOption() {
         show: true,
         position: 'bottom',
         distance: 6,
-        formatter: p => p.data.label,
+        formatter: () => displayName,
         fontSize: 11,
         fontWeight: 600,
         color: '#2b3547',
@@ -115,7 +115,7 @@ function buildOption() {
       extraCssText: 'box-shadow:0 8px 24px rgba(23,32,51,.12);border-radius:10px;',
       formatter: (p) => {
         if (p.dataType === 'node') {
-          return `<div style="font-weight:700;color:#4f46e5;margin-bottom:4px">${escapeHtml(p.data.label)}</div>`
+          return `<div style="font-weight:700;color:#4f46e5;margin-bottom:4px">${escapeHtml(p.name)}</div>`
             + `<div style="color:#7c8aa0;font-size:11px">类型：${escapeHtml(p.data.category)}<br/>权重：${p.data.value}</div>`
         }
         const e = props.edges[p.dataIndex] || {}
