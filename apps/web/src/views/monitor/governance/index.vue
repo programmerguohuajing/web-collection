@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { deleteApplication, deleteRelease, loadGovernance, loadReleases, normalizePageResponse, pageLoading, rotateCollectKey, runCleanup, saveApplication, saveGovernanceSettings, saveRelease, toList } from '../../../dashboard.js'
+import { deleteApplication, deleteRelease, loadGovernance, loadReleases, normalizePageResponse, pageLoading, rotateCollectKey, saveApplication, saveRelease, toList } from '../../../dashboard.js'
 // PRD 04 · 远程采集配置（采集治理内嵌 Tab）
 import RemoteConfigPanel from '../../../components/prd/RemoteConfigPanel.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
@@ -13,7 +13,6 @@ const activeTab = ref('apps')
 const applications = ref([])
 const applicationOptions = ref([])
 const appPager = reactive({ page: 1, pageSize: 10, total: 0 })
-const settings = reactive({ retention: {}, alerts: {} })
 const appDialog = ref(false)
 const releaseDialog = ref(false)
 const activeAppId = ref('')
@@ -62,8 +61,6 @@ async function load() {
     applications.value = appData.items.map(normalizeApplication)
     applicationOptions.value = toList(data.applicationOptions).map(normalizeApplication)
     Object.assign(appPager, appData)
-    Object.assign(settings.retention, data.settings?.retention || {})
-    Object.assign(settings.alerts, data.settings?.alerts || {})
   } catch (error) {
     if (requestId === governanceRequestId && error?.code !== 'ABORT_ERR') governanceError.value = error.message || '采集治理加载失败'
   } finally {
@@ -152,12 +149,6 @@ async function copyMcpConfig() {
   }
 }
 
-async function submitSettings() {
-  await saveGovernanceSettings(settings)
-  ElMessage.success('治理策略已保存')
-  await load()
-}
-
 async function openReleases(row) {
   activeAppId.value = row.app_id || row.appId || ''
   if (!activeAppId.value) return
@@ -226,11 +217,6 @@ async function removeRelease(row) {
 
 const route = useRoute()
 
-async function cleanup() {
-  const result = await runCleanup()
-  ElMessage.success(`清理完成：${Object.values(result).reduce((sum, value) => sum + value, 0)} 条`)
-}
-
 onMounted(async () => {
   await load()
   if (route.query.action === 'create') {
@@ -242,7 +228,7 @@ onMounted(async () => {
 <template>
   <div>
     <el-tabs v-model="activeTab">
-      <el-tab-pane label="应用与策略" name="apps">
+      <el-tab-pane label="应用管理" name="apps">
         <el-card shadow="never" class="section panel">
           <template #header><div class="panel-head"><b>应用与采样</b><el-button type="primary" @click="editApp()">新增应用</el-button></div></template>
           <el-alert v-if="governanceError" class="table-error" type="error" :title="governanceError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
@@ -260,33 +246,9 @@ onMounted(async () => {
           <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="appPager.page" :page-size="appPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="appPager.total" @current-change="value => { appPager.page = value; load() }" @size-change="value => { appPager.page = 1; appPager.pageSize = value; load() }" />
         </el-card>
 
-        <el-card shadow="never" class="section panel">
-          <template #header><b>保留与告警策略</b></template>
-          <el-form label-width="150px" class="governance-form">
-            <el-form-item label="事件保留（天）"><el-input-number v-model="settings.retention.eventsDays" :min="1" :max="3650" /></el-form-item>
-            <el-form-item label="日志保留（天）"><el-input-number v-model="settings.retention.logsDays" :min="1" :max="3650" /></el-form-item>
-            <el-form-item label="回放保留（天）"><el-input-number v-model="settings.retention.replaysDays" :min="1" :max="3650" /></el-form-item>
-            <el-form-item label="已解决错误保留（天）"><el-input-number v-model="settings.retention.resolvedIssuesDays" :min="1" :max="3650" /></el-form-item>
-            <el-form-item label="SourceMap 保留（天）"><el-input-number v-model="settings.retention.sourcemapsDays" :min="1" :max="3650" /></el-form-item>
-            <el-form-item label="告警冷却（分钟）"><el-input-number v-model="settings.alerts.cooldownMinutes" :min="1" :max="1440" /></el-form-item>
-            <el-form-item label="错误累计阈值"><el-input-number v-model="settings.alerts.errorCount" :min="1" :max="100000" /></el-form-item>
-            <el-form-item label="启用告警"><el-switch v-model="settings.alerts.enabled" /></el-form-item>
-            <el-form-item label="LCP 阈值（ms）"><el-input-number v-model="settings.alerts.lcp" :min="0" /></el-form-item>
-            <el-form-item label="INP 阈值（ms）"><el-input-number v-model="settings.alerts.inp" :min="0" /></el-form-item>
-            <el-form-item label="CLS 阈值"><el-input-number v-model="settings.alerts.cls" :min="0" :step="0.05" /></el-form-item>
-            <el-form-item label="长任务阈值（ms）"><el-input-number v-model="settings.alerts.longtask" :min="0" /></el-form-item>
-            <el-form-item label="错误通知"><el-switch v-model="settings.alerts.error" /></el-form-item>
-            <el-form-item label="error 日志通知"><el-switch v-model="settings.alerts.logError" /></el-form-item>
-            <el-form-item label="回归通知"><el-switch v-model="settings.alerts.regression" /></el-form-item>
-          </el-form>
-          <el-space>
-            <el-button type="primary" @click="submitSettings">保存策略设置</el-button>
-            <el-button @click="cleanup">手动触发数据清理</el-button>
-          </el-space>
-        </el-card>
       </el-tab-pane>
 
-      <el-tab-pane label="远程配置" name="remote-config">
+      <el-tab-pane label="采集配置" name="remote-config">
         <RemoteConfigPanel :applications="applicationOptions" />
       </el-tab-pane>
     </el-tabs>

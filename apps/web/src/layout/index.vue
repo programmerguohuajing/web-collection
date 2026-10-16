@@ -72,14 +72,14 @@ const baseGroups = [
   ] },
   { label: '治理', items: [
     { title: '事件字典', path: '/dictionary', icon: Document },
-    { title: '采集治理', path: '/governance', icon: Operation },
+    { title: '采集管理', path: '/governance', icon: Operation },
     { title: 'SourceMap', path: '/sourcemaps', icon: MapLocation },
-    { title: 'AI 诊断', path: '/ai-settings', icon: MagicStick },
+    { title: 'AI 设置', path: '/ai-settings', icon: MagicStick },
     { title: 'AI 助手', path: '/ai-assistant', icon: ChatDotRound },
     { title: '合规 DSR', path: '/dsr', icon: DocumentChecked, cap: 'dsr' }
   ] },
   { label: '知识中枢', items: [
-    { title: '治理台', path: '/knowledge', icon: Collection },
+    { title: '知识库', path: '/knowledge', icon: Collection },
     { title: '帮助中心', path: '/help', icon: Reading }
   ] },
   { label: '系统设置', items: [

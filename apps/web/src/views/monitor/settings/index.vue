@@ -34,17 +34,10 @@ const {
   switchTeam
 } = useAuth()
 
-const activeTab = ref('apps')
-const applications = ref([])
+const activeTab = ref('alerts')
 const loading = ref(false)
 const loadError = ref('')
-const dialogOpen = ref(false)
-const saving = ref(false)
-const form = reactive({ name: '', platform: 'web', endpoint: '', description: '' })
-const ingest = reactive({ errors: true, sampleRate: 100, batchSize: 30, flushInterval: 60000, replay: false })
 const rules = reactive({ regression: true, highErrorRate: true, slowPage: false })
-// 保存前先拉取当前全局配置，merge 后再回写，避免覆盖远程配置已设的其他字段
-const collectConfig = ref(null)
 const appSettings = ref(null)
 
 // ---------------- 数据留存配置状态 ----------------
@@ -102,116 +95,17 @@ async function load() {
   loadError.value = ''
   pageLoading.value = true
   try {
-    const data = await api('/api/applications', { requestKey: 'settings:applications' })
-    applications.value = normalizePageResponse(data).items.map(normalize)
+    await Promise.all([loadAlerts(), loadRetention()])
+    if (accountsEnabled.value && isLoggedIn.value) {
+      await loadMembers()
+    }
   } catch (error) {
     if (error?.code !== 'ABORT_ERR') {
-      applications.value = []
-      loadError.value = error.message || '应用列表加载失败'
+      loadError.value = error.message || '加载失败'
     }
   } finally {
     loading.value = false
     pageLoading.value = false
-  }
-  void loadIngest()
-  void loadAlerts()
-  void loadRetention()
-  if (accountsEnabled.value && isLoggedIn.value) {
-    void loadMembers()
-  }
-}
-
-function openCreate() {
-  router.push({ path: '/governance', query: { action: 'create' } })
-}
-
-async function createApplication() {
-  if (!form.name.trim()) {
-    ElMessage.warning('请填写应用名称')
-    return
-  }
-  saving.value = true
-  try {
-    const rawName = form.name.trim()
-    const slug = rawName.toLowerCase().replace(/[^a-z0-9_-]/g, '')
-    const appId = slug.length >= 2 ? slug.slice(0, 48) : `app_${Date.now().toString(36)}`
-    await api('/api/applications', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ appId, name: rawName, platform: form.platform, endpoint: form.endpoint.trim(), description: form.description.trim() })
-    })
-    dialogOpen.value = false
-    ElMessage.success('应用已创建')
-    await load()
-  } catch (error) {
-    ElMessage.error(error.message || '应用创建失败')
-  } finally {
-    saving.value = false
-  }
-}
-
-function maskKey(key) {
-  const s = String(key || '')
-  if (s.length <= 8) return '****'
-  return `${s.slice(0, 4)}****${s.slice(-4)}`
-}
-
-async function copyKey(key) {
-  try {
-    await navigator.clipboard.writeText(String(key || ''))
-    ElMessage.success('SDK Key 已复制')
-  } catch {
-    ElMessage.error('复制失败，请手动复制')
-  }
-}
-
-function configure(row) {
-  router.push({ path: '/governance', query: { appId: row.id || row.appKey } })
-}
-
-// ---------------- 采样与上报（对接全局 collect-config） ----------------
-async function loadIngest() {
-  try {
-    const cfg = await api('/api/collect-config', { requestKey: 'settings:collect-config' })
-    const c = cfg?.config || {}
-    collectConfig.value = c
-    if (c.plugins) ingest.replay = c.plugins.replay !== false
-    if (c.sampling) {
-      ingest.errors = Number(c.sampling.error) >= 1
-      const perf = Number(c.sampling.performance)
-      if (Number.isFinite(perf)) ingest.sampleRate = Math.round(perf * 100)
-    }
-  } catch { /* 加载失败保留表单默认值 */ }
-}
-
-async function saveIngest() {
-  let base = collectConfig.value
-  if (!base || typeof base !== 'object') {
-    try {
-      const cfg = await api('/api/collect-config', { requestKey: 'settings:collect-config' })
-      base = cfg?.config || {}
-    } catch { base = {} }
-  }
-  const config = {
-    ...base,
-    sampling: {
-      ...(base.sampling || {}),
-      error: ingest.errors ? 1 : ingest.sampleRate / 100,
-      performance: ingest.sampleRate / 100,
-      behavior: ingest.sampleRate / 100
-    },
-    plugins: { ...(base.plugins || {}), replay: ingest.replay }
-  }
-  try {
-    await api('/api/collect-config', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scope: {}, config, operator: 'admin' })
-    })
-    collectConfig.value = config
-    ElMessage.success('采样与上报设置已保存（批量上报大小 / 间隔为 SDK 初始化参数，需在 SDK 初始化时配置）')
-  } catch (error) {
-    ElMessage.error(error.message || '保存失败')
   }
 }
 
@@ -516,78 +410,17 @@ onMounted(load)
 <template>
   <div class="settings-layout">
     <el-tabs v-model="activeTab" tab-position="left" class="settings-tabs">
-      <el-tab-pane label="项目管理" name="apps" />
-      <el-tab-pane label="采样与上报" name="ingest" />
       <el-tab-pane label="告警规则" name="alerts" />
       <el-tab-pane label="成员权限" name="members" />
       <el-tab-pane label="数据留存" name="retention" />
     </el-tabs>
 
     <div class="settings-content">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>应用与采集配置已统一移至「<el-button link type="primary" @click="$router.push('/governance')">采集管理</el-button>」</template>
+      </el-alert>
 
-  <template v-if="activeTab === 'apps'">
-    <el-card shadow="never" class="panel section">
-      <template #header>
-        <div class="panel-head"><div><h2>应用管理</h2><small>管理接入项目与 SDK Key</small></div><el-button type="primary" @click="openCreate">新建应用</el-button></div>
-      </template>
-      <el-alert v-if="loadError" class="table-error" type="error" :title="loadError" :closable="false" show-icon><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
-      <el-table :data="applications" v-loading="loading" empty-text="暂无应用数据">
-        <el-table-column prop="name" label="应用名称" min-width="220" />
-        <!-- SDK Key 默认遮蔽展示（2026-10-14 深度测试 P2-10）：仅显示首尾，点击复制取完整值 -->
-        <el-table-column label="SDK Key" min-width="220">
-          <template #default="{ row }">
-            <span class="masked-key">{{ maskKey(row.appKey) }}</span>
-            <el-button link type="primary" size="small" @click="copyKey(row.appKey)">复制</el-button>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag class="status-tag" :type="row.enabled ? 'success' : 'info'" effect="plain">{{ row.enabled ? '启用' : '暂停' }}</el-tag></template></el-table-column>
-        <el-table-column label="今日事件" width="130"><template #default="{ row }">{{ row.events.toLocaleString() }}</template></el-table-column>
-        <el-table-column label="操作" cell-class-name="action-cell" width="120"><template #default="{ row }"><el-button link type="primary" @click="configure(row)">配置</el-button></template></el-table-column>
-      </el-table>
-    </el-card>
-  </template>
-
-  <template v-else-if="activeTab === 'ingest'">
-    <el-card shadow="never" class="panel settings-form-card section">
-      <template #header><div class="panel-head"><div><h2>采样与上报</h2><small>控制采集成本与数据完整性</small></div><el-button type="primary" @click="saveIngest">保存设置</el-button></div></template>
-      <el-form label-position="top" class="settings-form">
-        <el-form-item label="错误全量上报">
-          <div class="ingest-row">
-            <el-switch v-model="ingest.errors" />
-            <small class="hint">关闭后将按采样率上报，避免高频噪音淹没关键错误</small>
-          </div>
-        </el-form-item>
-        <el-form-item label="性能数据采样率">
-          <div class="ingest-row">
-            <el-input-number v-model="ingest.sampleRate" :min="0" :max="100" />
-            <span class="field-suffix">%</span>
-            <small class="hint">按百分比采样 Web Vitals 与资源加载</small>
-          </div>
-        </el-form-item>
-        <el-form-item label="批量上报大小（batchSize）">
-          <div class="ingest-row">
-            <el-input-number v-model="ingest.batchSize" :min="1" :max="200" />
-            <small class="hint">达到该条数立即 flush 上报（SDK 初始化参数，需于 createEys 时配置）</small>
-          </div>
-        </el-form-item>
-        <el-form-item label="上报间隔（flushInterval）">
-          <div class="ingest-row">
-            <el-input-number v-model="ingest.flushInterval" :min="1000" :step="1000" />
-            <span class="field-suffix">ms</span>
-            <small class="hint">当前 {{ Math.round(ingest.flushInterval / 1000) }}s，抑制碎片化小批量（SDK 初始化参数，需于 createEys 时配置）</small>
-          </div>
-        </el-form-item>
-        <el-form-item label="会话回放录制">
-          <div class="ingest-row">
-            <el-switch v-model="ingest.replay" />
-            <small class="hint">录制用户操作用于排障（请遵守合规与脱敏策略）</small>
-          </div>
-        </el-form-item>
-      </el-form>
-    </el-card>
-  </template>
-
-  <template v-else-if="activeTab === 'alerts'">
+  <template v-if="activeTab === 'alerts'">
     <el-card shadow="never" class="panel settings-form-card section">
       <template #header><div class="panel-head"><div><h2>告警规则</h2><small>定义需要关注的回归与异常阈值</small></div><el-button type="primary" @click="saveAlerts">保存设置</el-button></div></template>
       <el-form label-position="top" class="settings-form">

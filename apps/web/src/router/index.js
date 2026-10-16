@@ -38,13 +38,13 @@ export const router = createRouter({
         { path: 'experiments/:id', component: () => import('../views/experiment/detail.vue'), meta: { title: '实验详情' } },
         { path: 'sdk-health', component: () => import('../views/monitor/sdk-health/index.vue'), meta: { title: 'SDK 健康' } },
         { path: 'sourcemaps', component: () => import('../views/monitor/sourcemaps/index.vue'), meta: { title: 'SourceMap' } },
-        { path: 'governance', component: () => import('../views/monitor/governance/index.vue'), meta: { title: '采集治理' } },
+        { path: 'governance', component: () => import('../views/monitor/governance/index.vue'), meta: { title: '采集管理' } },
         { path: 'settings', component: () => import('../views/monitor/settings/index.vue'), meta: { title: '系统设置' } },
         // D3 · 用量计量 & 套餐（PRD 15）：能力位 false 时页面显式占位，不静默隐藏路由
         { path: 'usage', component: () => import('../views/billing/index.vue'), meta: { title: '用量与套餐' } },
         // D4 · 白标 / 私有化（PRD 16）：能力位 false 时页面显式占位
         { path: 'brand', component: () => import('../views/brand/index.vue'), meta: { title: '品牌白标' } },
-        { path: 'ai-settings', component: () => import('../views/monitor/ai-settings/index.vue'), meta: { title: 'AI 诊断' } },
+        { path: 'ai-settings', component: () => import('../views/monitor/ai-settings/index.vue'), meta: { title: 'AI 设置' } },
         { path: 'ai-assistant', component: () => import('../views/monitor/ai-assistant/index.vue'), meta: { title: 'AI 助手' } },
         { path: 'ai-insights', component: () => import('../views/insight/ai-insights/index.vue'), meta: { title: 'AI 洞察' } },
         { path: 'knowledge', component: () => import('../views/monitor/knowledge/index.vue'), meta: { title: '知识中枢' } },

@@ -89,7 +89,7 @@ const ingestionStalledText = computed(() => {
 </script>
 
 <template>
-  <div class="page-heading"><div><h1>实时概览</h1><p>{{ store.rangeLabel }}全站遥测数据汇总 · 时间范围沿用顶部全局筛选</p></div></div>
+  <div class="page-heading"><div><h1>总览看板</h1><p>{{ store.rangeLabel }}全站遥测数据汇总 · 时间范围沿用顶部全局筛选</p></div></div>
 
   <KpiGrid :items="overviewKpis" />
 

@@ -1,6 +1,6 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, ArrowRight, ArrowUp, QuestionFilled } from '@element-plus/icons-vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, normalizePageResponse, queryFromFilters, refreshVersion, pageLoading, toList } from '../../../dashboard.js'
@@ -16,10 +16,7 @@ import { buildReplayQuery } from '../../../utils/replay-link.js'
 
 const router = useRouter()
 const route = useRoute()
-const tab = ref('sessions')
-const sessions = ref([])
-const sessionEvents = ref([])
-const activeSession = ref(null)
+const tab = ref('insights')
 const paths = ref([])
 const live = ref({})
 const releases = ref([])
@@ -29,11 +26,8 @@ const dashboards = ref([])
 const insights = ref([])
 const capabilities = ref({ insights: false, productAnalyticsV2: false, funnels: true, dashboards: true, paths: true, live: true, releases: true })
 const selectedDashboardId = ref(null)
-const sessionDrawerOpen = ref(false)
 const analyticsError = ref('')
 const analyticsLoading = ref(false)
-const sessionPager = reactive({ page: 1, pageSize: 10, total: 0 })
-const sessionEventPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const funnelPager = reactive({ page: 1, pageSize: 10, total: 0 })
 const dashboardForm = reactive({ name: '', widgets: ['live', 'sessions', 'errors', 'releases'] })
 let timer = 0
@@ -41,22 +35,6 @@ let loadRequestId = 0
 
 // 用户会话表「访问页面」列：内联只展示前 N 个路径面包屑，超出部分点击「+N 页」在单元格内展开完整路径
 // （行点击打开会话详情抽屉；原左侧 type="expand" 展开列已移除，内联开关自持展开状态，不再依赖表格 expand 机制）
-const PATH_PREVIEW = 3 // 单元格内联展示的页面数
-const sessionExpandedKeys = ref(new Set())
-function visiblePaths(row) {
-  const paths = row.paths || []
-  return rowExpanded(row) ? paths : paths.slice(0, PATH_PREVIEW)
-}
-function rowExpanded(row) {
-  return sessionExpandedKeys.value.has(row.session_id)
-}
-function toggleExpand(row) {
-  const next = new Set(sessionExpandedKeys.value)
-  if (next.has(row.session_id)) next.delete(row.session_id)
-  else next.add(row.session_id)
-  sessionExpandedKeys.value = next
-}
-
 const activeDashboard = computed(() => dashboards.value.find(item => item.id === selectedDashboardId.value) || dashboards.value[0])
 const insightOptions = computed(() => insights.value.map(item => ({ label: item.name, value: `insight:${item.id}` })))
 // 事件分析能力：优先读规范键 capabilities.insights（P0-4），兼容旧键 productAnalyticsV2。
@@ -65,8 +43,7 @@ const insightsSupported = computed(() => Boolean(capabilities.value.insights ?? 
 const analyticsKpis = computed(() => [
   { label: '近 5 分钟会话', value: Number(live.value?.sessions || 0).toLocaleString(), delta: '实时', valueClass: 'value-primary' },
   { label: '近 5 分钟用户', value: Number(live.value?.users || 0).toLocaleString(), delta: '实时', valueClass: 'value-success' },
-  { label: '近 5 分钟事件', value: Number(live.value?.events || 0).toLocaleString(), delta: '实时事件流', valueClass: 'value-purple' },
-  { label: '历史会话样本', value: Number(sessionPager.total || 0).toLocaleString(), delta: '当前筛选范围', valueClass: 'value-danger' }
+  { label: '近 5 分钟事件', value: Number(live.value?.events || 0).toLocaleString(), delta: '实时事件流', valueClass: 'value-purple' }
 ])
 const funnelOptions = computed(() => funnels.value.map(item => ({ label: item.name, value: `funnel:${item.id}` })))
 
@@ -74,10 +51,6 @@ function setPaged(target, pager, data) {
   const normalized = normalizePageResponse(data, pager)
   target.value = normalized.items
   Object.assign(pager, normalized)
-}
-async function loadSessions() {
-  const data = await api(`/api/analytics/sessions?${queryFromFilters({ page: sessionPager.page, pageSize: sessionPager.pageSize })}`, { requestKey: 'analytics:sessions' })
-  setPaged(sessions, sessionPager, data)
 }
 async function loadFunnels() {
   const data = await api(`/api/funnels?page=${funnelPager.page}&pageSize=${funnelPager.pageSize}`, { requestKey: 'analytics:funnels' })
@@ -98,7 +71,7 @@ async function load() {
     capabilities.value = await api('/api/capabilities').catch(() => ({ insights: false, productAnalyticsV2: false, funnels: true, dashboards: true, paths: true, live: true, releases: true }))
     const query = queryFromFilters()
     const [, pathData, liveData, releaseData, eventNameData, , dashboardData, insightData] = await Promise.all([
-      loadSessions(), api(`/api/analytics/paths?${query}`, { requestKey: 'analytics:paths' }), api(`/api/analytics/live?${query}`, { requestKey: 'analytics:live' }), api(`/api/analytics/releases?${query}`, { requestKey: 'analytics:releases' }), api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`, { requestKey: 'analytics:event-names' }), loadFunnels(), api('/api/dashboards', { requestKey: 'analytics:dashboards' })
+      api(`/api/analytics/paths?${query}`, { requestKey: 'analytics:paths' }), api(`/api/analytics/live?${query}`, { requestKey: 'analytics:live' }), api(`/api/analytics/releases?${query}`, { requestKey: 'analytics:releases' }), api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`, { requestKey: 'analytics:event-names' }), loadFunnels(), api('/api/dashboards', { requestKey: 'analytics:dashboards' })
       , insightsSupported.value ? api('/api/analytics/insights') : []
     ])
     if (requestId !== loadRequestId) return
@@ -198,17 +171,6 @@ function decodeWidget(widget) {
   const [type, id] = String(widget).split(':')
   return { type, id: Number(id) }
 }
-async function loadSessionEvents() {
-  if (!activeSession.value?.session_id) return
-  setPaged(sessionEvents, sessionEventPager, await api(`/api/analytics/sessions/${encodeURIComponent(activeSession.value.session_id)}?page=${sessionEventPager.page}&pageSize=${sessionEventPager.pageSize}`, { requestKey: `analytics:session-events:${activeSession.value.session_id}` }))
-}
-async function openSession(row) {
-  if (!row.session_id?.trim()) return
-  activeSession.value = row
-  sessionDrawerOpen.value = true
-  sessionEventPager.page = 1
-  await loadSessionEvents()
-}
 function changeTab(name) {
   tab.value = name
 }
@@ -243,21 +205,26 @@ onBeforeUnmount(() => clearInterval(timer))
  * 否则 el-tabs 会因 name 无对应面板而出现「无选中 Tab」的空态。
  * 同时监听 insightsSupported：capabilities 是异步加载的，自托管部署要等它到位后才能认这个深链。
  */
-const TAB_NAMES = ['insights', 'sessions', 'releases', 'dashboards']
+const TAB_NAMES = ['insights', 'releases', 'dashboards']
 function resolveTab(name) {
+  if (name === 'sessions') {
+    // 兼容旧深链：用户会话已移至独立页面
+    router.replace({ path: '/sessions', query: route.query })
+    return ''
+  }
   if (!TAB_NAMES.includes(name)) return ''
   return name === 'insights' && !insightsSupported.value ? '' : name
 }
 watch([() => route.query.tab, insightsSupported], () => {
   const wanted = resolveTab(route.query.tab)
   if (wanted) tab.value = wanted
-  else if (tab.value === 'insights' && !insightsSupported.value) tab.value = 'sessions'
+  else if (tab.value === 'insights' && !insightsSupported.value) tab.value = 'releases'
 }, { immediate: true })
-watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true })
+watch(refreshVersion, () => { load() }, { immediate: true })
 </script>
 
 <template>
-  <SearchPanel :fields="['userId']" @search="() => { sessionPager.page = 1; load() }" />
+  <SearchPanel :fields="['userId']" @search="() => { load() }" />
   <el-alert v-if="analyticsError" class="table-error" type="error" :title="analyticsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
   <KpiGrid :items="analyticsKpis" />
   <el-tabs v-model="tab" class="panel section analytics-tabs" @tab-change="changeTab">
@@ -265,38 +232,6 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
          避免出现一个永远点不动的禁用 Tab；自托管 Node 部署 capability 为 true，入口照常可用）。 -->
     <el-tab-pane v-if="insightsSupported" label="事件分析" name="insights">
       <EventInsightPanel :event-names="funnelEventNames" :insights="insights" @changed="refreshInsights" />
-    </el-tab-pane>
-    <el-tab-pane label="用户会话" name="sessions">
-      <el-table :data="sessions" border v-loading="analyticsLoading" empty-text="暂无会话数据" @row-click="openSession" style="cursor:pointer">
-        <el-table-column prop="user_name" label="用户" width="130"><template #default="{ row }">{{ row.user_name || row.user_id || row.device_id }}</template></el-table-column>
-        <el-table-column label="会话" min-width="200"><template #default="{ row }"><OverflowTip :text="row.session_id" /></template></el-table-column>
-        <el-table-column label="开始时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template></el-table-column>
-        <el-table-column prop="duration" label="时长(ms)" width="110" />
-        <el-table-column prop="event_count" label="事件" width="80" />
-        <el-table-column prop="error_count" label="错误" width="80" />
-        <el-table-column label="访问页面" min-width="240" cell-class-name="no-ellipsis">
-          <template #default="{ row }">
-            <span v-if="(row.paths || []).length" class="path-cell">
-              <template v-for="(p, i) in visiblePaths(row)" :key="i">
-                <span class="path-crumb" :title="p">{{ p }}</span>
-                <el-icon v-if="i < visiblePaths(row).length - 1" class="path-crumb-arrow"><ArrowRight /></el-icon>
-              </template>
-              <span v-if="(row.paths || []).length > PATH_PREVIEW" class="path-toggle" :class="{ 'is-expanded': rowExpanded(row) }" @click.stop="toggleExpand(row)">
-                <template v-if="rowExpanded(row)">收起<el-icon class="path-toggle-arrow"><ArrowUp /></el-icon></template>
-                <template v-else>+{{ row.paths.length - PATH_PREVIEW }} 页<el-icon class="path-toggle-arrow"><ArrowDown /></el-icon></template>
-              </span>
-            </span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="回放 / 链路" width="220"><template #default="{ row }">
-          <!-- BUG-009（PRD 01 FR-5 入口 ③）：会话列表行 → 用户链路 -->
-          <el-button link type="primary" @click="openJourney(row)">链路</el-button>
-          <el-button v-if="replayId(row)" link type="primary" @click="replay(replayId(row))">播放</el-button>
-          <el-button v-if="row.user_id" link type="primary" @click="replayList(row)">查看回放</el-button>
-        </template></el-table-column>
-      </el-table>
-      <el-pagination v-if="sessionPager.total > 0" class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionPager.page" :page-size="sessionPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionPager.total" @current-change="value => { sessionPager.page = value; loadSessions() }" @size-change="value => { sessionPager.page = 1; sessionPager.pageSize = value; loadSessions() }" />
     </el-tab-pane>
     <el-tab-pane label="版本对比" name="releases">
       <el-table :data="releases" border><el-table-column label="版本"><template #default="{ row }">{{ presentValue(row.release, row.release_name, row.releaseName, row.version) }}</template></el-table-column><el-table-column label="事件"><template #default="{ row }">{{ presentValue(row.events, row.event_count, row.eventCount) }}</template></el-table-column><el-table-column label="用户"><template #default="{ row }">{{ presentValue(row.users, row.user_count, row.userCount) }}</template></el-table-column><el-table-column label="错误"><template #default="{ row }">{{ presentValue(row.errors, row.error_count, row.errorCount) }}</template></el-table-column><el-table-column label="平均 LCP"><template #default="{ row }">{{ presentValue(row.lcp, row.avg_lcp, row.avgLcp, row.average_lcp, row.averageLcp) }}</template></el-table-column></el-table>
@@ -308,10 +243,6 @@ watch(refreshVersion, () => { sessionPager.page = 1; load() }, { immediate: true
       <DashboardWidgets v-if="activeDashboard" :dashboard="activeDashboard" :read-only="true" />
     </el-tab-pane>
   </el-tabs>
-  <el-drawer v-model="activeSession" size="65%" title="用户会话详情">
-    <el-table :data="sessionEvents" border><el-table-column label="时间" width="200" cell-class-name="time-cell"><template #default="{ row }">{{ new Date(row.ts).toLocaleString() }}</template></el-table-column><el-table-column prop="type" label="类型" width="100" /><el-table-column label="名称" width="160"><template #default="{ row }">{{ row.name || row.metric }}</template></el-table-column><el-table-column label="内容" min-width="240"><template #default="{ row }"><OverflowTip :text="row.message" /></template></el-table-column><el-table-column prop="path" label="页面" min-width="220" /></el-table>
-    <el-pagination class="pager" background layout="sizes, prev, pager, next, total" :current-page="sessionEventPager.page" :page-size="sessionEventPager.pageSize" :page-sizes="[10, 20, 50, 100]" :total="sessionEventPager.total" @current-change="value => { sessionEventPager.page = value; loadSessionEvents() }" @size-change="value => { sessionEventPager.page = 1; sessionEventPager.pageSize = value; loadSessionEvents() }" />
-  </el-drawer>
   <el-dialog v-model="shareDialogVisible" width="560px">
     <template #title>分享仪表盘<el-tooltip content="任何持有链接者均可只读查看该看板（仅看板定义与聚合数据，不含原始事件）；取消分享后链接立即失效。" placement="top"><el-icon class="help-icon"><QuestionFilled /></el-icon></el-tooltip></template>
     <template v-if="shareInfo">
