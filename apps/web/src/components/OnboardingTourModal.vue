@@ -207,8 +207,8 @@ defineExpose({
 
         <div class="instruction-box">
           <ol>
-            <li>进入管理后台的 <b>系统设置 -> 项目管理</b> 页面。</li>
-            <li>点击 <b>“创建应用”</b> 按钮。</li>
+            <li>进入管理后台的 <b>采集管理 -> 应用管理</b> 页面。</li>
+            <li>点击 <b>“新增应用”</b> 按钮。</li>
             <li>填写应用名称（如 <code>商城前端主站</code>）与平台类型（如 <code>Web</code>）。</li>
             <li>系统将自动生成全局唯一的 <b>AppID</b>（如 <code>app_mall_web</code>）。</li>
           </ol>

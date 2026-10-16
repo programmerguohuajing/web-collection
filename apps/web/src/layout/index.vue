@@ -61,7 +61,7 @@ const baseGroups = [
   { label: '洞察', items: [
     { title: '用户链路', path: '/journey', icon: Guide },
     { title: '行为分析', path: '/behavior', icon: PieChart },
-    { title: '产品分析', path: '/analytics', icon: DataAnalysis },
+    { title: '事件趋势', path: '/analytics', icon: DataAnalysis },
     { title: '用户会话', path: '/sessions', icon: User },
     { title: '用户路径', path: '/paths', icon: Switch },
     { title: '漏斗分析', path: '/funnels', icon: Filter },

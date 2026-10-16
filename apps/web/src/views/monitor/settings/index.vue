@@ -803,17 +803,6 @@ onMounted(load)
     </div>
   </div>
 
-  <!-- 新建应用弹窗 -->
-  <el-dialog v-model="dialogOpen" title="新建应用" width="min(560px, calc(100vw - 32px))" destroy-on-close>
-    <el-form label-position="top" class="settings-form">
-      <el-form-item label="应用名称" required><el-input v-model="form.name" placeholder="例如：螃蟹交易平台" /></el-form-item>
-      <el-form-item label="平台"><el-select v-model="form.platform"><el-option label="Web（H5）" value="web" /><el-option label="微信小程序" value="miniprogram" /><el-option label="React Native" value="react-native" /><el-option label="uni-app" value="uni-app" /><el-option label="Taro" value="taro" /></el-select></el-form-item>
-      <el-form-item label="上报域名"><el-input v-model="form.endpoint" placeholder="https://collect.example.com" /></el-form-item>
-      <el-form-item label="描述"><el-input v-model="form.description" type="textarea" :rows="3" /></el-form-item>
-    </el-form>
-    <template #footer><el-button @click="dialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="createApplication">创建应用</el-button></template>
-  </el-dialog>
-
   <!-- 邀请成员弹窗 -->
   <el-dialog
     v-model="inviteDialogOpen"

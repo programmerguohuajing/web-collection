@@ -113,17 +113,12 @@ async function load() {
     capabilities.value = await api('/api/capabilities').catch(() => ({ insights: false, productAnalyticsV2: false, funnels: true, dashboards: true, paths: true, live: true, releases: true }))
     const query = queryFromFilters()
     const sessionData = await api(`/api/analytics/sessions?${queryFromFilters({ page: sessionPager.value.page, pageSize: sessionPager.value.pageSize })}`)
-    const [liveData, releaseData, eventNameData, funnelData, dashboardData, insightData] = await Promise.all([
+    const [liveData, releaseData, funnelData, insightData] = await Promise.all([
       api(`/api/analytics/live?${query}`),
       api(`/api/analytics/releases?${query}`),
-      api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`),
       api(`/api/funnels?page=1&pageSize=1000`),
-      api('/api/dashboards'),
       insightsSupported.value ? api('/api/analytics/insights') : []
     ])
-    // dashboardData 在本组件仅用于对齐母页请求顺序（看板定义已由 props 传入），不另行处理
-    void dashboardData
-    void eventNameData
     setPaged(sessions, sessionPager, sessionData)
     live.value = liveData?.data && typeof liveData.data === 'object' ? liveData.data : (liveData || {})
     releases.value = normalizePageResponse(releaseData).items.map(normalizeReleaseRow)

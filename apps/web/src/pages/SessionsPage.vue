@@ -6,7 +6,7 @@ import EventTable from '../components/EventTable.vue'
 import OverflowTip from '../components/OverflowTip.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import { api, normalizePageResponse, queryFromFilters, pageLoading } from '../dashboard.js'
-import { formatDuration } from '../utils/format.js'
+import { formatDuration, formatDate } from '../utils/format.js'
 
 const PATH_PREVIEW = 3 // 单元格内联展示的页面数
 const route = useRoute()
@@ -27,13 +27,6 @@ let eventRequestId = 0
 
 function text(value) {
   return value == null || value === '' ? '-' : String(value)
-}
-
-function formatDate(value) {
-  const timestamp = Number(value)
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return '-'
-  const date = new Date(timestamp)
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString()
 }
 
 function normalizeSession(row = {}) {

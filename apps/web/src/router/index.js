@@ -23,7 +23,7 @@ export const router = createRouter({
         { path: 'events', redirect: '/behavior' },
         { path: 'logs', component: () => import('../views/monitor/logs/index.vue'), meta: { title: '日志平台' } },
         { path: 'traces', component: () => import('../views/monitor/traces/index.vue'), meta: { title: '链路追踪' } },
-        { path: 'analytics', component: () => import('../views/monitor/analytics/index.vue'), meta: { title: '产品分析' } },
+        { path: 'analytics', component: () => import('../views/monitor/analytics/index.vue'), meta: { title: '事件趋势' } },
         { path: 'api-health', component: () => import('../views/monitor/api-health/index.vue'), meta: { title: 'API 健康' } },
         { path: 'integrations', component: () => import('../views/monitor/integrations/index.vue'), meta: { title: '集成中心' } },
         { path: 'slo', component: () => import('../views/monitor/slo/index.vue'), meta: { title: 'SLO 错误预算' } },

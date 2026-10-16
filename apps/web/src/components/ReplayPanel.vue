@@ -14,6 +14,7 @@ import {
   WarningFilled
 } from '@element-plus/icons-vue'
 import OverflowTip from './OverflowTip.vue'
+import { formatDate } from '../utils/format.js'
 import { detectReplayKind, getReplayPlaybackBlocker } from '../utils/replay-events.js'
 import { normalizeReplayPayload } from '../utils/replay-payload.js'
 
@@ -562,13 +563,6 @@ function formatDuration(ms) {
   const minute = Math.floor(seconds / 60)
   const second = seconds % 60
   return `${minute}m ${second}s`
-}
-
-function formatDate(value) {
-  if (!value) return '未采集'
-  const numericValue = Number(value)
-  const date = new Date(Number.isFinite(numericValue) ? numericValue : value)
-  return Number.isNaN(date.getTime()) ? '未采集' : date.toLocaleString()
 }
 
 watch(() => props.replays, rows => {

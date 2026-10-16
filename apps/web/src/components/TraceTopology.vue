@@ -30,6 +30,9 @@ let nodes = []
 let byId = {}
 let edges = []
 let layoutMode = 'force'
+// 节点数超过阈值时自动降级为静态布局，避免 O(n²) 力导计算卡死页面
+const FORCE_LAYOUT_NODE_LIMIT = 300
+function shouldUseForceLayout(count) { return count <= FORCE_LAYOUT_NODE_LIMIT }
 let raf = null
 let zoom = 1
 let panX = 0
@@ -182,7 +185,9 @@ function forceTick() {
 
 function startSim() {
   if (raf) cancelAnimationFrame(raf)
-  if (layoutMode === 'force') {
+  // 大节点数自动降级为静态布局
+  const effectiveMode = (layoutMode === 'force' && !shouldUseForceLayout(nodes.length)) ? 'hier' : layoutMode
+  if (effectiveMode === 'force') {
     nodes.forEach(n => { n.fixed = false })
     forceTick()
   } else {

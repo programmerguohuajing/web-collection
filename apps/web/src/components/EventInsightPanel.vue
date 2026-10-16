@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { api } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 import AnalyticsChart from './AnalyticsChart.vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const store = useFilterStore()
 
@@ -120,6 +120,8 @@ async function save() {
 
 async function remove() {
   if (!selectedId.value) return
+  const confirmed = await ElMessageBox.confirm('确定删除该事件分析吗？删除后不可恢复。', '删除确认', { type: 'warning' }).then(() => true).catch(() => false)
+  if (!confirmed) return
   removing.value = true
   try {
     await api(`/api/analytics/insights/${selectedId.value}`, {

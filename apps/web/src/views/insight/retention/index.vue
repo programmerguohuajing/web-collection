@@ -47,7 +47,7 @@ watch(refreshVersion, load, { immediate: true })
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" v-loading="pageLoading">
     <el-card shadow="never" class="section panel">
       <template #header>
         <div class="panel-head">

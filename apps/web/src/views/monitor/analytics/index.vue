@@ -193,10 +193,11 @@ function replayList(row = {}) {
 // 自动刷新开关：0 = 暂停（暂为缓解 D1 行读爆量），恢复时改回 30000
 const LIVE_REFRESH_MS = 0
 onMounted(async () => {
-  // 初次加载一次实时数据，之后不再自动轮询
-  try { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) } catch {}
+  // 实时数据统一走 load()，避免重复请求；失败由 load() 的错误横幅提示
   if (LIVE_REFRESH_MS > 0) timer = window.setInterval(async () => {
-    live.value = await api(`/api/analytics/live?${queryFromFilters()}`)
+    try { live.value = await api(`/api/analytics/live?${queryFromFilters()}`) } catch (error) {
+      if (error?.code !== 'ABORT_ERR') analyticsError.value = error.message || '实时数据加载失败'
+    }
   }, LIVE_REFRESH_MS)
 })
 onBeforeUnmount(() => clearInterval(timer))
@@ -224,6 +225,7 @@ watch(refreshVersion, () => { load() }, { immediate: true })
 </script>
 
 <template>
+  <div v-loading="analyticsLoading">
   <SearchPanel :fields="['userId']" @search="() => { load() }" />
   <el-alert v-if="analyticsError" class="table-error" type="error" :title="analyticsError" show-icon :closable="false"><template #default><el-button link type="primary" @click="load">重试</el-button></template></el-alert>
   <KpiGrid :items="analyticsKpis" />
@@ -258,6 +260,7 @@ watch(refreshVersion, () => { load() }, { immediate: true })
       </div>
     </template>
   </el-dialog>
+  </div>
 </template>
 
 <style scoped>

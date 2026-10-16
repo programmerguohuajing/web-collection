@@ -5,7 +5,7 @@ import TrendChart from '../../../components/TrendChart.vue'
 import KpiGrid from '../../../components/KpiGrid.vue'
 import OverviewDistribution from '../../../components/OverviewDistribution.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
-import { events, issues, replays, summary, api } from '../../../dashboard.js'
+import { events, issues, replays, summary, api, pageLoading } from '../../../dashboard.js'
 import { useFilterStore } from '../../../stores/filters.js'
 import { formatDuration, readableText } from '../../../utils/format.js'
 
@@ -91,6 +91,7 @@ const ingestionStalledText = computed(() => {
 <template>
   <div class="page-heading"><div><h1>总览看板</h1><p>{{ store.rangeLabel }}全站遥测数据汇总 · 时间范围沿用顶部全局筛选</p></div></div>
 
+  <div v-loading="pageLoading">
   <KpiGrid :items="overviewKpis" />
 
   <el-card shadow="never" class="panel section ingestion-health-panel">
@@ -133,6 +134,7 @@ const ingestionStalledText = computed(() => {
     <div><b>检测到高优先级问题</b><strong>{{ readableText(primaryIssue.message, primaryIssue.name) }}</strong><small>发生于 {{ new Date(primaryIssue.lastSeen).toLocaleString() }} · 影响用户 {{ primaryIssue.affectedUsers || primaryIssue.count || 0 }}</small></div>
     <el-button type="primary" @click="openIssue">查看高优先级问题</el-button>
   </section>
+  </div>
 </template>
 
 <style scoped>

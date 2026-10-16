@@ -101,6 +101,12 @@ async function removeApp(row) {
 }
 function lines(value) { return String(value || '').split(/[,\n]/).map(item => item.trim()).filter(Boolean) }
 async function resetKey(row) {
+  const confirmed = await ElMessageBox.confirm(
+    `确定重置「${row.name || row.app_id}」的采集密钥吗？旧密钥将立即失效，全站 SDK 需更新配置后才能继续上报。`,
+    '重置采集密钥',
+    { type: 'warning', confirmButtonText: '确认重置', cancelButtonText: '取消' }
+  ).then(() => true).catch(() => false)
+  if (!confirmed) return
   collectKeyDialog.value = false
   newCollectKey.value = ''
   try {

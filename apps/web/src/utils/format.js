@@ -222,3 +222,10 @@ function firstReadable(values) {
 function firstPresent(...values) {
   return values.find(value => value != null && value !== '')
 }
+
+export function formatDate(value) {
+  if (!value) return '未采集'
+  const numericValue = Number(value)
+  const date = new Date(Number.isFinite(numericValue) ? numericValue : value)
+  return Number.isNaN(date.getTime()) ? '未采集' : date.toLocaleString()
+}
