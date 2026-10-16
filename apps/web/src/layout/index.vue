@@ -63,7 +63,7 @@ const baseGroups = [
     { title: 'SDK 健康', path: '/sdk-health', icon: Cpu }
   ] },
   { label: '洞察', items: [
-    { title: '用户链路', path: '/journey', icon: Guide },
+    { title: '事件时间线', path: '/journey', icon: Guide },
     { title: '行为分析', path: '/behavior', icon: PieChart },
     { title: '事件趋势', path: '/analytics', icon: DataAnalysis },
     { title: '用户会话', path: '/sessions', icon: User },

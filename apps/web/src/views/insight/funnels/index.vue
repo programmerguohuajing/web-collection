@@ -15,6 +15,39 @@ const router = useRouter()
 const loading = ref(false)
 const funnels = ref([])
 const report = ref(null)
+const compareSelection = ref([])
+const compareOpen = ref(false)
+const compareReports = ref([])
+const compareLoading = ref(false)
+const compareStepRows = computed(() => {
+  const maxSteps = Math.max(0, ...compareReports.value.map(r => (r.steps || []).length))
+  const rows = []
+  for (let i = 0; i < maxSteps; i++) {
+    const rates = {}
+    compareReports.value.forEach(r => {
+      const step = (r.steps || [])[i]
+      rates[r.meta.id] = step ? step.rate : null
+    })
+    const stepName = compareReports.value.map(r => (r.steps || [])[i]?.event).find(Boolean) || `步骤 ${i + 1}`
+    rows.push({ step: stepName, rates })
+  }
+  return rows
+})
+
+async function openCompare() {
+  if (compareSelection.value.length < 2) return
+  compareOpen.value = true
+  compareLoading.value = true
+  compareReports.value = []
+  try {
+    const results = await Promise.all(
+      compareSelection.value.map(f => api(`/api/funnels/${f.id}/report`, { requestKey: `funnel:compare:${f.id}` }).catch(() => null))
+    )
+    compareReports.value = results.filter(Boolean)
+  } finally {
+    compareLoading.value = false
+  }
+}
 const reportEl = ref(null)
 const reportLoading = ref(false)
 // 细分维度切换
@@ -258,8 +291,9 @@ onMounted(loadFunnels)
 
     <!-- 我的漏斗 -->
     <el-card shadow="never" class="section panel">
-      <template #header><div class="panel-head"><div><b>我的漏斗</b><small style="margin-left: 8px">共 {{ funnels.length }} 个</small></div><el-button size="small" @click="exportFunnels">导出 CSV</el-button></div></template>
-      <el-table :data="funnels" border v-loading="loading" empty-text="暂无漏斗，点击右上角新建">
+      <template #header><div class="panel-head"><div><b>我的漏斗</b><small style="margin-left: 8px">共 {{ funnels.length }} 个</small></div><el-button type="primary" plain size="small" :disabled="compareSelection.length < 2" @click="openCompare">对比选中 ({{ compareSelection.length }})</el-button><el-button size="small" @click="exportFunnels">导出 CSV</el-button></div></template>
+      <el-table :data="funnels" border v-loading="loading" empty-text="暂无漏斗，点击右上角新建" @selection-change="compareSelection = $event">
+        <el-table-column type="selection" width="48" />
         <el-table-column label="名称" min-width="200"><template #default="{ row }"><b>{{ row.name }}</b></template></el-table-column>
         <el-table-column label="步骤数" width="90" align="center"><template #default="{ row }">{{ (row.steps || []).length }}</template></el-table-column>
         <el-table-column label="转化窗口" width="110" align="center"><template #default="{ row }">{{ formatWindow(row.window_ms) }}</template></el-table-column>
@@ -395,6 +429,30 @@ onMounted(loadFunnels)
         </div>
       </el-card>
     </div>
+
+    <!-- 多漏斗对比 -->
+    <el-drawer v-model="compareOpen" title="漏斗对比" size="720px">
+      <div v-loading="compareLoading">
+        <el-table :data="compareReports" border v-if="compareReports.length">
+          <el-table-column label="漏斗" min-width="160"><template #default="{ row }"><b>{{ row.meta.name }}</b></template></el-table-column>
+          <el-table-column label="进入用户" width="110" align="right"><template #default="{ row }">{{ Number(row.meta.users).toLocaleString() }}</template></el-table-column>
+          <el-table-column label="总转化率" width="110" align="right"><template #default="{ row }"><b :style="{ color: row.meta.overallRate >= 0.5 ? '#059669' : row.meta.overallRate >= 0.2 ? '#d97706' : '#dc2626' }">{{ (row.meta.overallRate * 100).toFixed(1) }}%</b></template></el-table-column>
+          <el-table-column label="完成用户" width="110" align="right"><template #default="{ row }">{{ Number(row.meta.converted).toLocaleString() }}</template></el-table-column>
+          <el-table-column label="流失用户" width="110" align="right"><template #default="{ row }">{{ Number(row.lossInsight.lostUsers).toLocaleString() }}</template></el-table-column>
+          <el-table-column label="步骤数" width="80" align="center"><template #default="{ row }">{{ (row.steps || []).length }}</template></el-table-column>
+        </el-table>
+        <el-empty v-else description="暂无对比数据" />
+        <div v-if="compareReports.length >= 2" style="margin-top: 16px">
+          <h4 class="prd-sub">各步骤转化率对比</h4>
+          <el-table :data="compareStepRows" border size="small">
+            <el-table-column label="步骤" min-width="140"><template #default="{ row }">{{ row.step }}</template></el-table-column>
+            <el-table-column v-for="r in compareReports" :key="r.meta.id" :label="r.meta.name" min-width="110" align="right">
+              <template #default="{ row }">{{ row.rates[r.meta.id] != null ? (row.rates[r.meta.id] * 100).toFixed(1) + '%' : '-' }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+    </el-drawer>
 
     <!-- 编辑器抽屉 -->
     <el-drawer v-model="editorOpen" :title="editorForm.id ? '编辑漏斗' : '＋ 新建漏斗'" size="480px">

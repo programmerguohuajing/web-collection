@@ -243,7 +243,7 @@ watch(refreshVersion, () => { void loadSessions() })
   <div>
     <div class="page-heading">
       <div>
-        <h1>用户链路</h1>
+        <h1>事件时间线</h1>
         <p>给定用户 / 设备 / 会话 / trace 任一标识，快速还原完整行为序列；前端事件、JS 错误、API 请求、日志在一条时间线合并呈现。</p>
       </div>
       <el-button @click="aiDrawer = true" :disabled="!timeline">AI 分析此会话</el-button>
