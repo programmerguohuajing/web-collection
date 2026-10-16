@@ -416,9 +416,6 @@ onMounted(load)
     </el-tabs>
 
     <div class="settings-content">
-      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
-        <template #title>应用与采集配置已统一移至「<el-button link type="primary" @click="$router.push('/governance')">采集管理</el-button>」</template>
-      </el-alert>
 
   <template v-if="activeTab === 'alerts'">
     <el-card shadow="never" class="panel settings-form-card section">
