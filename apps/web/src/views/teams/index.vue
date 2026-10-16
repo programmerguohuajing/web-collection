@@ -156,7 +156,13 @@ function auditTargetLabel(row: AuditItem): string {
   return targetId || targetType || '-'
 }
 
-const activeTab = ref<'members' | 'invitations' | 'audit'>('members')
+const activeTab = ref<'members' | 'invitations' | 'audit' | 'levels'>('members')
+const levelMatrix = [
+  { key: 'L4', title: '完整数据', role: '平台管理员', rows: [['IP', '完整 IP'], ['userId', '原值'], ['原始事件', '✅'], ['导出', '✅']] },
+  { key: 'L3', title: '运维诊断', role: '研发', rows: [['IP', '段脱敏'], ['userId', '原值/脱敏'], ['原始事件', '✅'], ['导出', '✅ 脱敏']] },
+  { key: 'L2', title: '业务分析', role: '产品/运营', rows: [['IP', '归属地'], ['userId', 'hash8'], ['原始事件', '✅ 脱敏'], ['导出', '❌']] },
+  { key: 'L1', title: '只读统计', role: '外部/演示', rows: [['IP', '❌'], ['userId', '❌'], ['原始事件', '仅聚合'], ['导出', '❌']] }
+]
 const ready = ref(false)
 const members = ref<TeamMember[]>([])
 const invitations = ref<Invitation[]>([])
@@ -500,6 +506,7 @@ onMounted(async () => {
         <el-tab-pane label="成员" name="members" />
         <el-tab-pane v-if="canManage" label="邀请" name="invitations" />
         <el-tab-pane v-if="canManage" label="审计" name="audit" />
+        <el-tab-pane label="数据等级" name="levels" />
       </el-tabs>
 
       <!-- 成员 -->
@@ -593,7 +600,7 @@ onMounted(async () => {
       </section>
 
       <!-- 审计 -->
-      <section v-else>
+      <section v-else-if="activeTab === 'audit'">
         <div class="section-head">
           <h2>团队审计日志</h2>
           <el-button :loading="loadingAudit" @click="loadAudit">刷新</el-button>
@@ -624,6 +631,28 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+      </section>
+
+      <!-- 数据等级 -->
+      <section v-else-if="activeTab === 'levels'">
+        <div class="section-head">
+          <h2>数据访问等级</h2>
+          <el-button link type="primary" @click="$router.push('/access-levels')">查看完整矩阵</el-button>
+        </div>
+        <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+          <template #title>成员的数据访问等级决定其能查看的数据范围，等级调整请在成员列表中操作</template>
+        </el-alert>
+        <el-row :gutter="16">
+          <el-col :span="6" v-for="lvl in levelMatrix" :key="lvl.key">
+            <el-card shadow="hover" class="level-card">
+              <template #header><b>{{ lvl.key }} · {{ lvl.title }}</b></template>
+              <p class="level-role">{{ lvl.role }}</p>
+              <ul class="level-rows">
+                <li v-for="row in lvl.rows" :key="row[0]"><span>{{ row[0] }}</span><b>{{ row[1] }}</b></li>
+              </ul>
+            </el-card>
+          </el-col>
+        </el-row>
       </section>
     </main>
 
