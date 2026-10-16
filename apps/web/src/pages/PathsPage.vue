@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, normalizePageResponse, pageLoading, queryFromFilters } from '../dashboard.js'
 import { useFilterStore } from '../stores/filters.js'
 import SearchPanel from '../components/SearchPanel.vue'
@@ -113,9 +113,17 @@ const clickColorMap = computed(() => {
   return map
 })
 const clickNodesByPage = computed(() => (clickPaths.value.nodes || []).map(n => ({ ...n, type: clickPage(n) })))
-const topClickNodes = computed(() =>
-  [...(clickPaths.value.nodes || [])].sort((a, b) => Number(b.value || 0) - Number(a.value || 0)).slice(0, 10)
+const clickTopPage = ref(1)
+const clickTopPageSize = ref(10)
+const sortedClickNodes = computed(() =>
+  [...(clickPaths.value.nodes || [])].sort((a, b) => Number(b.value || 0) - Number(a.value || 0))
 )
+const topClickNodes = computed(() => {
+  const start = (clickTopPage.value - 1) * clickTopPageSize.value
+  return sortedClickNodes.value.slice(start, start + clickTopPageSize.value)
+})
+// 切换筛选条件时回到第一页
+watch(() => clickPaths.value.nodes, () => { clickTopPage.value = 1 })
 const clickKpis = computed(() => {
   const nodes = clickPaths.value.nodes || []
   const edges = clickPaths.value.edges || []
@@ -180,11 +188,11 @@ onMounted(load)
           </div>
           <div v-if="!clickLoading && clickPaths.nodes.length" class="click-top">
             <div class="click-top-head">
-              <b>热门点击元素 Top 10</b>
-              <small class="muted">按点击次数降序</small>
+              <b>热门点击元素</b>
+              <small class="muted">按点击次数降序，共 {{ sortedClickNodes.length }} 个</small>
             </div>
             <el-table :data="topClickNodes" size="small" border max-height="340">
-              <el-table-column type="index" label="#" width="48" />
+              <el-table-column type="index" label="#" width="48" :index="(i) => (clickTopPage - 1) * clickTopPageSize + i + 1" />
               <el-table-column label="点击元素" min-width="200">
                 <template #default="{ row }"><OverflowTip :text="row.label" :force="true" /></template>
               </el-table-column>
@@ -195,6 +203,15 @@ onMounted(load)
                 <template #default="{ row }">{{ Number(row.value || 0).toLocaleString() }}</template>
               </el-table-column>
             </el-table>
+            <el-pagination
+              v-model:current-page="clickTopPage"
+              v-model:page-size="clickTopPageSize"
+              :total="sortedClickNodes.length"
+              :page-sizes="[10, 20, 50]"
+              layout="total, sizes, prev, pager, next"
+              size="small"
+              class="click-top-pager"
+            />
           </div>
         </template>
       </el-tab-pane>
@@ -217,4 +234,5 @@ onMounted(load)
 .click-top { margin-top: 18px; }
 .click-top-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 .click-top-head b { color: var(--el-text-color-primary); font-size: 14px; }
+.click-top-pager { margin-top: 12px; justify-content: flex-end; }
 </style>
