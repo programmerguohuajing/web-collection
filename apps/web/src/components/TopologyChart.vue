@@ -13,10 +13,10 @@ const props = defineProps({
   // 边：{ source, target, calls|sessions, avgDuration?, errors? }
   edges: { type: Array, default: () => [] },
   height: { type: String, default: '520px' },
-  // 按节点 type 着色
+  // 按节点 type 着色（宝石色系）
   nodeColors: {
     type: Object,
-    default: () => ({ page: '#409EFF', api: '#67C23A', click: '#E6A23C', default: '#909399' })
+    default: () => ({ page: '#6366f1', api: '#059669', click: '#d97706', default: '#64748b' })
   },
   emptyText: { type: String, default: '暂无拓扑数据' }
 })
@@ -33,14 +33,47 @@ function buildOption() {
   const data = props.nodes.map(n => {
     const type = n.type || 'default'
     const value = Number(n.value || 0)
+    const color = colorMap[type] || colorMap.default
+    const size = Math.max(20, Math.min(68, 18 + Math.sqrt(value || 1) * 6.5))
     return {
       id: n.id,
       name: n.id,
       label: n.label || n.id,
       value,
       category: type,
-      symbolSize: Math.max(18, Math.min(64, 16 + Math.sqrt(value || 1) * 6)),
-      itemStyle: { color: colorMap[type] || colorMap.default }
+      symbolSize: size,
+      itemStyle: {
+        color: {
+          type: 'radial', x: 0.35, y: 0.3, r: 0.9,
+          colorStops: [
+            { offset: 0, color: lighten(color, 28) },
+            { offset: 1, color }
+          ]
+        },
+        shadowBlur: 14,
+        shadowColor: hexA(color, 0.35),
+        shadowOffsetY: 3,
+        borderWidth: 2,
+        borderColor: '#ffffff'
+      },
+      label: {
+        show: true,
+        position: 'bottom',
+        distance: 6,
+        formatter: p => p.data.label,
+        fontSize: 11,
+        fontWeight: 600,
+        color: '#2b3547',
+        backgroundColor: 'rgba(255,255,255,.92)',
+        borderColor: '#e2e8f0',
+        borderWidth: 1,
+        borderRadius: 8,
+        padding: [4, 8]
+      },
+      emphasis: {
+        scale: 1.12,
+        itemStyle: { shadowBlur: 22, shadowColor: hexA(color, 0.5) }
+      }
     }
   })
 
@@ -52,16 +85,21 @@ function buildOption() {
       target: e.target,
       value: weight,
       lineStyle: {
-        color: hasError ? '#F56C6C' : '#C0C4CC',
-        width: Math.max(1, Math.min(6, Math.log2(weight + 1) * 1.4)),
-        curveness: 0.12,
-        opacity: 0.85
+        color: hasError ? '#f87171' : '#b6c0d1',
+        width: Math.max(1.2, Math.min(5, Math.log2(weight + 1) * 1.3)),
+        curveness: 0.18,
+        opacity: hasError ? 0.95 : 0.7
       },
       label: {
         show: true,
-        formatter: hasError ? `✕${e.errors}` : String(weight),
-        color: hasError ? '#F56C6C' : '#909399',
-        fontSize: 10
+        formatter: hasError ? `⚠${e.errors}` : String(weight),
+        color: hasError ? '#dc2626' : '#7c8aa0',
+        fontSize: 10,
+        backgroundColor: hasError ? '#fef2f2' : 'rgba(255,255,255,.9)',
+        borderColor: hasError ? '#fecaca' : '#e2e8f0',
+        borderWidth: 1,
+        borderRadius: 7,
+        padding: [2, 6]
       }
     }
   })
@@ -69,36 +107,70 @@ function buildOption() {
   return {
     tooltip: {
       confine: true,
+      backgroundColor: 'rgba(255,255,255,.97)',
+      borderColor: '#e2e8f0',
+      borderWidth: 1,
+      padding: [10, 14],
+      textStyle: { color: '#2b3547', fontSize: 12 },
+      extraCssText: 'box-shadow:0 8px 24px rgba(23,32,51,.12);border-radius:10px;',
       formatter: (p) => {
         if (p.dataType === 'node') {
-          return `${p.data.label}<br/>类型：${p.data.category}<br/>权重：${p.data.value}`
+          return `<div style="font-weight:700;color:#4f46e5;margin-bottom:4px">${escapeHtml(p.data.label)}</div>`
+            + `<div style="color:#7c8aa0;font-size:11px">类型：${escapeHtml(p.data.category)}<br/>权重：${p.data.value}</div>`
         }
         const e = props.edges[p.dataIndex] || {}
-        const parts = [`调用次数：${e.calls ?? e.sessions ?? '-'}`]
-        if (e.avgDuration != null) parts.push(`平均耗时：${e.avgDuration}ms`)
-        if (e.errors) parts.push(`错误数：${e.errors}`)
-        if (e.sessions != null) parts.push(`会话数：${e.sessions}`)
-        return parts.join('<br/>')
+        const parts = [`<div style="font-weight:700;margin-bottom:4px">调用次数：${e.calls ?? e.sessions ?? '-'}</div>`]
+        if (e.avgDuration != null) parts.push(`<div style="color:#7c8aa0;font-size:11px">平均耗时：${e.avgDuration}ms</div>`)
+        if (e.errors) parts.push(`<div style="color:#dc2626;font-size:11px;font-weight:600">错误数：${e.errors}</div>`)
+        if (e.sessions != null) parts.push(`<div style="color:#7c8aa0;font-size:11px">会话数：${e.sessions}</div>`)
+        return parts.join('')
       }
     },
-    legend: [{ data: types, top: 8, type: 'scroll' }],
-    animationDuration: 600,
+    legend: [{
+      data: types, top: 10, type: 'scroll',
+      textStyle: { color: '#627085', fontSize: 11 },
+      itemWidth: 14, itemHeight: 10, itemStyle: { borderRadius: 5 }
+    }],
+    animationDuration: 700,
+    animationEasing: 'cubicOut',
     series: [{
       type: 'graph',
       layout: 'force',
       roam: true,
       draggable: true,
       zoom: 1,
-      force: { repulsion: 240, edgeLength: [60, 160], gravity: 0.08, friction: 0.18 },
-      label: { show: true, position: 'right', formatter: p => p.data.label, fontSize: 11, color: '#303133' },
+      force: { repulsion: 320, edgeLength: [80, 200], gravity: 0.06, friction: 0.2, layoutAnimation: true },
       edgeSymbol: ['none', 'arrow'],
-      edgeSymbolSize: 6,
-      emphasis: { focus: 'adjacency', label: { show: true } },
+      edgeSymbolSize: 7,
+      emphasis: { focus: 'adjacency', scale: true },
       categories,
       data,
       links
     }]
   }
+}
+
+/** hex 颜色提亮 */
+function lighten(hex, amt = 20) {
+  const h = String(hex || '#64748b').replace('#', '')
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h.padEnd(6, '0')
+  const p = Math.max(0, Math.min(100, amt)) / 100
+  const ch = [0, 2, 4].map(i => {
+    const v = parseInt(full.slice(i, i + 2), 16)
+    return Math.round(v + (255 - v) * p).toString(16).padStart(2, '0')
+  })
+  return '#' + ch.join('')
+}
+/** hex 转 rgba */
+function hexA(hex, alpha = 1) {
+  const h = String(hex || '#64748b').replace('#', '')
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h.padEnd(6, '0')
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(full.slice(i, i + 2), 16))
+  return `rgba(${r},${g},${b},${alpha})`
+}
+/** HTML 转义（tooltip 防注入） */
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }
 
 function render() {
@@ -145,7 +217,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .topology-wrap { position: relative; width: 100%; }
-.topology-canvas { width: 100%; }
+.topology-canvas {
+  width: 100%;
+  background:
+    radial-gradient(1000px 420px at 50% -10%, rgba(99,102,241,.05), transparent 60%),
+    linear-gradient(180deg, #fbfcfe 0%, #f4f6fa 100%);
+  border: 1px solid var(--line, #dfe5ec);
+  border-radius: 10px;
+}
 .topology-empty {
   position: absolute;
   top: 0;
