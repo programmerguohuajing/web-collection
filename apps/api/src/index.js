@@ -255,7 +255,7 @@ app.get('/api/alerts', async (req, res, next) => {
 })
 app.patch('/api/alerts/:id', async (req, res, next) => {
   try {
-    res.json(await updateAlertStatus(req.params.id, req.body?.status))
+    res.json(await updateAlertStatus(req.params.id, req.body?.status, { snoozed_until: req.body?.snoozed_until }))
   } catch (err) {
     const status = Number(err?.statusCode) || 500
     if (status >= 400 && status < 500) return res.status(status).json({ error: err.message })

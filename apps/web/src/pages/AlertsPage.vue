@@ -21,6 +21,12 @@ const channelDialog = ref(false)
 const channelSaving = ref(false)
 const channelTestingId = ref(null)
 const channelForm = reactive(createAlertChannelForm())
+const channelFormRef = ref(null)
+const channelRules = {
+  name: [{ required: true, message: '请输入渠道名称', trigger: 'blur' }],
+  type: [{ required: true, message: '请选择渠道类型', trigger: 'change' }],
+  endpoint: [{ required: true, message: '请输入服务地址', trigger: 'blur' }]
+}
 const alertsLoading = ref(false)
 const alertsError = ref('')
 const channelsLoading = ref(false)
@@ -105,6 +111,23 @@ async function dismiss(row) {
   } catch (e) { ElMessage.error(e.message || '操作失败') }
 }
 
+// 告警静默：snoozed_until 为毫秒时间戳；null = 取消静默
+function isSnoozed(row) {
+  return row.snoozed_until != null && Number(row.snoozed_until) > Date.now()
+}
+function snoozeLabel(row) {
+  if (!isSnoozed(row)) return ''
+  return `已静默至 ${new Date(Number(row.snoozed_until)).toLocaleString()}`
+}
+async function snooze(row, hours) {
+  try {
+    const snoozed_until = hours == null ? null : new Date(Date.now() + hours * 3600000).toISOString()
+    const updated = await api(`/api/alerts/${row.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snoozed_until }) })
+    row.snoozed_until = updated.snoozed_until
+    ElMessage.success(hours == null ? '已取消静默' : '告警已静默')
+  } catch (e) { ElMessage.error(e.message || '操作失败') }
+}
+
 async function viewDetail(row) {
   if (row.traceId ?? row.trace_id) router.push({ path: '/traces', query: { traceId: row.traceId ?? row.trace_id } })
   else if (row.url) router.push({ path: '/errors', query: { path: row.url } })
@@ -129,6 +152,11 @@ async function editChannel(row = {}) {
   channelDialog.value = true
 }
 async function submitChannel() {
+  try {
+    await channelFormRef.value?.validate()
+  } catch {
+    return ElMessage.warning('请完善必填项')
+  }
   channelSaving.value = true
   try {
     await saveAlertChannel(buildAlertChannelPayload(channelForm))
@@ -246,13 +274,24 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
       </el-table-column>
       <el-table-column label="当前值" width="100"><template #default="{ row }">{{ row.value != null ? Number(row.value).toFixed(2) : '-' }}</template></el-table-column>
       <el-table-column prop="threshold" label="阈值" width="100"><template #default="{ row }">{{ row.threshold != null ? Number(row.threshold).toFixed(2) : '-' }}</template></el-table-column>
-      <el-table-column label="状态" width="110" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
+      <el-table-column label="状态" width="110" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag><el-tag v-if="isSnoozed(row)" type="warning" size="small" style="margin-left: 4px" :title="snoozeLabel(row)">静默中</el-tag></template></el-table-column>
       <el-table-column label="通知" width="110" cell-class-name="no-ellipsis"><template #default="{ row }"><el-tag :type="row.notified ? 'success' : 'info'" size="small">{{ row.notified ? '已发送' : '未发送' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" cell-class-name="action-cell" width="220" fixed="right">
+      <el-table-column label="操作" cell-class-name="action-cell" width="260" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.status === 'pending'" link type="primary" size="small" @click="acknowledge(row)">处理</el-button>
           <el-button v-if="row.status !== 'resolved' && row.status !== 'dismissed'" link type="success" size="small" @click="resolve(row)">解决</el-button>
           <el-button v-if="row.status === 'pending'" link type="info" size="small" @click="dismiss(row)">关闭</el-button>
+          <el-dropdown trigger="click" @command="(cmd) => snooze(row, cmd)">
+            <el-button link type="warning" size="small">{{ isSnoozed(row) ? '静默中' : '静默' }}</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item :command="1">静默 1 小时</el-dropdown-item>
+                <el-dropdown-item :command="24">静默 24 小时</el-dropdown-item>
+                <el-dropdown-item :command="168">静默 7 天</el-dropdown-item>
+                <el-dropdown-item v-if="isSnoozed(row)" :command="null" divided>取消静默</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button link type="primary" size="small" @click="viewDetail(row)">查看</el-button>
         </template>
       </el-table-column>
@@ -289,9 +328,9 @@ onMounted(() => { load(); loadChannels(); loadApplications() })
   </el-card>
 
   <el-dialog v-model="channelDialog" :title="channelForm.id ? '编辑渠道' : '新增渠道'" width="min(760px, calc(100vw - 32px))" :loading="channelSaving">
-    <el-form :model="channelForm" label-width="130px">
-      <el-form-item label="名称"><el-input v-model="channelForm.name" /></el-form-item>
-      <el-form-item label="类型"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','feishu_app','wecom','slack','pagerduty']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
+    <el-form :model="channelForm" :rules="channelRules" ref="channelFormRef" label-width="130px">
+      <el-form-item label="名称" prop="name"><el-input v-model="channelForm.name" /></el-form-item>
+      <el-form-item label="类型" prop="type"><el-select v-model="channelForm.type" style="width:100%"><el-option v-for="t in ['email','webhook','sms','dingtalk','feishu','feishu_app','wecom','slack','pagerduty']" :key="t" :label="channelTypeLabel(t)" :value="t" /></el-select></el-form-item>
       <el-form-item v-if="channelForm.type !== 'feishu_app' && channelForm.type !== 'pagerduty'" label="服务地址" required>
         <el-input v-model="channelForm.endpoint" :placeholder="endpointPlaceholder" />
       </el-form-item>

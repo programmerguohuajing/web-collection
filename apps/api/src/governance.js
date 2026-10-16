@@ -226,12 +226,31 @@ export async function listAlerts(filters = {}) {
 
 const alertStatuses = new Set(['pending', 'acknowledged', 'resolved', 'dismissed'])
 
-export async function updateAlertStatus(id, status) {
+export async function updateAlertStatus(id, status, options = {}) {
   const alertId = Number(id)
   if (!Number.isInteger(alertId) || alertId <= 0) throw httpError(400, '告警 ID 无效')
+  const hasSnooze = 'snoozed_until' in options
   const nextStatus = String(status || '').trim()
-  if (!alertStatuses.has(nextStatus)) throw httpError(400, '告警状态无效')
-  const rows = await all('update alert_history set status=?,updated_at=? where id=? returning *', [nextStatus, Date.now(), alertId])
+  // 允许只更新静默时间而不改状态
+  if (!hasSnooze && !alertStatuses.has(nextStatus)) throw httpError(400, '告警状态无效')
+  if (hasSnooze && nextStatus && !alertStatuses.has(nextStatus)) throw httpError(400, '告警状态无效')
+  const sets = ['updated_at=?']
+  const values = [Date.now()]
+  if (nextStatus) { sets.unshift('status=?'); values.unshift(nextStatus) }
+  // 静默：snoozed_until 为 ISO 时间字符串或毫秒时间戳；null/空字符串 = 取消静默
+  if (hasSnooze) {
+    const raw = options.snoozed_until
+    let ts = null
+    if (raw !== null && raw !== '' && raw !== undefined) {
+      ts = typeof raw === 'number' ? raw : Date.parse(String(raw))
+      if (!Number.isFinite(ts) || ts <= 0) throw httpError(400, '静默时间无效')
+      ts = Math.round(ts)
+    }
+    sets.push('snoozed_until=?')
+    values.push(ts)
+  }
+  values.push(alertId)
+  const rows = await all(`update alert_history set ${sets.join(',')} where id=? returning *`, values)
   if (!rows.length) throw httpError(404, '告警不存在')
   return rows[0]
 }

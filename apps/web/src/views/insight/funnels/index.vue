@@ -7,6 +7,7 @@ import { api, pageLoading } from '../../../dashboard.js'
 import AnalyticsChart from '../../../components/AnalyticsChart.vue'
 import OverflowTip from '../../../components/OverflowTip.vue'
 import { buildReplayQuery } from '../../../utils/replay-link.js'
+import { exportCsv } from '../../../utils/csv.js'
 
 const router = useRouter()
 
@@ -65,6 +66,23 @@ async function removeFunnel(funnel) {
   ElMessage.success('漏斗已删除')
   if (report.value?.meta?.id === funnel.id) report.value = null
   await loadFunnels()
+}
+
+function exportFunnels() {
+  const count = exportCsv('我的漏斗', [
+    { key: 'name', label: '名称' },
+    { key: 'steps', label: '步骤数' },
+    { key: 'window', label: '转化窗口' },
+    { key: 'created_by', label: '创建人' },
+    { key: 'updated_at', label: '更新时间' }
+  ], funnels.value.map(row => ({
+    name: row.name || '',
+    steps: (row.steps || []).length,
+    window: formatWindow(row.window_ms),
+    created_by: row.created_by || '',
+    updated_at: row.updated_at ? new Date(Number(row.updated_at)).toLocaleString() : ''
+  })))
+  ElMessage.success(`已导出 ${count} 条`)
 }
 
 // ---------------- 编辑器抽屉 ----------------
@@ -240,7 +258,7 @@ onMounted(loadFunnels)
 
     <!-- 我的漏斗 -->
     <el-card shadow="never" class="section panel">
-      <template #header><div class="panel-head"><b>我的漏斗</b><small style="margin-left: 8px">共 {{ funnels.length }} 个</small></div></template>
+      <template #header><div class="panel-head"><div><b>我的漏斗</b><small style="margin-left: 8px">共 {{ funnels.length }} 个</small></div><el-button size="small" @click="exportFunnels">导出 CSV</el-button></div></template>
       <el-table :data="funnels" border v-loading="loading" empty-text="暂无漏斗，点击右上角新建">
         <el-table-column label="名称" min-width="200"><template #default="{ row }"><b>{{ row.name }}</b></template></el-table-column>
         <el-table-column label="步骤数" width="90" align="center"><template #default="{ row }">{{ (row.steps || []).length }}</template></el-table-column>

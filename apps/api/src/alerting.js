@@ -86,6 +86,8 @@ export async function testAlertChannel(id) {
 export async function createAlertDeliveries(alertId) {
   const alert = await getAlert(alertId)
   if (!alert) return
+  // 静默中的告警不触发通知
+  if (alert.snoozed_until && Number(alert.snoozed_until) > Date.now()) return
   const channels = await all('select * from alert_channels where enabled=true')
   const matched = channels.filter(channel => channelMatches(channel, alert))
   if (!channels.length && process.env.FEISHU_WEBHOOK_URL) {
