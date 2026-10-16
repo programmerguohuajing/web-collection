@@ -70,7 +70,7 @@ async function load() {
   try {
     capabilities.value = await api('/api/capabilities').catch(() => ({ insights: false, productAnalyticsV2: false, funnels: true, dashboards: true, paths: true, live: true, releases: true }))
     const query = queryFromFilters()
-    const [, pathData, liveData, releaseData, eventNameData, , dashboardData, insightData] = await Promise.all([
+    const [pathData, liveData, releaseData, eventNameData, , dashboardData, insightData] = await Promise.all([
       api(`/api/analytics/paths?${query}`, { requestKey: 'analytics:paths' }), api(`/api/analytics/live?${query}`, { requestKey: 'analytics:live' }), api(`/api/analytics/releases?${query}`, { requestKey: 'analytics:releases' }), api(`/api/analytics/event-names?${queryFromFilters({}, ['appId', 'release', 'range'])}`, { requestKey: 'analytics:event-names' }), loadFunnels(), api('/api/dashboards', { requestKey: 'analytics:dashboards' })
       , insightsSupported.value ? api('/api/analytics/insights') : []
     ])
