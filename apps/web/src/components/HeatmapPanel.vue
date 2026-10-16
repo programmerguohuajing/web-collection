@@ -23,12 +23,12 @@ let loadRequestId = 0
 let _renderRetryId = 0
 
 const colorStops = [
-  { offset: 0, color: [0, 0, 255, 0] },
-  { offset: 0.2, color: [0, 0, 255, 77] },
-  { offset: 0.4, color: [0, 255, 255, 153] },
-  { offset: 0.6, color: [0, 255, 0, 179] },
-  { offset: 0.8, color: [255, 255, 0, 217] },
-  { offset: 1.0, color: [255, 0, 0, 255] }
+  { offset: 0, color: [0, 0, 4, 0] },
+  { offset: 0.18, color: [31, 12, 72, 90] },
+  { offset: 0.38, color: [85, 16, 110, 150] },
+  { offset: 0.58, color: [168, 50, 137, 195] },
+  { offset: 0.78, color: [237, 121, 83, 230] },
+  { offset: 1.0, color: [252, 255, 164, 255] }
 ]
 
 async function loadData() {
@@ -216,57 +216,99 @@ function renderClickHeatmap(ctx, rect, t) {
 function renderScrollHeatmap(ctx, rect) {
   const items = heatmapData.value.scrollAggregate
   if (!items.length) {
-    ctx.fillStyle = '#666'
-    ctx.font = '14px sans-serif'
+    ctx.fillStyle = '#8a96a7'
+    ctx.font = '13px "Segoe UI","Microsoft YaHei",sans-serif'
     ctx.textAlign = 'center'
     ctx.fillText('暂无滚动数据', rect.width / 2, rect.height / 2)
     return
   }
 
-  const pad = { top: 36, right: 16, bottom: 60, left: 44 }
+  const pad = { top: 44, right: 20, bottom: 64, left: 48 }
   const w = rect.width - pad.left - pad.right
   const h = rect.height - pad.top - pad.bottom
-  const barW = w / items.length - 4
+  const slotW = w / items.length
+  const barW = Math.min(36, slotW - 8)
 
-  ctx.fillStyle = '#1e1e2e'
-  ctx.fillRect(pad.left, pad.top, w, h)
+  // 背景：微渐变
+  const bgGrad = ctx.createLinearGradient(0, pad.top, 0, pad.top + h)
+  bgGrad.addColorStop(0, '#1c1c24')
+  bgGrad.addColorStop(1, '#16161c')
+  ctx.fillStyle = bgGrad
+  roundRect(ctx, pad.left, pad.top, w, h, 8)
+  ctx.fill()
 
+  // 网格线
+  ctx.strokeStyle = 'rgba(255,255,255,.06)'
+  ctx.lineWidth = 1
+  ctx.fillStyle = '#6b7688'
+  ctx.font = '10px ui-monospace,Consolas,monospace'
+  for (let depth = 0; depth <= 100; depth += 25) {
+    const y = pad.top + h - (depth / 100) * h
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + w, y); ctx.stroke()
+    ctx.textAlign = 'right'
+    ctx.fillText(depth + '%', pad.left - 8, y + 3)
+  }
+
+  // 柱体：圆角 + 垂直渐变
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     const depth = Math.min(100, Math.max(0, Number(item.maxDepth) || 0))
-    const barH = (depth / 100) * h
-    const x = pad.left + i * (w / items.length) + 2
+    const barH = Math.max(3, (depth / 100) * h)
+    const x = pad.left + i * slotW + (slotW - barW) / 2
     const y = pad.top + h - barH
     const color = gradientColor(depth / 100)
-    ctx.fillStyle = `rgba(${color[0]},${color[1]},${color[2]},0.85)`
-    ctx.fillRect(x, y, barW, barH)
+    const g = ctx.createLinearGradient(0, y, 0, y + barH)
+    g.addColorStop(0, `rgba(${color[0]},${color[1]},${color[2]},.95)`)
+    g.addColorStop(1, `rgba(${color[0]},${color[1]},${color[2]},.55)`)
+    ctx.fillStyle = g
+    roundRect(ctx, x, y, barW, barH, [5, 5, 0, 0])
+    ctx.fill()
+    // 顶部数值
+    if (barW > 20) {
+      ctx.fillStyle = '#aab4c4'
+      ctx.font = '10px ui-monospace,Consolas,monospace'
+      ctx.textAlign = 'center'
+      ctx.fillText(Math.round(depth) + '%', x + barW / 2, y - 6)
+    }
   }
 
-  ctx.fillStyle = '#888'
-  ctx.font = '10px sans-serif'
+  // X 轴标签
+  ctx.fillStyle = '#7c8aa0'
+  ctx.font = '10px "Segoe UI","Microsoft YaHei",sans-serif'
   ctx.textAlign = 'center'
   for (let i = 0; i < items.length; i++) {
     let label
-    try { label = new URL(items[i].path).pathname.split('/').slice(0, 2).join('/') || '/' } catch { label = items[i].path?.slice(0, 16) || '-' }
+    try { label = new URL(items[i].path).pathname.split('/').slice(0, 3).join('/') || '/' } catch { label = items[i].path?.slice(0, 20) || '-' }
+    if (label.length > 18) label = label.slice(0, 17) + '…'
     ctx.save()
-    ctx.translate(pad.left + i * (w / items.length) + barW / 2, pad.top + h + 14)
-    ctx.rotate(-Math.PI / 4)
+    ctx.translate(pad.left + i * slotW + slotW / 2, pad.top + h + 16)
+    ctx.rotate(-Math.PI / 5)
+    ctx.textAlign = 'right'
     ctx.fillText(label, 0, 0)
     ctx.restore()
   }
 
-  ctx.strokeStyle = '#333'
-  ctx.lineWidth = 1
-  for (let depth = 0; depth <= 100; depth += 25) {
-    const y = pad.top + h - (depth / 100) * h
-    ctx.beginPath(); ctx.moveTo(pad.left - 6, y); ctx.lineTo(pad.left, y); ctx.stroke()
-    ctx.fillStyle = '#666'; ctx.textAlign = 'right'
-    ctx.fillText(depth + '%', pad.left - 8, y + 3)
-  }
-
-  ctx.fillStyle = '#aaa'
+  // 标题
+  ctx.fillStyle = '#c3ccd9'
+  ctx.font = '600 13px "Segoe UI","Microsoft YaHei",sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText('页面滚动深度热力图', pad.left + w / 2, pad.top - 16)
+  ctx.fillText('页面滚动深度分布', pad.left + w / 2, pad.top - 18)
+}
+
+/** 圆角矩形路径 */
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Array.isArray(r) ? r : [r, r, r, r]
+  ctx.beginPath()
+  ctx.moveTo(x + rr[0], y)
+  ctx.lineTo(x + w - rr[1], y)
+  ctx.arcTo(x + w, y, x + w, y + rr[1], rr[1])
+  ctx.lineTo(x + w, y + h - rr[2])
+  ctx.arcTo(x + w, y + h, x + w - rr[2], y + h, rr[2])
+  ctx.lineTo(x + rr[3], y + h)
+  ctx.arcTo(x, y + h, x, y + h - rr[3], rr[3])
+  ctx.lineTo(x, y + rr[0])
+  ctx.arcTo(x, y, x + rr[0], y, rr[0])
+  ctx.closePath()
 }
 
 function gradientColor(t) {
@@ -322,9 +364,18 @@ onBeforeUnmount(() => { cancelAnimationFrame(_renderRetryId) })
     </el-alert>
     <el-alert v-if="imageError" type="warning" :title="imageError" show-icon :closable="false" class="heatmap-alert" />
 
-    <div v-if="activeTab === 'click'" style="margin-bottom:12px">
-      <span style="margin-right:16px;font-size:13px">强度：<el-slider v-model="intensity" :min="5" :max="80" style="width:120px;display:inline-block;vertical-align:middle" /></span>
-      <span style="font-size:13px">半径：<el-slider v-model="radius" :min="10" :max="100" style="width:120px;display:inline-block;vertical-align:middle" /></span>
+    <div v-if="activeTab === 'click'" class="heatmap-controls">
+      <div class="heatmap-ctrl">
+        <span class="heatmap-ctrl-label">强度</span>
+        <el-slider v-model="intensity" :min="5" :max="80" class="heatmap-slider" />
+        <span class="heatmap-ctrl-val">{{ intensity }}</span>
+      </div>
+      <div class="heatmap-ctrl">
+        <span class="heatmap-ctrl-label">半径</span>
+        <el-slider v-model="radius" :min="10" :max="100" class="heatmap-slider" />
+        <span class="heatmap-ctrl-val">{{ radius }}px</span>
+      </div>
+      <div class="heatmap-ctrl-tip">滚轮缩放 · 拖拽平移</div>
     </div>
 
     <div class="heatmap-canvas-wrap" :class="{ 'heatmap-canvas--scroll': activeTab === 'scroll' }">
@@ -345,10 +396,10 @@ onBeforeUnmount(() => { cancelAnimationFrame(_renderRetryId) })
     </div>
 
     <div class="heatmap-legend">
-      <span style="font-size:12px;color:#888">低</span>
+      <span class="heatmap-legend-label">低</span>
       <div class="heatmap-gradient-bar" />
-      <span style="font-size:12px;color:#888">高</span>
-      <span style="font-size:12px;color:#999;margin-left:12px">{{ activeTab === 'click' ? `共 ${heatmapData.clickPoints.length} 个点击点` : `共 ${heatmapData.scrollAggregate.length} 个页面` }}</span>
+      <span class="heatmap-legend-label">高</span>
+      <span class="heatmap-legend-count">{{ activeTab === 'click' ? `共 ${heatmapData.clickPoints.length} 个点击点` : `共 ${heatmapData.scrollAggregate.length} 个页面` }}</span>
     </div>
   </el-card>
 </template>
@@ -356,12 +407,28 @@ onBeforeUnmount(() => { cancelAnimationFrame(_renderRetryId) })
 <style scoped>
 .heatmap-card { min-height: 480px; }
 .heatmap-alert { margin-bottom: 10px; }
-.heatmap-canvas-wrap { position: relative; width: 100%; height: 420px; overflow: hidden; background: #16161a; border-radius: 6px; cursor: grab; }
+.heatmap-controls {
+  display: flex; align-items: center; gap: 28px;
+  margin-bottom: 12px; padding: 10px 16px;
+  background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px;
+}
+.heatmap-ctrl { display: flex; align-items: center; gap: 10px; }
+.heatmap-ctrl-label { font-size: 12px; color: #627085; font-weight: 600; white-space: nowrap; }
+.heatmap-ctrl-val { font-size: 11px; color: #8a96a7; font-family: ui-monospace,Consolas,monospace; min-width: 36px; }
+.heatmap-slider { width: 130px; }
+.heatmap-ctrl-tip { margin-left: auto; font-size: 11px; color: #a0aec0; }
+.heatmap-canvas-wrap { position: relative; width: 100%; height: 420px; overflow: hidden; background: #141419; border-radius: 10px; cursor: grab; border: 1px solid #23232e; }
 .heatmap-canvas-wrap:active { cursor: grabbing; }
 .heatmap-canvas--scroll { cursor: default; }
 .heatmap-canvas-inner { width: 100%; height: 100%; position: relative; }
 .heatmap-canvas { width: 100%; height: 100%; display: block; }
 .heatmap-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-.heatmap-legend { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.heatmap-gradient-bar { width: 200px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, rgba(0,0,255,0.6), rgba(0,255,255,0.6), rgba(0,255,0,0.8), rgba(255,255,0,0.9), rgba(255,0,0,1)); }
+.heatmap-legend { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 8px 14px; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px; width: fit-content; }
+.heatmap-legend-label { font-size: 11px; color: #8a96a7; font-weight: 600; }
+.heatmap-legend-count { font-size: 11px; color: #627085; margin-left: 8px; padding-left: 12px; border-left: 1px solid #e2e8f0; }
+.heatmap-gradient-bar {
+  width: 220px; height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, #1f0c48, #55106e, #a83289, #ed7953, #fcffa4);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.25);
+}
 </style>
