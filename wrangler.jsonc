@@ -35,7 +35,8 @@
   //   ⚠️ ACCOUNTS_ENFORCE=1（严格模式）会拦掉 MCP rest 模式（x-app-key 透传）等服务间调用，开启前须评估。
   // "vars": { "ACCOUNTS_ENABLED": "1" }
   // 紧急降载（2026-10-14）：D1 rows_written 配额紧张，非错误事件仅保留 5%。
+  // 2026-10-17 阶梯恢复：烧速核算后用户批准 0.05 → 0.25（读配额余量充足，观察几小时再上 1.0）。
   // 配额稳定后删除本行并重新部署。
   // 告警时间时区（2026-10-15）：告警通知的“发生时间”按此时区格式化，不写死在代码里。
-  "vars": { "EMERGENCY_SAMPLE_RATE": "0.05", "TIMEZONE": "Asia/Shanghai" }
+  "vars": { "EMERGENCY_SAMPLE_RATE": "0.25", "TIMEZONE": "Asia/Shanghai" }
 }
